@@ -60,7 +60,7 @@ namespace BusinessLogic.Services
                 newContest.CreatedAt = DateTime.UtcNow;
 
                 // Get repository and insert new contest
-                var contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 await contestRepo.InsertAsync(newContest);
 
                 // Save changes to database
