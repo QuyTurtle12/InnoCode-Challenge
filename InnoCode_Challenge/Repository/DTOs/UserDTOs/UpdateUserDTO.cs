@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using Utility.Constant;
 
 namespace Repository.DTOs.UserDTOs
 {
@@ -10,15 +11,23 @@ namespace Repository.DTOs.UserDTOs
         [MaxLength(100)]
         public string? Fullname { get; set; }
 
-        [EmailAddress]
-        [RegularExpression(
-          @"^[a-zA-Z0-9._%+-]+@gmail\.com$", ErrorMessage = "Email must be a valid Gmail address."
-        )]
+        [EmailAddress, MaxLength(255)]
         public string? Email { get; set; }
 
-        [RegularExpression("^(User|Expert|Admin|Staff)$", ErrorMessage = "Role must be User, Expert, Staff or Admin.")]
+        [RegularExpression(RoleConstants.RoleRegexPattern, ErrorMessage = RoleConstants.RoleRegexErrorMessage)]
         public string? Role { get; set; }
 
+        [RegularExpression("^(Active|Inactive|Locked)$",
+            ErrorMessage = "Status must be one of: Active, Inactive, Locked.")]
         public string? Status { get; set; }
+
+        [MinLength(8)]
+        [RegularExpression(@"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$",
+    ErrorMessage = "Password must contain uppercase, lowercase, digit, and special character.")]
+        public string? NewPassword { get; set; }
+
+        [Compare("NewPassword", ErrorMessage = "Passwords do not match.")]
+        public string? ConfirmNewPassword { get; set; }
+
     }
 }

@@ -1,12 +1,13 @@
 ﻿using BusinessLogic.IServices;
-using Utility.Constant;
-using Repository.DTOs.UserDTOs;
-using Repository.ResponseModel;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Repository.DTOs.UserDTOs;
+using Repository.DTOs.UserDTOs.Repository.DTOs.UserDTOs;
+using Repository.ResponseModel;
 using System;
 using System.Security.Claims;
 using System.Threading.Tasks;
+using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers
 {
@@ -22,47 +23,52 @@ namespace InnoCode_Challenge_API.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> GetAll()
+        //[Authorize(Roles = RoleConstants.Admin)]
+        public async Task<IActionResult> GetAll([FromQuery] UserQueryParams query)
         {
-            var users = await _userService.GetAllUsersAsync();
+            var page = await _userService.GetUsersAsync(query);
+
+            var additional = new
+            {
+                page.PageNumber,
+                page.PageSize,
+                page.TotalPages,
+                page.TotalCount,
+                page.HasPreviousPage,
+                page.HasNextPage
+            };
+
             return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                data: users,
+                data: page.Items,
+                additionalData: additional,
                 message: "Users retrieved successfully."
             ));
         }
 
         [HttpGet("{id:guid}")]
+        [Authorize] 
         public async Task<IActionResult> GetById(Guid id)
         {
             var loggedInRole = User.FindFirstValue(ClaimTypes.Role);
             var loggedInId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
-            if (loggedInRole == RoleConstants.Admin)
+            if (loggedInRole == RoleConstants.Admin || loggedInRole == RoleConstants.Staff || loggedInId == id.ToString())
             {
                 var dto = await _userService.GetUserByIdAsync(id);
                 return Ok(new BaseResponseModel<object>(
                     statusCode: StatusCodes.Status200OK,
                     code: ResponseCodeConstants.SUCCESS,
                     data: dto,
-                    message: "User retrieved successfully."
+                    message: "Users retrieved successfully."
                 ));
             }
 
-            if (loggedInId == id.ToString())
-            {
-                var dto = await _userService.GetUserByIdAsync(id);
-                return Ok(new BaseResponseModel<object>(
-                    statusCode: StatusCodes.Status200OK,
-                    code: ResponseCodeConstants.SUCCESS,
-                    data: dto,
-                    message: "Your profile retrieved successfully."
-                ));
-            }
-
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new BaseResponseModel(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "Forbidden"));
         }
+
 
         [HttpPost]
         [Authorize(Roles = RoleConstants.Admin)]
@@ -78,11 +84,26 @@ namespace InnoCode_Challenge_API.Controllers
                 ));
         }
 
+        [HttpPut("{id:guid}")]
+        [Authorize(Roles = RoleConstants.Admin)]
+        public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserDTO dto)
+        {
+            var performedByRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var updated = await _userService.UpdateUserAsync(id, dto, performedByRole);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: updated,
+                message: "User updated successfully."
+            ));
+        }
+
         [HttpDelete("{id:guid}")]
         [Authorize(Roles = RoleConstants.Admin)]
         public async Task<IActionResult> Delete(Guid id)
         {
-            var deletedBy = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var deletedBy = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
             await _userService.DeleteUserAsync(id, deletedBy);
             return NoContent();
         }
