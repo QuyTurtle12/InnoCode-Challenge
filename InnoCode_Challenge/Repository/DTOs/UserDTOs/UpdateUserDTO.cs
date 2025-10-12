@@ -8,7 +8,7 @@ namespace Repository.DTOs.UserDTOs
         public Guid Id { get; set; }
 
         [MaxLength(100)]
-        public string? FullName { get; set; }
+        public string? Fullname { get; set; }
 
         [EmailAddress]
         [RegularExpression(

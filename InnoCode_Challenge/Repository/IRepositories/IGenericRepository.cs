@@ -25,7 +25,7 @@ namespace Repository.IRepositories
         Task UpdateAsync(T obj);
         Task DeleteAsync(object entity);
         Task SaveAsync();
-        Task<PaginatedList<T>> GetPagging(IQueryable<T> query, int index, int pageSize);
+        Task<PaginatedList<T>> GetPagingAsync(IQueryable<T> query, int index, int pageSize);
 
         //another
         T? Find(Expression<Func<T, bool>> predicate);

@@ -5,7 +5,7 @@ namespace Repository.DTOs.UserDTOs
     public class CreateUserDTO
     {
         [Required, MaxLength(100)]
-        public string FullName { get; set; } = null!;
+        public string Fullname { get; set; } = null!;
 
         [Required, EmailAddress]
         [RegularExpression(

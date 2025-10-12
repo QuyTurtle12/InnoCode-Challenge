@@ -12,24 +12,19 @@ namespace BusinessLogic.MappingProfiles
         {
             CreateMap<User, UserDTO>().ReverseMap();
 
-            // CreateUserDTO → User
             CreateMap<CreateUserDTO, User>()
-              .ForMember(dest => dest.PasswordHash,
-                         opt => opt.MapFrom(src => PasswordHasher.Hash(src.Password)))
-              .ForMember(dest => dest.Role,
-                         opt => opt.MapFrom(src => RoleConstants.ToRoleValue(src.Role)))
-              .ForMember(dest => dest.Status,
-                         opt => opt.MapFrom(src => src.Status));
-
+                .ForMember(d => d.PasswordHash, opt => opt.Ignore())
+                .ForMember(d => d.Role, opt => opt.MapFrom(s => s.Role))
+                .ForMember(d => d.Fullname, opt => opt.MapFrom(s => s.Fullname))
+                .ForMember(d => d.Status, opt => opt.MapFrom(s => s.Status));
+            
             // UpdateUserDTO → User (only non-null props)
             var map = CreateMap<UpdateUserDTO, User>();
-
-            // Configure ForAllMembers(...) to copy only non-null properties:
             map.ForAllMembers(opts => opts.Condition(
                 (source, destination, sourceMember, destMember, context) => sourceMember != null
             ));
 
-            // Now configure ForMember(...) to ignore PasswordHash:
+            // Ignore Password & Role
             map.ForMember(dest => dest.PasswordHash, opt => opt.Ignore());
             map.ForMember(dest => dest.Role, opt => opt.Ignore());
         }

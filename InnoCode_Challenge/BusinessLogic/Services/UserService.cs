@@ -103,13 +103,7 @@ namespace BusinessLogic.Services
             user.UpdatedAt = DateTime.UtcNow;
 
             if (!string.IsNullOrWhiteSpace(dto.Status))
-            {
                 user.Status = dto.Status;
-            }
-            else
-            {
-                user.Status = "Active";
-            }
 
             // Save
             repo.Update(user);
