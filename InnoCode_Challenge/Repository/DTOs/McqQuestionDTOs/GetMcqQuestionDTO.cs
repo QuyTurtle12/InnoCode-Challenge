@@ -1,4 +1,5 @@
 ﻿using DataAccess.Entities;
+using Repository.DTOs.McqOptionDTOs;
 
 namespace Repository.DTOs.McqQuestionDTOs
 {
@@ -8,6 +9,6 @@ namespace Repository.DTOs.McqQuestionDTOs
         public Guid BankId { get; set; }
         public string BankName { get; set; } = null!;
         public DateTime CreatedAt { get; set; }
-        public ICollection<McqOption>? McqOptions { get; set; }
+        public ICollection<GetMcqOptionDTO>? McqOptions { get; set; }
     }
 }

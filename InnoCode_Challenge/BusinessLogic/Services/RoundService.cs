@@ -62,11 +62,13 @@ namespace BusinessLogic.Services
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating Rounds: {ex.Message}");
             }
         }
 
@@ -104,80 +106,91 @@ namespace BusinessLogic.Services
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error deleting Rounds: {ex.Message}");
             }
         }
 
         public async Task<PaginatedList<GetRoundDTO>> GetPaginatedRoundAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? roundNameSearch, string? contestNameSearch, DateTime? startDate, DateTime? endDate)
         {
-            // Validate pageNumber and pageSize
-            if (pageNumber < 1 || pageSize < 1)
+            try
             {
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
+                // Validate pageNumber and pageSize
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Get Round Repository
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+
+                // Get all rounds
+                IQueryable<Round> query = roundRepo.Entities.Include(r => r.Contest);
+
+                // Apply filters if provided
+                if (idSearch.HasValue)
+                {
+                    query = query.Where(r => r.RoundId == idSearch.Value);
+                }
+
+                if (contestIdSearch.HasValue)
+                {
+                    query = query.Where(r => r.ContestId == contestIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(roundNameSearch))
+                {
+                    query = query.Where(r => r.Name.Contains(roundNameSearch));
+                }
+
+                if (!string.IsNullOrWhiteSpace(contestNameSearch))
+                {
+                    query = query.Where(r => r.Contest.Name.Contains(contestNameSearch));
+                }
+
+                if (startDate.HasValue)
+                {
+                    query = query.Where(r => r.Start >= startDate.Value);
+                }
+
+                if (endDate.HasValue)
+                {
+                    query = query.Where(r => r.End <= endDate.Value);
+                }
+
+                // Change to paginated list to facilitate mapping process
+                PaginatedList<Round> resultQuery = await roundRepo.GetPagging(query, pageNumber, pageSize);
+
+                // Map entities to DTOs
+                IReadOnlyCollection<GetRoundDTO> result = resultQuery.Items.Select(item =>
+                {
+                    GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(item);
+
+                    roundDTO.ContestName = item.Contest?.Name ?? "N/A";
+                    roundDTO.RoundName = item.Name;
+
+                    return roundDTO;
+                }).ToList();
+
+                // Create new paginated list with DTOs
+                return new PaginatedList<GetRoundDTO>(
+                    result,
+                    resultQuery.TotalCount,
+                    resultQuery.PageNumber,
+                    resultQuery.PageSize
+                );
             }
-
-            // Get Round Repository
-            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
-
-            // Get all rounds
-            IQueryable<Round> query = roundRepo.Entities.Include(r => r.Contest);
-
-            // Apply filters if provided
-            if (idSearch.HasValue)
+            catch (Exception ex)
             {
-                query = query.Where(r => r.RoundId == idSearch.Value);
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving Rounds: {ex.Message}");
             }
-
-            if (contestIdSearch.HasValue)
-            {
-                query = query.Where(r => r.ContestId == contestIdSearch.Value);
-            }
-
-            if (!string.IsNullOrWhiteSpace(roundNameSearch))
-            {
-                query = query.Where(r => r.Name.Contains(roundNameSearch));
-            }
-
-            if (!string.IsNullOrWhiteSpace(contestNameSearch))
-            {
-                query = query.Where(r => r.Contest.Name.Contains(contestNameSearch));
-            }
-
-            if (startDate.HasValue)
-            {
-                query = query.Where(r => r.Start >= startDate.Value);
-            }
-
-            if (endDate.HasValue)
-            {
-                query = query.Where(r => r.End <= endDate.Value);
-            }
-
-            // Change to paginated list to facilitate mapping process
-            PaginatedList<Round> resultQuery = await roundRepo.GetPagging(query, pageNumber, pageSize);
-
-            // Map entities to DTOs
-            IReadOnlyCollection<GetRoundDTO> result = resultQuery.Items.Select(item =>
-            {
-                GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(item);
-
-                roundDTO.ContestName = item.Contest?.Name ?? "N/A";
-                roundDTO.RoundName = item.Name;
-
-                return roundDTO;
-            }).ToList();
-
-            // Create new paginated list with DTOs
-            return new PaginatedList<GetRoundDTO>(
-                result,
-                resultQuery.TotalCount,
-                resultQuery.PageNumber,
-                resultQuery.PageSize
-            );
         }
 
         public async Task UpdateRound(Guid id, UpdateRoundDTO roundDTO)
@@ -234,11 +247,13 @@ namespace BusinessLogic.Services
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error updating Rounds: {ex.Message}");
             }
         }
     }

@@ -69,11 +69,13 @@ namespace BusinessLogic.Services
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating Contests: {ex.Message}");
             }
         }
 
@@ -121,89 +123,100 @@ namespace BusinessLogic.Services
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error deleting Contests: {ex.Message}");
             }
         }
 
         public async Task<PaginatedList<GetContestDTO>> GetPaginatedContestAsync(int pageNumber, int pageSize, Guid? idSearch, string? nameSearch, int? yearSearch, DateTime? startDate, DateTime? endDate)
         {
-            // Validate pageNumber and pageSize
-            if (pageNumber < 1 || pageSize < 1)
+            try
             {
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
-            }
-
-            // Validate year range
-            if (yearSearch.HasValue)
-            {
-                int currentYear = DateTime.UtcNow.Year;
-                if (yearSearch < MIN_YEAR)
+                // Validate pageNumber and pageSize
+                if (pageNumber < 1 || pageSize < 1)
                 {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Year must be greater than 1900");
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
                 }
+
+                // Validate year range
+                if (yearSearch.HasValue)
+                {
+                    int currentYear = DateTime.UtcNow.Year;
+                    if (yearSearch < MIN_YEAR)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Year must be greater than 1900");
+                    }
+                }
+
+                // Validate date range
+                if (startDate.HasValue && endDate.HasValue && startDate.Value > endDate.Value)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
+                }
+
+                // Get contest repository
+                var contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                // Get all available contests
+                IQueryable<Contest> query = contestRepo.Entities.Where(c => !c.DeletedAt.HasValue);
+
+                // Apply filters if provided
+                if (idSearch.HasValue)
+                {
+                    query = query.Where(c => c.ContestId == idSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(nameSearch))
+                {
+                    query = query.Where(c => c.Name.Contains(nameSearch));
+                }
+
+                if (yearSearch.HasValue)
+                {
+                    query = query.Where(c => c.Year == yearSearch.Value);
+                }
+
+                if (startDate.HasValue)
+                {
+                    query = query.Where(c => c.CreatedAt >= startDate.Value);
+                }
+
+                if (endDate.HasValue)
+                {
+                    query = query.Where(c => c.CreatedAt <= endDate.Value);
+                }
+
+                // Order by creation date (newest first)
+                query = query.OrderByDescending(c => c.CreatedAt);
+
+                // Change to paginated list to facilitate mapping process
+                PaginatedList<Contest> resultQuery = await contestRepo.GetPagging(query, pageNumber, pageSize);
+
+                // Map the result to DTO
+                IReadOnlyCollection<GetContestDTO> result = resultQuery.Items.Select(item =>
+                {
+                    GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(item);
+
+                    return contestDTO;
+                }).ToList();
+
+                // Create a new paginated list with the mapped DTOs
+                PaginatedList<GetContestDTO> paginatedList = new PaginatedList<GetContestDTO>(result, resultQuery.TotalCount, resultQuery.PageNumber, resultQuery.PageSize);
+
+                // Return the paginated list of DTOs
+                return paginatedList;
             }
-
-            // Validate date range
-            if (startDate.HasValue && endDate.HasValue && startDate.Value > endDate.Value)
+            catch (Exception ex)
             {
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving Contests: {ex.Message}");
             }
-
-            // Get contest repository
-            var contestRepo = _unitOfWork.GetRepository<Contest>();
-
-            // Get all available contests
-            IQueryable<Contest> query = contestRepo.Entities.Where(c => !c.DeletedAt.HasValue);
-            
-            // Apply filters if provided
-            if (idSearch.HasValue)
-            {
-                query = query.Where(c => c.ContestId == idSearch.Value);
-            }
-            
-            if (!string.IsNullOrWhiteSpace(nameSearch))
-            {
-                query = query.Where(c => c.Name.Contains(nameSearch));
-            }
-            
-            if (yearSearch.HasValue)
-            {
-                query = query.Where(c => c.Year == yearSearch.Value);
-            }
-            
-            if (startDate.HasValue)
-            {
-                query = query.Where(c => c.CreatedAt >= startDate.Value);
-            }
-            
-            if (endDate.HasValue)
-            {
-                query = query.Where(c => c.CreatedAt <= endDate.Value);
-            }
-            
-            // Order by creation date (newest first)
-            query = query.OrderByDescending(c => c.CreatedAt);
-
-            // Change to paginated list to facilitate mapping process
-            PaginatedList<Contest> resultQuery = await contestRepo.GetPagging(query, pageNumber, pageSize);
-
-            // Map the result to DTO
-            IReadOnlyCollection<GetContestDTO> result = resultQuery.Items.Select(item =>
-            {
-                GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(item);
-
-                return contestDTO;
-            }).ToList();
-
-            // Create a new paginated list with the mapped DTOs
-            PaginatedList<GetContestDTO> paginatedList = new PaginatedList<GetContestDTO>(result, resultQuery.TotalCount, resultQuery.PageNumber, resultQuery.PageSize);
-
-            // Return the paginated list of DTOs
-            return paginatedList;
         }
 
         public async Task PublishContest(Guid id)
@@ -241,11 +254,13 @@ namespace BusinessLogic.Services
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error publishing Contests: {ex.Message}");
             }
         }
 
@@ -296,11 +311,13 @@ namespace BusinessLogic.Services
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error updating Contests: {ex.Message}");
             }
         }
     }

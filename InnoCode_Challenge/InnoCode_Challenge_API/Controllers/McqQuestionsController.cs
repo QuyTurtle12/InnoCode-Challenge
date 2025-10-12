@@ -1,16 +1,13 @@
 ﻿using BusinessLogic.IServices;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.McqQuestionDTOs;
-using Repository.DTOs.RoundDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers
 {
-    [Route("api/[controller]")]
+    [Route("api/mcq-questions")]
     [ApiController]
     public class McqQuestionsController : ControllerBase
     {

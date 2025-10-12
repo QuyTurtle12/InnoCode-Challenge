@@ -1,5 +1,4 @@
-﻿using Repository.DTOs.ContestDTOs;
-using Repository.DTOs.McqQuestionDTOs;
+﻿using Repository.DTOs.McqQuestionDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices

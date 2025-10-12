@@ -185,7 +185,10 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IContestService, ContestService>();
             services.AddScoped<IRoundService, RoundService>();
             services.AddScoped<IMcqQuestionService, McqQuestionService>();
+            services.AddScoped<IMcqOptionService, McqOptionService>();
+            services.AddScoped<IMcqTestQuestionService, McqTestQuestionService>();
+            services.AddScoped<IMcqAttemptService, McqAttemptService>();
+            services.AddScoped<IMcqAttemptItemService, McqAttemptItemService>();
         }
-
     }
 }
