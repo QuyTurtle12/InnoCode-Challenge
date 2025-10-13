@@ -2,7 +2,7 @@
 using Repository.IRepositories;
 using Utility.ExceptionCustom;
 
-namespace Product_Sale_API.Middleware
+namespace InnoCode_Challenge_API.Middleware
 {
     /// <summary>
     /// 

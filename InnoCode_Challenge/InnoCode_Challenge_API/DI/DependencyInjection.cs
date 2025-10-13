@@ -186,6 +186,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IStudentService, StudentService>();
             services.AddScoped<ITeamService, TeamService>();
             services.AddScoped<IMentorService, MentorService>();
+            services.AddScoped<ITeamMemberService, TeamMemberService>();
         }
 
     }

@@ -1,6 +1,6 @@
 ﻿using InnoCode_Challenge_API.DI;
+using InnoCode_Challenge_API.Middleware;
 using Microsoft.EntityFrameworkCore;
-using Product_Sale_API.Middleware;
 using Utility.Helpers;
 
 var builder = WebApplication.CreateBuilder(args);
