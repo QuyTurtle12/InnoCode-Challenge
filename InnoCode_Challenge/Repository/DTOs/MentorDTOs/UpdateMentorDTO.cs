@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using Utility.Constant;
 
 namespace Repository.DTOs.MentorDTOs
 {
@@ -7,7 +8,7 @@ namespace Repository.DTOs.MentorDTOs
         public Guid? SchoolId { get; set; }
 
         [MaxLength(20)]
-        [RegularExpression(@"^\+?[0-9]{10,11}$", ErrorMessage = "Phone must be digits (optionally starting with +), length 10-11.")]
+        [RegularExpression(ValidationConstants.VietnamPhoneRegex, ErrorMessage = ValidationConstants.VietnamPhoneErrorMessage)]
         public string? Phone { get; set; }
     }
 }

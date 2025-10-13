@@ -96,8 +96,12 @@ namespace BusinessLogic.Services
             if (!string.Equals(user.Role, RoleConstants.Mentor, StringComparison.Ordinal))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "USER_NOT_MENTOR", "User role must be Mentor.");
 
-            if (!string.Equals(user.Status, "Active", StringComparison.Ordinal))
-                throw new ErrorException(StatusCodes.Status400BadRequest, "USER_INACTIVE", "User must be Active.");
+            if (!string.Equals(user.Status, "Active", StringComparison.Ordinal) &&
+                !string.Equals(user.Status, "Inactive", StringComparison.Ordinal))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, "USER_INVALID_STATUS",
+                    "User must be Active or Inactive (pending).");
+            }
 
             bool schoolExists = await schoolRepository.Entities
                 .AnyAsync(s => s.SchoolId == dto.SchoolId && s.DeletedAt == null);
@@ -122,6 +126,14 @@ namespace BusinessLogic.Services
             };
 
             await mentorRepository.InsertAsync(mentor);
+
+            if (string.Equals(user.Status, "Inactive", StringComparison.Ordinal))
+            {
+                user.Status = "Active";
+                user.UpdatedAt = now;
+                userRepository.Update(user);
+            }
+
             await _unitOfWork.SaveAsync();
 
             var created = await mentorRepository.Entities

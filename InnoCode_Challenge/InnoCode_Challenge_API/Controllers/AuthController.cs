@@ -1,8 +1,9 @@
 ﻿using BusinessLogic.IServices;
-using Utility.Constant;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.AuthDTOs;
 using Repository.ResponseModel;
-using Microsoft.AspNetCore.Mvc;
+using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers
 {
@@ -46,5 +47,20 @@ namespace InnoCode_Challenge_API.Controllers
 
             return Ok(response);
         }
+
+        [HttpPost("register-mentor")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RegisterMentor([FromBody] RegisterMentorDTO dto)
+        {
+            var result = await _authService.RegisterMentorAsync(dto);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Mentor registration submitted. Await staff approval."
+            ));
+        }
+
     }
 }
