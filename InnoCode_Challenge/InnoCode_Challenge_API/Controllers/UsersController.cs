@@ -2,7 +2,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.UserDTOs;
-using Repository.DTOs.UserDTOs.Repository.DTOs.UserDTOs;
 using Repository.ResponseModel;
 using System;
 using System.Security.Claims;

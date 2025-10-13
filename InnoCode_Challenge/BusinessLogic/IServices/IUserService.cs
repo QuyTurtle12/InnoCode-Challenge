@@ -1,5 +1,4 @@
 ﻿using Repository.DTOs.UserDTOs;
-using Repository.DTOs.UserDTOs.Repository.DTOs.UserDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices

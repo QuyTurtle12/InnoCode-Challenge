@@ -7,14 +7,12 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Repository.DTOs.AuthDTOs;
 using Repository.IRepositories;
-using Repository.Repositories;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
-using static System.Net.WebRequestMethods;
 
 namespace BusinessLogic.Services
 {

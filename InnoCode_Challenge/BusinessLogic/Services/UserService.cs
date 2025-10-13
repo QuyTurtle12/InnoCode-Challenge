@@ -4,7 +4,6 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.UserDTOs;
-using Repository.DTOs.UserDTOs.Repository.DTOs.UserDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.ExceptionCustom;

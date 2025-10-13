@@ -11,7 +11,6 @@ namespace InnoCode_Challenge_API.Controllers
     [ApiController]
     public class RolesController : ControllerBase
     {
-        // GET: /api/roles/me  (any authenticated user)
         [HttpGet("me")]
         [Authorize]
         public IActionResult Me()
@@ -25,7 +24,6 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // GET: /api/roles/admin
         [HttpGet("admin")]
         [Authorize(Roles = RoleConstants.Admin)]
         public IActionResult CheckAdmin()
@@ -39,7 +37,6 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // GET: /api/roles/staff
         [HttpGet("staff")]
         [Authorize(Roles = RoleConstants.Staff)]
         public IActionResult CheckStaff()
@@ -53,7 +50,6 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // GET: /api/roles/student
         [HttpGet("student")]
         [Authorize(Roles = RoleConstants.Student)]
         public IActionResult CheckStudent()
@@ -67,7 +63,6 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // GET: /api/roles/mentor
         [HttpGet("mentor")]
         [Authorize(Roles = RoleConstants.Mentor)]
         public IActionResult CheckMentor()
@@ -81,7 +76,6 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // GET: /api/roles/judge
         [HttpGet("judge")]
         [Authorize(Roles = RoleConstants.Judge)]
         public IActionResult CheckJudge()
@@ -95,7 +89,6 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // GET: /api/roles/organizer
         [HttpGet("organizer")]
         [Authorize(Roles = RoleConstants.ContestOrganizer)]
         public IActionResult CheckContestOrganizer()
@@ -109,10 +102,8 @@ namespace InnoCode_Challenge_API.Controllers
             ));
         }
 
-        // ===== helpers =====
         private static object ReadJwtData(ClaimsPrincipal user)
         {
-            // Claims we commonly set in your AuthService.GenerateJwtToken()
             var userId = user.FindFirstValue(ClaimTypes.NameIdentifier)
                         ?? user.FindFirstValue(JwtRegisteredClaimNames.Sub);
             var email = user.FindFirstValue(ClaimTypes.Email)
@@ -121,7 +112,6 @@ namespace InnoCode_Challenge_API.Controllers
             var fullName = user.FindFirstValue(ClaimTypes.Name);
             var jti = user.FindFirstValue(JwtRegisteredClaimNames.Jti);
 
-            // Optional: iat/exp/iss/aud (may or may not be present depending on token handler)
             var iatStr = user.FindFirstValue(JwtRegisteredClaimNames.Iat) ?? user.FindFirst("iat")?.Value;
             var expStr = user.FindFirstValue(JwtRegisteredClaimNames.Exp) ?? user.FindFirst("exp")?.Value;
             DateTime? issuedAt = null, expiresAt = null;

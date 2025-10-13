@@ -2,7 +2,6 @@
 using Utility.Constant;
 using Repository.DTOs.AuthDTOs;
 using Repository.ResponseModel;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace InnoCode_Challenge_API.Controllers
