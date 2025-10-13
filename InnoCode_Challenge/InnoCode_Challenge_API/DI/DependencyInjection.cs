@@ -182,6 +182,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IProvinceService, ProvinceService>();
+            services.AddScoped<ISchoolService, SchoolService>();
         }
 
     }
