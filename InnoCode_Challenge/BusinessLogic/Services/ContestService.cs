@@ -195,7 +195,7 @@ namespace BusinessLogic.Services
                 query = query.OrderByDescending(c => c.CreatedAt);
 
                 // Change to paginated list to facilitate mapping process
-                PaginatedList<Contest> resultQuery = await contestRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<Contest> resultQuery = await contestRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Map the result to DTO
                 IReadOnlyCollection<GetContestDTO> result = resultQuery.Items.Select(item =>

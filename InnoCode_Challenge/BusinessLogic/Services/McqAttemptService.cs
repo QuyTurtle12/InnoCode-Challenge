@@ -117,7 +117,7 @@ namespace BusinessLogic.Services
                 query = query.OrderByDescending(a => a.Start);
 
                 // Get paginated list of entities to facilitate mapping process to DTOs
-                PaginatedList<McqAttempt> resultQuery = await mcqAttemptRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<McqAttempt> resultQuery = await mcqAttemptRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 IReadOnlyCollection<GetMcqAttemptDTO> result = resultQuery.Items.Select(item =>
                 {

@@ -125,7 +125,7 @@ namespace BusinessLogic.Services
                 // Order by CreatedAt descending
                 query = query.OrderByDescending(q => q.CreatedAt);
 
-                PaginatedList<McqQuestion> resultQuery = await mcqQuestionRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<McqQuestion> resultQuery = await mcqQuestionRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Project entities to DTOs using AutoMapper
                 IReadOnlyCollection<GetMcqQuestionDTO> result = resultQuery.Items.Select(item =>

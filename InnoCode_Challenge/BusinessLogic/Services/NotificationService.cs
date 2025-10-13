@@ -197,7 +197,7 @@ namespace BusinessLogic.Services
                 query = query.OrderByDescending(p => p.SentAt);
 
                 // Change to paginated list to facilitate mapping process
-                PaginatedList<Notification> resultQuery = await notificationRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<Notification> resultQuery = await notificationRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Map the result to DTO
                 IReadOnlyCollection<GetNotificationDTO> result = resultQuery.Items.Select(item =>

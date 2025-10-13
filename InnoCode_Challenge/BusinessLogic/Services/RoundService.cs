@@ -164,7 +164,7 @@ namespace BusinessLogic.Services
                 }
 
                 // Change to paginated list to facilitate mapping process
-                PaginatedList<Round> resultQuery = await roundRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<Round> resultQuery = await roundRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Map entities to DTOs
                 IReadOnlyCollection<GetRoundDTO> result = resultQuery.Items.Select(item =>

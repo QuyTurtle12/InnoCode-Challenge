@@ -87,7 +87,7 @@ namespace BusinessLogic.Services
                     query = query.Where(item => item.Question.Text != null && item.Question.Text.ToLower().Contains(questionText.ToLower()));
 
                 // Get paginated data
-                PaginatedList<McqAttemptItem> resultQuery = await mcqAttemptItemRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<McqAttemptItem> resultQuery = await mcqAttemptItemRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Map entities to DTOs
                 IReadOnlyCollection<GetMcqAttemptItemDTO> result = resultQuery.Items.Select(item => 

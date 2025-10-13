@@ -112,7 +112,7 @@ namespace BusinessLogic.Services
                 }
 
                 // Get paginated list to facilitate mapping to DTOs
-                PaginatedList<McqTest> paginatedMcqTests = await mcqTestRepo.GetPagging(query, pageNumber, pageSize);
+                PaginatedList<McqTest> paginatedMcqTests = await mcqTestRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Map to DTOs
                 IReadOnlyCollection<GetMcqTestDTO> mcqTestDTOs = paginatedMcqTests.Items.Select(item => {
