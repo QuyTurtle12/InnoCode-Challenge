@@ -93,7 +93,7 @@ namespace Repository.Repositories
             await _dbSet.AddRangeAsync(obj);
         }
 
-        public async Task<PaginatedList<T>> GetPagging(IQueryable<T> query, int index, int pageSize)
+        public async Task<PaginatedList<T>> GetPagingAsync(IQueryable<T> query, int index, int pageSize)
         {
             return await query.GetPaginatedList(index, pageSize);
         }

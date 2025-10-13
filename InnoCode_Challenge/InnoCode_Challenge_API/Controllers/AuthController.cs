@@ -18,16 +18,9 @@ namespace InnoCode_Challenge_API.Controllers
         {
             _authService = authService;
         }
-
-        /// <summary>
-        /// Register a new user
-        /// </summary>
-        /// <param name="dto"></param>
-        /// <returns></returns>
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterUserDTO dto)
         {
-            // ModelState is automatically validated by ASP.NET Core because of [ApiController].
             var result = await _authService.RegisterAsync(dto);
 
             var response = new BaseResponseModel<AuthResponseDTO>(
@@ -40,11 +33,6 @@ namespace InnoCode_Challenge_API.Controllers
             return Ok(response);
         }
 
-        /// <summary>
-        /// Login and receive JWT
-        /// </summary>
-        /// <param name="dto"></param>
-        /// <returns></returns>
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDTO dto)
         {
