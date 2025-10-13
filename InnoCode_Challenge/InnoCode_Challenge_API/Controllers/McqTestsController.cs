@@ -48,7 +48,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateMcqTest([FromBody] CreateMcqTestDTO mcqTestDTO)
         {
-            await _mcqTestService.CreateMcqTest(mcqTestDTO);
+            await _mcqTestService.CreateMcqTestAsync(mcqTestDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
@@ -65,7 +65,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateMcqTest(Guid id, [FromBody] UpdateMcqTestDTO mcqTestDTO)
         {
-            await _mcqTestService.UpdateMcqTest(id, mcqTestDTO);
+            await _mcqTestService.UpdateMcqTestAsync(id, mcqTestDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
@@ -80,7 +80,7 @@ namespace InnoCode_Challenge_API.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> DeleteMcqTest(Guid id)
         {
-            await _mcqTestService.DeleteMcqTest(id);
+            await _mcqTestService.DeleteMcqTestAsync(id);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,

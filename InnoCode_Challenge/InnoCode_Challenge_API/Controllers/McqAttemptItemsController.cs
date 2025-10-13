@@ -55,7 +55,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPost]
         public async Task<ActionResult> CreateMcqAttemptItem([FromBody] CreateMcqAttemptItemDTO mcqAttemptItemDTO)
         {
-            await _mcqAttemptItemService.CreateMcqAttemptItem(mcqAttemptItemDTO);
+            await _mcqAttemptItemService.CreateMcqAttemptItemAsync(mcqAttemptItemDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,

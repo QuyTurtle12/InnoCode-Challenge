@@ -24,7 +24,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateMcqAttempt(CreateMcqAttemptDTO mcqAttemptDTO)
+        public async Task CreateMcqAttemptAsync(CreateMcqAttemptDTO mcqAttemptDTO)
         {
             try
             {

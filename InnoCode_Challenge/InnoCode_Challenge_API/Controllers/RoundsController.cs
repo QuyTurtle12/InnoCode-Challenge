@@ -51,7 +51,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateRound(CreateRoundDTO roundDTO)
         {
-            await _roundService.CreateRound(roundDTO);
+            await _roundService.CreateRoundAsync(roundDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
@@ -65,7 +65,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateRound(Guid id, UpdateRoundDTO roundDTO)
         {
-            await _roundService.UpdateRound(id, roundDTO);
+            await _roundService.UpdateRoundAsync(id, roundDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
@@ -79,7 +79,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteRound(Guid id)
         {
-            await _roundService.DeleteRound(id);
+            await _roundService.DeleteRoundAsync(id);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,

@@ -6,6 +6,6 @@ namespace BusinessLogic.IServices
     public interface IMcqAttemptService
     {
         Task<PaginatedList<GetMcqAttemptDTO>> GetPaginatedMcqAttemptAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? testIdSearch, Guid? roundIdSearch, Guid? studentIdSearch, string? testName, string? roundName, string? studentName);
-        Task CreateMcqAttempt(CreateMcqAttemptDTO mcqAttemptDTO);
+        Task CreateMcqAttemptAsync(CreateMcqAttemptDTO mcqAttemptDTO);
     }
 }

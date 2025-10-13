@@ -24,7 +24,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateNotification(BaseNotificationDTO notificationDTO)
+        public async Task CreateNotificationAsync(BaseNotificationDTO notificationDTO)
         {
             try
             {

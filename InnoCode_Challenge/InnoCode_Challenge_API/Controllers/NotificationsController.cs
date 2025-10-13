@@ -72,7 +72,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPost]
         public async Task<IActionResult> SendGeneralNotificationAsync(CreateGeneralNotificationDTO notificationDTO)
         {
-            await _notificationService.CreateNotification(notificationDTO);
+            await _notificationService.CreateNotificationAsync(notificationDTO);
 
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status201Created,

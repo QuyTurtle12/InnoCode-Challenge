@@ -22,7 +22,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateMcqOption(CreateMcqOptionDTO mcqOptionDTO)
+        public async Task CreateMcqOptionAsync(CreateMcqOptionDTO mcqOptionDTO)
         {
             try
             {
@@ -54,7 +54,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task DeleteMcqOption(Guid id)
+        public async Task DeleteMcqOptionAsync(Guid id)
         {
             try
             {
@@ -141,7 +141,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task UpdateMcqOption(Guid id, UpdateMcqOptionDTO mcqOptionDTO)
+        public async Task UpdateMcqOptionAsync(Guid id, UpdateMcqOptionDTO mcqOptionDTO)
         {
             try
             {

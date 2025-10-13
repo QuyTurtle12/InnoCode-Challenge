@@ -24,7 +24,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateContest(CreateContestDTO contestDTO)
+        public async Task CreateContestAsync(CreateContestDTO contestDTO)
         {
             try
             {
@@ -79,7 +79,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task DeleteContest(Guid id)
+        public async Task DeleteContestAsync(Guid id)
         {
             try
             {
@@ -219,7 +219,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task PublishContest(Guid id)
+        public async Task PublishContestAsync(Guid id)
         {
             try
             {
@@ -264,7 +264,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task UpdateContest(Guid id, UpdateContestDTO contestDTO)
+        public async Task UpdateContestAsync(Guid id, UpdateContestDTO contestDTO)
         {
             try
             {

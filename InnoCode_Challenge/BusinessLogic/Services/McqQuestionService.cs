@@ -24,7 +24,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateMcqQuestion(CreateMcqQuestionDTO mcqQuestionDTO)
+        public async Task CreateMcqQuestionAsync(CreateMcqQuestionDTO mcqQuestionDTO)
         {
             try
             {
@@ -55,7 +55,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task DeleteMcqQuestion(Guid id)
+        public async Task DeleteMcqQuestionAsync(Guid id)
         {
             try
             {
@@ -165,7 +165,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task UpdateMcqQuestion(Guid id, UpdateMcqQuestionDTO mcqQuestionDTO)
+        public async Task UpdateMcqQuestionAsync(Guid id, UpdateMcqQuestionDTO mcqQuestionDTO)
         {
             try
             {

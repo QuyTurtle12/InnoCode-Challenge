@@ -22,7 +22,7 @@ namespace BusinessLogic.Services
             _unitOfWork = unitOfWork;
         }
 
-        public async Task CreateRound(CreateRoundDTO roundDTO)
+        public async Task CreateRoundAsync(CreateRoundDTO roundDTO)
         {
             try
             {
@@ -72,7 +72,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task DeleteRound(Guid id)
+        public async Task DeleteRoundAsync(Guid id)
         {
             try
             {
@@ -193,7 +193,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task UpdateRound(Guid id, UpdateRoundDTO roundDTO)
+        public async Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO)
         {
             try
             {

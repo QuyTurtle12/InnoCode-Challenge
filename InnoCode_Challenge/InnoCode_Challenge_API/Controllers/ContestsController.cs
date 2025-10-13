@@ -57,7 +57,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateContest(CreateContestDTO contestDTO)
         {
-            await _contestService.CreateContest(contestDTO);
+            await _contestService.CreateContestAsync(contestDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
@@ -74,7 +74,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateContest(Guid id, UpdateContestDTO contestDTO)
         {
-            await _contestService.UpdateContest(id, contestDTO);
+            await _contestService.UpdateContestAsync(id, contestDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
@@ -90,7 +90,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPut("{id}/publish")]
         public async Task<IActionResult> PublishedContest(Guid id)
         {
-            await _contestService.PublishContest(id);
+            await _contestService.PublishContestAsync(id);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
@@ -106,7 +106,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteContest(Guid id)
         {
-            await _contestService.DeleteContest(id);
+            await _contestService.DeleteContestAsync(id);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,

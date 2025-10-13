@@ -23,7 +23,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateMcqAttemptItem(CreateMcqAttemptItemDTO mcqAttemptItemDTO)
+        public async Task CreateMcqAttemptItemAsync(CreateMcqAttemptItemDTO mcqAttemptItemDTO)
         {
             try
             {

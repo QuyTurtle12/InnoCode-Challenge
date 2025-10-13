@@ -22,7 +22,7 @@ namespace BusinessLogic.Services
             _unitOfWork = uow;
         }
 
-        public async Task CreateMcqTest(CreateMcqTestDTO mcqTestDTO)
+        public async Task CreateMcqTestAsync(CreateMcqTestDTO mcqTestDTO)
         {
             try
             {
@@ -54,7 +54,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task DeleteMcqTest(Guid id)
+        public async Task DeleteMcqTestAsync(Guid id)
         {
             try
             {
@@ -136,7 +136,7 @@ namespace BusinessLogic.Services
             }
         }
 
-        public async Task UpdateMcqTest(Guid id, UpdateMcqTestDTO mcqTestDTO)
+        public async Task UpdateMcqTestAsync(Guid id, UpdateMcqTestDTO mcqTestDTO)
         {
             try
             {

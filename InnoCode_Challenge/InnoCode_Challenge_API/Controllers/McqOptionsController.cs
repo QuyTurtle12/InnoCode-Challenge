@@ -40,7 +40,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPost]
         public async Task<IActionResult> CreateMcqOption(CreateMcqOptionDTO mcqOptionDTO)
         {
-            await _mcqOptionService.CreateMcqOption(mcqOptionDTO);
+            await _mcqOptionService.CreateMcqOptionAsync(mcqOptionDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
@@ -54,7 +54,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateMcqOption(Guid id, UpdateMcqOptionDTO mcqOptionDTO)
         {
-            await _mcqOptionService.UpdateMcqOption(id, mcqOptionDTO);
+            await _mcqOptionService.UpdateMcqOptionAsync(id, mcqOptionDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
@@ -68,7 +68,7 @@ namespace InnoCode_Challenge_API.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteMcqOption(Guid id)
         {
-            await _mcqOptionService.DeleteMcqOption(id);
+            await _mcqOptionService.DeleteMcqOptionAsync(id);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,

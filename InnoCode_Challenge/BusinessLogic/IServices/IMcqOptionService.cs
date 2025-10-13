@@ -6,8 +6,8 @@ namespace BusinessLogic.IServices
     public interface IMcqOptionService
     {
         Task<PaginatedList<GetMcqOptionDTO>> GetPaginatedMcqOptionAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? questionIdSearch);
-        Task CreateMcqOption(CreateMcqOptionDTO mcqOptionDTO);
-        Task UpdateMcqOption(Guid id, UpdateMcqOptionDTO mcqOptionDTO);
-        Task DeleteMcqOption(Guid id);
+        Task CreateMcqOptionAsync(CreateMcqOptionDTO mcqOptionDTO);
+        Task UpdateMcqOptionAsync(Guid id, UpdateMcqOptionDTO mcqOptionDTO);
+        Task DeleteMcqOptionAsync(Guid id);
     }
 }
