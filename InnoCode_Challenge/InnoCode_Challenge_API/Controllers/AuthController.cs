@@ -47,28 +47,5 @@ namespace InnoCode_Challenge_API.Controllers
 
             return Ok(response);
         }
-
-        [HttpGet("test/AdminOrExpert")]
-        [Authorize(Policy = "RequireExpertOrAdmin")]
-        public async Task<IActionResult> RequireExpertOrAdmin()
-        {
-            return Ok();
-        }
-
-        [HttpGet("test/admin")]
-        [Authorize(Policy = "RequireAdminRole")]
-        public async Task<IActionResult> RequireAdminRole()
-        {
-            return Ok();
-        }
-
-        [HttpGet("test/user")]
-        [Authorize(Policy = "RequireAnyUserRole")]
-        public async Task<IActionResult> RequireAnyUserRole()
-        {
-            return Ok();
-        }
-
-
     }
 }

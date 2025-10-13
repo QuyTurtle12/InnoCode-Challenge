@@ -1,17 +1,20 @@
 ﻿using AutoMapper;
-using Utility.Helpers;
 using BusinessLogic.IServices;
-using Utility.Constant;
-using Repository.DTOs.AuthDTOs;
 using DataAccess.Entities;
-using Utility.ExceptionCustom;
-using Repository.IRepositories;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Repository.DTOs.AuthDTOs;
+using Repository.IRepositories;
+using Repository.Repositories;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Utility.Constant;
+using Utility.ExceptionCustom;
+using Utility.Helpers;
+using static System.Net.WebRequestMethods;
 
 namespace BusinessLogic.Services
 {
@@ -36,17 +39,11 @@ namespace BusinessLogic.Services
 
         public async Task<AuthResponseDTO> RegisterAsync(RegisterUserDTO dto)
         {
-            // Check if email already exists
+            var email = NormalizeEmail(dto.Email);
+
             var userRepo = _unitOfWork.GetRepository<User>();
             bool emailExists = userRepo.Entities.Any(u => u.Email == dto.Email);
-            if (string.IsNullOrWhiteSpace(dto.Email) || !dto.Email.EndsWith("@gmail.com", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ErrorException(
-                    StatusCodes.Status400BadRequest,
-                    "INVALID_EMAIL",
-                    "Only @gmail.com emails are allowed."
-                );
-            }
+
             if (emailExists)
                 throw new ErrorException(
                   StatusCodes.Status400BadRequest,
@@ -54,74 +51,66 @@ namespace BusinessLogic.Services
                   "Email is already registered."
                 );
 
-            // Create new User entity
-            var newUser = new User
+            var now = DateTime.UtcNow;
+
+            var user = new User
             {
-                Fullname = dto.FullName,
-                Email = dto.Email,
+                UserId = Guid.NewGuid(),
+                Fullname = dto.FullName.Trim(),
+                Email = email,
                 PasswordHash = PasswordHasher.Hash(dto.Password),
                 Role = RoleConstants.Student,
-                Status = "Active"
+                Status = "Active",
+                CreatedAt = now,
+                UpdatedAt = now
             };
 
-            // Insert into database
-            await userRepo.InsertAsync(newUser);
+            await userRepo.InsertAsync(user);
             await _unitOfWork.SaveAsync();
 
-            // Generate JWT
-            var tokenString = GenerateJwtToken(newUser);
+            var token = GenerateJwtToken(user);
 
             return new AuthResponseDTO
             {
-                Token = tokenString,
+                Token = token,
                 ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
-                UserId = newUser.UserId.ToString(),
-                Role = RoleConstants.Student,
-                FullName = newUser.Fullname!,
-                Email = newUser.Email!
+                UserId = user.UserId.ToString(),
+                Role = user.Role,
+                FullName = user.Fullname,
+                Email = user.Email
             };
         }
 
         public async Task<AuthResponseDTO> LoginAsync(LoginDTO dto)
         {
-            // Look up user by email
+            var email = NormalizeEmail(dto.Email);
             var userRepo = _unitOfWork.GetRepository<User>();
-            var user = userRepo.Entities.FirstOrDefault(u => u.Email == dto.Email);
-            if (user == null)
-                throw new ErrorException(
-                  StatusCodes.Status401Unauthorized,
-                  "INVALID_CREDENTIALS",
-                  "Email or password is incorrect."
-                );
 
-            // Verify password
-            bool validPassword = PasswordHasher.Verify(dto.Password, user.PasswordHash!);
-            if (!validPassword)
-                throw new ErrorException(
-                  StatusCodes.Status401Unauthorized,
-                  "INVALID_CREDENTIALS",
-                  "Email or password is incorrect."
-                );
+            var user = await userRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
 
-            // Check if user is active
-            if (!user.Status.Equals("Active"))
+            if (user == null || !PasswordHasher.Verify(dto.Password, user.PasswordHash))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS", "Email or password is incorrect.");
+
+
+            if (!string.Equals(user.Status, "Active", StringComparison.Ordinal))
                 throw new ErrorException(
                   StatusCodes.Status403Forbidden,
                   "USER_INACTIVE",
                   "Your account has been disabled."
                 );
 
-            // Generate JWT
-            var tokenString = GenerateJwtToken(user);
+            var token = GenerateJwtToken(user);
 
             return new AuthResponseDTO
             {
-                Token = tokenString,
+                Token = token,
                 ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
                 UserId = user.UserId.ToString(),
                 Role = user.Role,
-                FullName = user.Fullname!,
-                Email = user.Email!
+                FullName = user.Fullname,
+                Email = user.Email
             };
         }
 
@@ -130,19 +119,22 @@ namespace BusinessLogic.Services
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-            // Create claims: subject = user.Id, email, role
-            var claims = new[]
+            var claims = new List<Claim>
             {
-                new Claim(JwtRegisteredClaimNames.Sub,   user.UserId.ToString()),
-                new Claim(JwtRegisteredClaimNames.Email, user.Email!),
-                new Claim(ClaimTypes.Role,               user.Role),
-                new Claim(JwtRegisteredClaimNames.Jti,   Guid.NewGuid().ToString())
+                new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new Claim(ClaimTypes.NameIdentifier,    user.UserId.ToString()), 
+                new Claim(JwtRegisteredClaimNames.Email,user.Email),
+                new Claim(ClaimTypes.Role,              user.Role),
+                new Claim(ClaimTypes.Name,              user.Fullname ?? string.Empty),
+                new Claim(JwtRegisteredClaimNames.Jti,  Guid.NewGuid().ToString()),
+                new Claim(JwtRegisteredClaimNames.Iat,  EpochTime.GetIntDate(DateTime.UtcNow).ToString(), ClaimValueTypes.Integer64),
             };
 
             var token = new JwtSecurityToken(
                 issuer: _jwtSettings.Issuer,
                 audience: _jwtSettings.Audience,
                 claims: claims,
+                notBefore: DateTime.UtcNow,
                 expires: DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
                 signingCredentials: creds
             );
@@ -150,16 +142,18 @@ namespace BusinessLogic.Services
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
-        public Task<User?> GetCurrentLoggedInUser()
+        public async Task<User?> GetCurrentLoggedInUser()
         {
-            // Get the current user's ID from the JWT claims
-            string? currentId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            var currentId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                       ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue(JwtRegisteredClaimNames.Sub);
 
-            // If no ID is found, return null
-            if (string.IsNullOrWhiteSpace(currentId)) return Task.FromResult<User?>(null);
+            if (string.IsNullOrWhiteSpace(currentId) || !Guid.TryParse(currentId, out var id))
+                return null;
 
-            // Fetch the user from the database by ID
-            return _unitOfWork.GetRepository<User>().GetByIdAsync(Guid.Parse(currentId));
+            return await _unitOfWork.GetRepository<User>().GetByIdAsync(id);
         }
+
+        private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
     }
 }
