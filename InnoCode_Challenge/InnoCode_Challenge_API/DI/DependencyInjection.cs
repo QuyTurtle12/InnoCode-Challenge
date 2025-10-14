@@ -89,21 +89,33 @@ namespace InnoCode_Challenge_API.DI
 
         public static void AddAuthor(this IServiceCollection services, IConfiguration configuration)
         {
-            // Configure role‐based policies
             services.AddAuthorization(options =>
             {
-                // Only Admin can do certain things
-                options.AddPolicy("RequireAdminRole", policy =>
-                  policy.RequireRole(RoleConstants.Admin));
+                options.AddPolicy("RequireAdminRole",
+                    policy => policy.RequireRole(RoleConstants.Admin));
 
-                // Staff OR Admin
-                options.AddPolicy("RequireStaffOrAdmin", policy =>
-                  policy.RequireRole(RoleConstants.Staff, RoleConstants.Admin));
+                options.AddPolicy("RequireStaffOrAdmin",
+                    policy => policy.RequireRole(RoleConstants.Staff, RoleConstants.Admin));
 
-                // Any authenticated User (including Staff/Admin)
-                options.AddPolicy("RequireAnyUserRole", policy =>
-                  policy.RequireRole(RoleConstants.Student, RoleConstants.Staff, RoleConstants.Admin));
+                options.AddPolicy("RequireAnyUserRole",
+                    policy => policy.RequireRole(
+                        RoleConstants.Student,
+                        RoleConstants.Mentor,
+                        RoleConstants.Judge,
+                        RoleConstants.Staff,
+                        RoleConstants.ContestOrganizer,
+                        RoleConstants.Admin));
+
+                options.AddPolicy("RequireMentorRole",
+                    policy => policy.RequireRole(RoleConstants.Mentor));
+
+                options.AddPolicy("RequireJudgeRole",
+                    policy => policy.RequireRole(RoleConstants.Judge));
+
+                options.AddPolicy("RequireOrganizerOrAdmin",
+                    policy => policy.RequireRole(RoleConstants.ContestOrganizer, RoleConstants.Admin));
             });
+        
         }
 
         public static void ConfigSwagger(this IServiceCollection services, IConfiguration configuration)
@@ -187,7 +199,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ITeamService, TeamService>();
             services.AddScoped<IMentorService, MentorService>();
             services.AddScoped<ITeamMemberService, TeamMemberService>();
+            services.AddScoped<IMentorRegistrationService, MentorRegistrationService>();
         }
-
     }
 }

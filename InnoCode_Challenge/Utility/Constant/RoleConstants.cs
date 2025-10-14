@@ -7,7 +7,7 @@
         public const string Judge = "Judge";
         public const string Admin = "Admin";
         public const string Staff = "Staff";
-        public const string ContestOrganizer = "Contest Organizer";
+        public const string ContestOrganizer = "Organizer";
 
         public const string RoleRegexPattern =
         "^(" + Student + "|" + Mentor + "|" + Judge + "|" + Staff + "|" + Admin + "|" + ContestOrganizer + ")$";

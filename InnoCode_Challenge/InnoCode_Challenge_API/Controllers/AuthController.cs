@@ -47,20 +47,5 @@ namespace InnoCode_Challenge_API.Controllers
 
             return Ok(response);
         }
-
-        [HttpPost("register-mentor")]
-        [AllowAnonymous]
-        public async Task<IActionResult> RegisterMentor([FromBody] RegisterMentorDTO dto)
-        {
-            var result = await _authService.RegisterMentorAsync(dto);
-
-            return Ok(new BaseResponseModel<object>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: result,
-                message: "Mentor registration submitted. Await staff approval."
-            ));
-        }
-
     }
 }

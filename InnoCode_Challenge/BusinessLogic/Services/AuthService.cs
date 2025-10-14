@@ -139,47 +139,6 @@ namespace BusinessLogic.Services
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
-
-        public async Task<MentorRegistrationAckDTO> RegisterMentorAsync(RegisterMentorDTO dto)
-        {
-            var userRepo = _unitOfWork.GetRepository<User>();
-
-            var email = dto.Email.Trim().ToLowerInvariant();
-
-            bool emailExists = await userRepo.Entities.AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
-            if (emailExists)
-                throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_EXISTS",
-                    "Email is already registered. Please log in or reset your password.");
-
-            var now = DateTime.UtcNow;
-
-            var user = new User
-            {
-                UserId = Guid.NewGuid(),
-                Fullname = dto.Fullname.Trim(),
-                Email = email,
-                PasswordHash = PasswordHasher.Hash(dto.Password),
-                Role = RoleConstants.Mentor,    
-                Status = "Inactive",              
-                CreatedAt = now,
-                UpdatedAt = now,
-                DeletedAt = null
-            };
-
-            await userRepo.InsertAsync(user);
-            await _unitOfWork.SaveAsync();
-
-            return new MentorRegistrationAckDTO
-            {
-                UserId = user.UserId,
-                Fullname = user.Fullname,
-                Email = user.Email,
-                Status = user.Status,
-                Message = "Registration received. A staff member will review and activate your account."
-            };
-        }
-
-
         public async Task<User?> GetCurrentLoggedInUser()
         {
             var currentId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
