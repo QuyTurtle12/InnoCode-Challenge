@@ -196,6 +196,12 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IAppealEvidenceService, AppealEvidenceService>();
             services.AddScoped<IProblemService, ProblemService>();
             services.AddScoped<ITestCaseService, TestCaseService>();
+            services.AddScoped<IProvinceService, ProvinceService>();
+            services.AddScoped<ISchoolService, SchoolService>();
+            services.AddScoped<IStudentService, StudentService>();
+            services.AddScoped<ITeamService, TeamService>();
+            services.AddScoped<IMentorService, MentorService>();
+            services.AddScoped<ITeamMemberService, TeamMemberService>();
         }
     }
 }

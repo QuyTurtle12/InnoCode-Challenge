@@ -1,6 +1,4 @@
 ﻿using AutoMapper;
-using Utility.Helpers;
-using Utility.Constant;
 using Repository.DTOs.UserDTOs;
 using DataAccess.Entities;
 
