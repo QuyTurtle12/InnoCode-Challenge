@@ -1,0 +1,13 @@
+﻿using Repository.DTOs.ProblemDTOs;
+using Utility.PaginatedList;
+
+namespace BusinessLogic.IServices
+{
+    public interface IProblemService
+    {
+        Task<PaginatedList<GetProblemDTO>> GetPaginatedProblemAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? roundIdsearch, string? roundNameSearch);
+        Task CreateProblemAsync(CreateProblemDTO problemDTO);
+        Task UpdateProblemAsync(Guid id, UpdateProblemDTO problemDTO);
+        Task DeleteProblemAsync(Guid id);
+    }
+}
