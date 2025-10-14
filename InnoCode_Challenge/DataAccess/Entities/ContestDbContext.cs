@@ -347,7 +347,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<LeaderboardEntry>(entity =>
         {
-            entity.HasKey(e => e.EntryId).HasName("PK__leaderbo__810FDCE189CED720");
+            entity.HasKey(e => new {e.EntryId, e.ContestId, e.TeamId}).HasName("PK__leaderbo__810FDCE189CED720");
 
             entity.ToTable("leaderboard_entries");
 
@@ -575,7 +575,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Notification>(entity =>
         {
-            entity.HasKey(e => e.NotificationId).HasName("PK__notifica__E059842F12BA051E");
+            entity.HasKey(e => new { e.NotificationId, e.UserId }).HasName("PK__notifica__E059842F12BA051E");
 
             entity.ToTable("notifications");
 

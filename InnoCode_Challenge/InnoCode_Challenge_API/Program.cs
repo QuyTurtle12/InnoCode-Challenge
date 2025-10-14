@@ -1,4 +1,5 @@
-﻿using InnoCode_Challenge_API.DI;
+using System.Text.Json.Serialization;
+using InnoCode_Challenge_API.DI;
 using InnoCode_Challenge_API.Middleware;
 using Microsoft.EntityFrameworkCore;
 using Utility.Helpers;
@@ -11,7 +12,12 @@ builder.Services.Configure<CloudinarySettings>(
 builder.Services.AddHttpClient();
 // Add services to the container.
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+        {
+            // Serialize enums as strings
+            options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        });
 builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddHttpContextAccessor();
