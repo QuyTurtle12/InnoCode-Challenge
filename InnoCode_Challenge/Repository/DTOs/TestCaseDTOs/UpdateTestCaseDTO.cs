@@ -8,6 +8,6 @@ namespace Repository.DTOs.TestCaseDTOs
     {
         [EnumDataType(typeof(TestCaseTypeEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]
-        public TestCaseTypeEnum Type { get; set; } = TestCaseTypeEnum.Sample;
+        public TestCaseTypeEnum Type { get; set; } = TestCaseTypeEnum.Private;
     }
 }
