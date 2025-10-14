@@ -202,6 +202,9 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ITeamService, TeamService>();
             services.AddScoped<IMentorService, MentorService>();
             services.AddScoped<ITeamMemberService, TeamMemberService>();
+            services.AddScoped<ISubmissionService, SubmissionService>();
+            services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
+            services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
         }
     }
 }
