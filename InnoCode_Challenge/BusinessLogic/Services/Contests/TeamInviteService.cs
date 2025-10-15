@@ -28,8 +28,11 @@ namespace BusinessLogic.Services
             _mapper = mapper;
         }
 
-        public async Task<PaginatedList<TeamInviteDTO>> GetForTeamAsync(Guid teamId, TeamInviteQueryParams query,
-            Guid requesterUserId, string requesterRole)
+        public async Task<PaginatedList<TeamInviteDTO>> GetForTeamAsync(
+            Guid teamId,
+            TeamInviteQueryParams query,
+            Guid requesterUserId,
+            string requesterRole)
         {
             await EnsureTeamAccessAsync(teamId, requesterUserId, requesterRole);
 
@@ -61,8 +64,11 @@ namespace BusinessLogic.Services
             return new PaginatedList<TeamInviteDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
 
-        public async Task<TeamInviteDTO> CreateAsync(Guid teamId, CreateTeamInviteDTO dto,
-            Guid invitedByUserId, string invitedByRole)
+        public async Task<TeamInviteCreatedDTO> CreateAsync(
+            Guid teamId,
+            CreateTeamInviteDTO dto,
+            Guid invitedByUserId,
+            string invitedByRole)
         {
             await EnsureTeamAccessAsync(teamId, invitedByUserId, invitedByRole);
 
@@ -134,7 +140,7 @@ namespace BusinessLogic.Services
                         "Student is already on a team for this contest.");
             }
 
-            // Time conflict check (based on Round overlaps)
+            // Time conflict (round overlaps with other contests the student joined)
             if (studentId.HasValue)
             {
                 bool hasConflict = await HasContestTimeConflictAsync(
@@ -144,7 +150,7 @@ namespace BusinessLogic.Services
                         "Student has a time conflict with another contest.");
             }
 
-            // If there is an existing pending invite for same team & student/email → extend TTL & resend
+            // If pending invite exists for same recipient -> refresh token/expiry and reuse
             var pending = await inviteRepo.Entities
                 .FirstOrDefaultAsync(i => i.TeamId == teamId
                                           && i.Status == Pending
@@ -154,28 +160,28 @@ namespace BusinessLogic.Services
 
             var now = DateTime.UtcNow;
             var ttlDays = dto.TtlDays ?? await GetInviteTtlDaysAsync(configRepo); // default 3
-            var newExpiry = now.AddDays(ttlDays);
+            var newExp = now.AddDays(ttlDays);
 
             if (pending != null)
             {
-                pending.ExpiresAt = newExpiry;
+                pending.ExpiresAt = newExp;
                 pending.Token = Guid.NewGuid().ToString("N");
                 inviteRepo.Update(pending);
                 await _uow.SaveAsync();
 
                 // TODO: send email with pending.Token
-                return await ProjectAsync(pending.InviteId);
+                return await ProjectWithTokenAsync(pending.InviteId);
             }
 
-            // Create invite
+            // Create new invite
             var invite = new TeamInvite
             {
                 InviteId = Guid.NewGuid(),
                 TeamId = teamId,
                 StudentId = studentId,
-                InviteeEmail = studentId == null ? inviteeEmail : null, // if student known, lock to student
+                InviteeEmail = studentId == null ? inviteeEmail : null, // lock to student if known
                 Token = Guid.NewGuid().ToString("N"),
-                ExpiresAt = newExpiry,
+                ExpiresAt = newExp,
                 Status = Pending,
                 CreatedAt = now,
                 InvitedByUserId = invitedByUserId
@@ -185,12 +191,14 @@ namespace BusinessLogic.Services
             await _uow.SaveAsync();
 
             // TODO: send email with invite.Token
-
-            return await ProjectAsync(invite.InviteId);
+            return await ProjectWithTokenAsync(invite.InviteId);
         }
 
-        public async Task<TeamInviteDTO> ResendAsync(Guid teamId, Guid inviteId,
-            Guid requesterUserId, string requesterRole)
+        public async Task<TeamInviteCreatedDTO> ResendAsync(
+            Guid teamId,
+            Guid inviteId,
+            Guid requesterUserId,
+            string requesterRole)
         {
             await EnsureTeamAccessAsync(teamId, requesterUserId, requesterRole);
 
@@ -207,9 +215,10 @@ namespace BusinessLogic.Services
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVITE_NOT_PENDING", "Only pending invites can be resent.");
 
             var now = DateTime.UtcNow;
+
             if (invite.ExpiresAt <= now)
             {
-                // mark expired and re-issue
+                // expire old, issue new
                 invite.Status = Expired;
                 repo.Update(invite);
 
@@ -230,23 +239,26 @@ namespace BusinessLogic.Services
                 await _uow.SaveAsync();
 
                 // TODO: email newInvite.Token
-                return await ProjectAsync(newInvite.InviteId);
+                return await ProjectWithTokenAsync(newInvite.InviteId);
             }
             else
             {
-                // extend validity + new token
+                // extend + rotate token
                 invite.Token = Guid.NewGuid().ToString("N");
                 invite.ExpiresAt = now.AddDays(await GetInviteTtlDaysAsync(configRepo));
                 repo.Update(invite);
                 await _uow.SaveAsync();
 
                 // TODO: email invite.Token
-                return await ProjectAsync(invite.InviteId);
+                return await ProjectWithTokenAsync(invite.InviteId);
             }
         }
 
-        public async Task RevokeAsync(Guid teamId, Guid inviteId,
-            Guid requesterUserId, string requesterRole)
+        public async Task RevokeAsync(
+            Guid teamId,
+            Guid inviteId,
+            Guid requesterUserId,
+            string requesterRole)
         {
             await EnsureTeamAccessAsync(teamId, requesterUserId, requesterRole);
 
@@ -269,7 +281,6 @@ namespace BusinessLogic.Services
             var userRepo = _uow.GetRepository<User>();
             var studentRepo = _uow.GetRepository<Student>();
             var memberRepo = _uow.GetRepository<TeamMember>();
-            var teamRepo = _uow.GetRepository<Team>();
             var roundRepo = _uow.GetRepository<Round>();
             var configRepo = _uow.GetRepository<Config>();
 
@@ -302,18 +313,15 @@ namespace BusinessLogic.Services
 
             if (invite.StudentId == null)
             {
-                // invite was sent to an email, ensure the same user email
                 if (!string.Equals(user.Email, invite.InviteeEmail, StringComparison.OrdinalIgnoreCase))
                     throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
             }
 
-            // ensure Student record exists
             var student = await studentRepo.Entities.FirstOrDefaultAsync(s => s.UserId == user.UserId && s.DeletedAt == null);
             if (student == null)
                 throw new ErrorException(StatusCodes.Status409Conflict, "STUDENT_PROFILE_REQUIRED",
                     "Please create/complete student profile before accepting the invite.");
 
-            // update invite to lock StudentId if needed
             if (invite.StudentId == null) invite.StudentId = student.StudentId;
 
             // policy checks again
@@ -350,7 +358,7 @@ namespace BusinessLogic.Services
             inviteRepo.Update(invite);
 
             await _uow.SaveAsync();
-            // TODO: Notify mentor & members
+            // TODO: notify mentor & members
         }
 
         public async Task DeclineByTokenAsync(string token, Guid currentUserId)
@@ -379,6 +387,7 @@ namespace BusinessLogic.Services
             await _uow.SaveAsync();
         }
 
+        // ---------- helpers ----------
 
         private async Task EnsureTeamAccessAsync(Guid teamId, Guid userId, string role)
         {
@@ -392,27 +401,26 @@ namespace BusinessLogic.Services
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={teamId}");
 
             // mentor must own this team
-            var mentor = await mentorRepo.Entities.FirstOrDefaultAsync(m => m.MentorId == team.MentorId && m.DeletedAt == null);
-            if (mentor == null)
-                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "You are not allowed to manage this team.");
+            var mentor = await mentorRepo.Entities
+                .FirstOrDefaultAsync(m => m.MentorId == team.MentorId && m.DeletedAt == null);
 
-            if (mentor.UserId != userId)
+            if (mentor == null || mentor.UserId != userId)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "You are not allowed to manage this team.");
         }
 
-        private static async Task<bool> HasContestTimeConflictAsync(Guid studentId, Guid targetContestId,
-            IGenericRepository<Round> roundRepo, IGenericRepository<TeamMember> memberRepo)
+        private static async Task<bool> HasContestTimeConflictAsync(
+            Guid studentId,
+            Guid targetContestId,
+            IGenericRepository<Round> roundRepo,
+            IGenericRepository<TeamMember> memberRepo)
         {
-            // get ranges of target contest
             var targetRanges = await roundRepo.Entities
-                .Include(r => r.Contest)
                 .Where(r => r.ContestId == targetContestId)
                 .Select(r => new { r.Start, r.End })
                 .ToListAsync();
 
             if (!targetRanges.Any()) return false;
 
-            // other contests where student is a member
             var otherRanges = await memberRepo.Entities
                 .Where(m => m.StudentId == studentId)
                 .Include(m => m.Team).ThenInclude(t => t.Contest)
@@ -421,34 +429,36 @@ namespace BusinessLogic.Services
 
             foreach (var t in targetRanges)
                 foreach (var o in otherRanges)
-                {
-                    if (RangesOverlap(t.Start, t.End, o.Start, o.End))
+                    if (t.Start <= o.End && o.Start <= t.End)
                         return true;
-                }
-            return false;
 
-            static bool RangesOverlap(DateTime a1, DateTime a2, DateTime b1, DateTime b2)
-                => a1 <= b2 && b1 <= a2;
+            return false;
         }
 
-        private static async Task EnsureRegistrationOpenAsync(Guid contestId,
-            IGenericRepository<Contest> contestRepo, IGenericRepository<Config> configRepo)
+        private static async Task EnsureRegistrationOpenAsync(
+            Guid contestId,
+            IGenericRepository<Contest> contestRepo,
+            IGenericRepository<Config> configRepo)
         {
             var startKey = $"contest:{contestId}:registration_start";
             var endKey = $"contest:{contestId}:registration_end";
 
-            var cfg = await configRepo.Entities.Where(c => (c.Key == startKey || c.Key == endKey) && c.DeletedAt == null)
-                                               .ToListAsync();
+            var cfg = await configRepo.Entities
+                .Where(c => (c.Key == startKey || c.Key == endKey) && c.DeletedAt == null)
+                .ToListAsync();
+
             var now = DateTime.UtcNow;
+            var startOk = true;
+            var endOk = true;
 
             var startStr = cfg.FirstOrDefault(c => c.Key == startKey)?.Value;
             var endStr = cfg.FirstOrDefault(c => c.Key == endKey)?.Value;
 
-            if (DateTime.TryParse(startStr, out var start) && now < start)
-                throw new ErrorException(StatusCodes.Status409Conflict, "REG_CLOSED", "Registration not open yet.");
+            if (DateTime.TryParse(startStr, out var start) && now < start) startOk = false;
+            if (DateTime.TryParse(endStr, out var end) && now > end) endOk = false;
 
-            if (DateTime.TryParse(endStr, out var end) && now > end)
-                throw new ErrorException(StatusCodes.Status409Conflict, "REG_CLOSED", "Registration window has closed.");
+            if (!startOk || !endOk)
+                throw new ErrorException(StatusCodes.Status409Conflict, "REG_CLOSED", "Registration window is closed.");
         }
 
         private static async Task<int> GetMaxTeamMembersAsync(Guid contestId, IGenericRepository<Config> configRepo)
@@ -475,13 +485,24 @@ namespace BusinessLogic.Services
 
         private async Task<TeamInviteDTO> ProjectAsync(Guid inviteId)
         {
-            var proj = await _uow.GetRepository<TeamInvite>().Entities
+            var entity = await _uow.GetRepository<TeamInvite>().Entities
                 .Where(i => i.InviteId == inviteId)
                 .Include(i => i.Team).ThenInclude(t => t.Contest)
                 .AsNoTracking()
                 .FirstAsync();
 
-            return _mapper.Map<TeamInviteDTO>(proj);
+            return _mapper.Map<TeamInviteDTO>(entity);
+        }
+
+        private async Task<TeamInviteCreatedDTO> ProjectWithTokenAsync(Guid inviteId)
+        {
+            var entity = await _uow.GetRepository<TeamInvite>().Entities
+                .Where(i => i.InviteId == inviteId)
+                .Include(i => i.Team).ThenInclude(t => t.Contest)
+                .AsNoTracking()
+                .FirstAsync();
+
+            return _mapper.Map<TeamInviteCreatedDTO>(entity);
         }
     }
 }

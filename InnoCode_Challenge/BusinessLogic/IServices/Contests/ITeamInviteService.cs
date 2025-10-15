@@ -8,11 +8,12 @@ namespace BusinessLogic.IServices
         Task<PaginatedList<TeamInviteDTO>> GetForTeamAsync(Guid teamId, TeamInviteQueryParams query,
             Guid requesterUserId, string requesterRole);
 
-        Task<TeamInviteDTO> CreateAsync(Guid teamId, CreateTeamInviteDTO dto,
+        Task<TeamInviteCreatedDTO> CreateAsync(Guid teamId, CreateTeamInviteDTO dto,
             Guid invitedByUserId, string invitedByRole);
 
-        Task<TeamInviteDTO> ResendAsync(Guid teamId, Guid inviteId,
+        Task<TeamInviteCreatedDTO> ResendAsync(Guid teamId, Guid inviteId,
             Guid requesterUserId, string requesterRole);
+
 
         Task RevokeAsync(Guid teamId, Guid inviteId,
             Guid requesterUserId, string requesterRole);

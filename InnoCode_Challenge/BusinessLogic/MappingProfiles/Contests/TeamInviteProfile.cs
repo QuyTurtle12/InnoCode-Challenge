@@ -12,6 +12,12 @@ namespace BusinessLogic.MappingProfiles
                 .ForMember(d => d.TeamName, o => o.MapFrom(s => s.Team.Name))
                 .ForMember(d => d.ContestId, o => o.MapFrom(s => s.Team.ContestId))
                 .ForMember(d => d.ContestName, o => o.MapFrom(s => s.Team.Contest.Name));
+
+            CreateMap<TeamInvite, TeamInviteCreatedDTO>()
+                .ForMember(d => d.TeamName, o => o.MapFrom(s => s.Team.Name))
+                .ForMember(d => d.ContestId, o => o.MapFrom(s => s.Team.ContestId))
+                .ForMember(d => d.ContestName, o => o.MapFrom(s => s.Team.Contest.Name));
+
         }
     }
 }
