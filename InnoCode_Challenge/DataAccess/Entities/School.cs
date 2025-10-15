@@ -17,6 +17,8 @@ public partial class School
 
     public DateTime? DeletedAt { get; set; }
 
+    public virtual ICollection<MentorRegistration> MentorRegistrations { get; set; } = new List<MentorRegistration>();
+
     public virtual ICollection<Mentor> Mentors { get; set; } = new List<Mentor>();
 
     public virtual Province Province { get; set; } = null!;

@@ -25,6 +25,8 @@ public partial class Student
 
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();
 
+    public virtual ICollection<TeamInvite> TeamInvites { get; set; } = new List<TeamInvite>();
+
     public virtual ICollection<TeamMember> TeamMembers { get; set; } = new List<TeamMember>();
 
     public virtual User User { get; set; } = null!;

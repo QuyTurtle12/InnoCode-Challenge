@@ -27,9 +27,13 @@ public partial class User
 
     public virtual ICollection<Appeal> Appeals { get; set; } = new List<Appeal>();
 
+    public virtual ICollection<MentorRegistration> MentorRegistrations { get; set; } = new List<MentorRegistration>();
+
     public virtual ICollection<Mentor> Mentors { get; set; } = new List<Mentor>();
 
     public virtual ICollection<Notification> Notifications { get; set; } = new List<Notification>();
 
     public virtual ICollection<Student> Students { get; set; } = new List<Student>();
+
+    public virtual ICollection<TeamInvite> TeamInvites { get; set; } = new List<TeamInvite>();
 }

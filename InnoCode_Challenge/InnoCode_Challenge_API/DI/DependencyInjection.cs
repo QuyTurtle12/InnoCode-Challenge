@@ -11,7 +11,15 @@ using Microsoft.OpenApi.Models;
 using DataAccess.Entities;
 using Utility.Constant;
 using BusinessLogic.IServices;
-using BusinessLogic.Services;
+using BusinessLogic.Services.Submissions;
+using BusinessLogic.Services.Certificates;
+using BusinessLogic.Services.Contests;
+using BusinessLogic.Services.Users;
+using BusinessLogic.Services.Schools;
+using BusinessLogic.Services.Students;
+using BusinessLogic.Services.Mentors;
+using BusinessLogic.Services.Mcqs;
+using BusinessLogic.Services.Appeals;
 
 namespace InnoCode_Challenge_API.DI
 {

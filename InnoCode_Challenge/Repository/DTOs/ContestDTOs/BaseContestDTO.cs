@@ -15,5 +15,8 @@ namespace Repository.DTOs.ContestDTOs
 
         public string ImgUrl { get; set; } = null!;
 
+        public DateTime? Start { get; set; }
+
+        public DateTime? End { get; set; }
     }
 }

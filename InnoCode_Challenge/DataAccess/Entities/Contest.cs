@@ -21,6 +21,10 @@ public partial class Contest
 
     public DateTime? DeletedAt { get; set; }
 
+    public DateTime? Start { get; set; }
+
+    public DateTime? End { get; set; }
+
     public virtual ICollection<CertificateTemplate> CertificateTemplates { get; set; } = new List<CertificateTemplate>();
 
     public virtual ICollection<LeaderboardEntry> LeaderboardEntries { get; set; } = new List<LeaderboardEntry>();
