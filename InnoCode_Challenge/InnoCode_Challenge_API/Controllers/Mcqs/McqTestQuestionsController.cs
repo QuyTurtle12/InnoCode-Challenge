@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Threading.Tasks;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.McqQuestionDTOs;

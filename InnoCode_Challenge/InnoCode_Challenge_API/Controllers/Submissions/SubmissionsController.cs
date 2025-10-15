@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.Submissions;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;

@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.McqOptionDTOs;
 using Repository.ResponseModel;

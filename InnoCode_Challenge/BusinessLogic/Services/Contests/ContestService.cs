@@ -1,5 +1,5 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Repository.DTOs.ContestDTOs;

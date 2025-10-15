@@ -1,6 +1,5 @@
 ﻿using System.Reflection;
 using System.Text;
-using BusinessLogic.MappingProfiles;
 using Repository.DTOs.AuthDTOs;
 using Repository.IRepositories;
 using Repository.Repositories;
@@ -10,7 +9,6 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using DataAccess.Entities;
 using Utility.Constant;
-using BusinessLogic.IServices;
 using BusinessLogic.Services.Submissions;
 using BusinessLogic.Services.Certificates;
 using BusinessLogic.Services.Contests;
@@ -20,6 +18,16 @@ using BusinessLogic.Services.Students;
 using BusinessLogic.Services.Mentors;
 using BusinessLogic.Services.Mcqs;
 using BusinessLogic.Services.Appeals;
+using BusinessLogic.IServices.Appeals;
+using BusinessLogic.IServices.Certificates;
+using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Mcqs;
+using BusinessLogic.IServices.Mentors;
+using BusinessLogic.IServices.Schools;
+using BusinessLogic.IServices.Students;
+using BusinessLogic.IServices.Submissions;
+using BusinessLogic.IServices.Users;
+using BusinessLogic.MappingProfiles.Users;
 
 namespace InnoCode_Challenge_API.DI
 {

@@ -1,5 +1,5 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Repository.DTOs.McqTestDTOs;

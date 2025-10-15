@@ -1,5 +1,5 @@
 ﻿using System.Security.Claims;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Mentors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.MentorRegistrationDTOs;

@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.Users;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.NotificationDTOs;
 using Repository.ResponseModel;

@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.Students;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.StudentDTOs;

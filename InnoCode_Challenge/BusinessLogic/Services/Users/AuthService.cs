@@ -1,5 +1,5 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Users;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;

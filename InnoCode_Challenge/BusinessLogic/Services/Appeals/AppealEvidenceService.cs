@@ -1,5 +1,5 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Appeals;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Repository.DTOs.AppealEvidenceDTOs;

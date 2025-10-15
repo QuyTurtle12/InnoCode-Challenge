@@ -2,13 +2,13 @@
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using BusinessLogic.IServices;
 using Repository.IRepositories;
 using Repository.DTOs.MentorRegistrationDTOs;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
 using Utility.Constant;
+using BusinessLogic.IServices.Mentors;
 
 namespace BusinessLogic.Services.Mentors
 {

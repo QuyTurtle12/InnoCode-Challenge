@@ -1,6 +1,6 @@
 ﻿using System;
 using AutoMapper;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;

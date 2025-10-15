@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.Certificates;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.CertificateTemplateDTOs;
 using Repository.ResponseModel;

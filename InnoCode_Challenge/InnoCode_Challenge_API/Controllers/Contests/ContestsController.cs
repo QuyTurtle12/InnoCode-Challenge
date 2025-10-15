@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ContestDTOs;
 using Repository.ResponseModel;
