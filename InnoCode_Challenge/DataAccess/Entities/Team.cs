@@ -34,4 +34,6 @@ public partial class Team
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();
 
     public virtual ICollection<TeamMember> TeamMembers { get; set; } = new List<TeamMember>();
+    public virtual ICollection<TeamInvite> TeamInvites { get; set; } = new List<TeamInvite>();
+
 }

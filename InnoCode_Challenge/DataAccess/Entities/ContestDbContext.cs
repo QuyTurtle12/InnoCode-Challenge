@@ -74,6 +74,8 @@ public partial class ContestDbContext : DbContext
     public virtual DbSet<TestCase> TestCases { get; set; }
 
     public virtual DbSet<User> Users { get; set; }
+    public virtual DbSet<MentorRegistration> MentorRegistrations { get; set; }
+    public virtual DbSet<TeamInvite> TeamInvites { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -982,6 +984,157 @@ public partial class ContestDbContext : DbContext
                 .HasPrecision(0)
                 .HasColumnName("updated_at");
         });
+
+        modelBuilder.Entity<MentorRegistration>(entity =>
+        {
+            entity.HasKey(e => e.RegistrationId);
+
+            entity.ToTable("mentor_registrations");
+
+            entity.Property(e => e.RegistrationId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("registration_id");
+
+            entity.Property(e => e.Fullname)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("fullname");
+
+            entity.Property(e => e.Email)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("email");
+
+            entity.Property(e => e.PasswordHash)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("password_hash");
+
+            entity.Property(e => e.Phone)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("phone");
+
+            entity.Property(e => e.SchoolId).HasColumnName("school_id");
+
+            entity.Property(e => e.ProposedSchoolName)
+                .HasMaxLength(200)
+                .IsUnicode(false)
+                .HasColumnName("proposed_school_name");
+
+            entity.Property(e => e.ProposedSchoolAddress)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("proposed_school_address");
+
+            entity.Property(e => e.ProvinceId).HasColumnName("province_id");
+
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("status");
+
+            entity.Property(e => e.DenyReason)
+                .HasMaxLength(300)
+                .IsUnicode(false)
+                .HasColumnName("deny_reason");
+
+            entity.Property(e => e.ReviewedByUserId).HasColumnName("reviewed_by_user_id");
+
+            entity.Property(e => e.CreatedAt)
+                .HasPrecision(0)
+                .HasColumnName("created_at");
+
+            entity.Property(e => e.ReviewedAt)
+                .HasPrecision(0)
+                .HasColumnName("reviewed_at");
+
+            entity.Property(e => e.DeletedAt).HasPrecision(0);
+
+            entity.HasIndex(e => new { e.Status, e.CreatedAt }, "IX_mr_status_created");
+            entity.HasIndex(e => e.Email, "IX_mr_email");
+            entity.HasIndex(e => e.SchoolId, "IX_mr_school");
+
+            entity.HasOne(d => d.School)
+                .WithMany()
+                .HasForeignKey(d => d.SchoolId)
+                .HasConstraintName("FK_mr_school");
+
+            entity.HasOne(d => d.Province)
+                .WithMany()
+                .HasForeignKey(d => d.ProvinceId)
+                .HasConstraintName("FK_mr_province");
+
+            entity.HasOne(d => d.ReviewedByUser)
+                .WithMany()
+                .HasForeignKey(d => d.ReviewedByUserId)
+                .HasConstraintName("FK_mr_reviewer");
+        });
+
+        modelBuilder.Entity<TeamInvite>(entity =>
+        {
+            entity.HasKey(e => e.InviteId);
+
+            entity.ToTable("team_invites");
+
+            entity.Property(e => e.InviteId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("invite_id");
+
+            entity.Property(e => e.TeamId).HasColumnName("team_id");
+
+            entity.Property(e => e.StudentId).HasColumnName("student_id");
+
+            entity.Property(e => e.InviteeEmail)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("invitee_email");
+
+            entity.Property(e => e.Token)
+                .HasMaxLength(64)
+                .IsUnicode(false)
+                .HasColumnName("token");
+
+            entity.Property(e => e.ExpiresAt)
+                .HasPrecision(0)
+                .HasColumnName("expires_at");
+
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("status");
+
+            entity.Property(e => e.CreatedAt)
+                .HasPrecision(0)
+                .HasColumnName("created_at");
+
+            entity.Property(e => e.InvitedByUserId).HasColumnName("invited_by_user_id");
+
+            // Indexes
+            entity.HasIndex(e => e.Token, "UQ_team_invites_token").IsUnique();
+            entity.HasIndex(e => new { e.TeamId, e.Status, e.CreatedAt }, "IX_team_invites_team");
+            entity.HasIndex(e => new { e.StudentId, e.Status, e.CreatedAt }, "IX_team_invites_student");
+            entity.HasIndex(e => new { e.InviteeEmail, e.Status, e.CreatedAt }, "IX_team_invites_email");
+            entity.HasIndex(e => e.ExpiresAt, "IX_team_invites_expiry");
+
+            entity.HasOne(d => d.Team)
+                .WithMany() 
+                .HasForeignKey(d => d.TeamId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_team_invites_team");
+
+            entity.HasOne(d => d.Student)
+                .WithMany() 
+                .HasForeignKey(d => d.StudentId)
+                .HasConstraintName("FK_team_invites_student");
+
+            entity.HasOne(d => d.InvitedByUser)
+                .WithMany() 
+                .HasForeignKey(d => d.InvitedByUserId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_team_invites_inviter");
+        });
+
 
         OnModelCreatingPartial(modelBuilder);
     }
