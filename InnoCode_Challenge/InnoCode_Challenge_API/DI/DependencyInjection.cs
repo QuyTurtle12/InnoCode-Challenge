@@ -1,23 +1,4 @@
-﻿using System.Reflection;
-using System.Text;
-using Repository.DTOs.AuthDTOs;
-using Repository.IRepositories;
-using Repository.Repositories;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
-using DataAccess.Entities;
-using Utility.Constant;
-using BusinessLogic.Services.Submissions;
-using BusinessLogic.Services.Certificates;
-using BusinessLogic.Services.Contests;
-using BusinessLogic.Services.Users;
-using BusinessLogic.Services.Schools;
-using BusinessLogic.Services.Students;
-using BusinessLogic.Services.Mentors;
-using BusinessLogic.Services.Mcqs;
-using BusinessLogic.Services.Appeals;
+﻿using BusinessLogic.IServices;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
@@ -28,6 +9,27 @@ using BusinessLogic.IServices.Students;
 using BusinessLogic.IServices.Submissions;
 using BusinessLogic.IServices.Users;
 using BusinessLogic.MappingProfiles.Users;
+using BusinessLogic.Services;
+using BusinessLogic.Services.Appeals;
+using BusinessLogic.Services.Certificates;
+using BusinessLogic.Services.Contests;
+using BusinessLogic.Services.Mcqs;
+using BusinessLogic.Services.Mentors;
+using BusinessLogic.Services.Schools;
+using BusinessLogic.Services.Students;
+using BusinessLogic.Services.Submissions;
+using BusinessLogic.Services.Users;
+using DataAccess.Entities;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using Repository.DTOs.AuthDTOs;
+using Repository.IRepositories;
+using Repository.Repositories;
+using System.Reflection;
+using System.Text;
+using Utility.Constant;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -234,6 +236,10 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
             services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
             services.AddScoped<IMentorRegistrationService, MentorRegistrationService>();
+            services.AddScoped<IConfigService, ConfigService>();
+            services.AddScoped<IAttachmentService, AttachmentService>();
+            services.AddScoped<IActivityLogService, ActivityLogService>();
+
         }
     }
 }
