@@ -239,7 +239,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IConfigService, ConfigService>();
             services.AddScoped<IAttachmentService, AttachmentService>();
             services.AddScoped<IActivityLogService, ActivityLogService>();
-
+            services.AddScoped<ITeamInviteService, TeamInviteService>(); 
         }
     }
 }

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ConfigDTOs;
 using Repository.ResponseModel;
+using System.Security.Claims;
 using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers
@@ -12,60 +13,68 @@ namespace InnoCode_Challenge_API.Controllers
     public class ConfigsController : ControllerBase
     {
         private readonly IConfigService _service;
-
         public ConfigsController(IConfigService service) => _service = service;
 
         [HttpGet]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
-        public async Task<IActionResult> Get([FromQuery] ConfigQueryParams query)
+        public async Task<IActionResult> List([FromQuery] ConfigQueryParams query)
         {
             var page = await _service.GetAsync(query);
-            var additional = new
-            {
-                page.PageNumber,
-                page.PageSize,
-                page.TotalPages,
-                page.TotalCount,
-                page.HasPreviousPage,
-                page.HasNextPage
-            };
-            return Ok(new BaseResponseModel<object>(
-                StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, page.Items, additional, "Configs retrieved."
-            ));
+            var meta = new { page.PageNumber, page.PageSize, page.TotalPages, page.TotalCount, page.HasPreviousPage, page.HasNextPage };
+            return Ok(new BaseResponseModel<object>(StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, page.Items, meta, "Configs retrieved."));
         }
 
         [HttpGet("{key}")]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
         public async Task<IActionResult> GetByKey(string key)
         {
-            var data = await _service.GetByKeyAsync(key);
-            return Ok(BaseResponseModel<object>.OkResponseModel(data, "Config fetched."));
+            var item = await _service.GetByKeyAsync(key);
+            return Ok(BaseResponseModel<object>.OkResponseModel(item,"Config retrieved."));
         }
 
         [HttpPost]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
         public async Task<IActionResult> Create([FromBody] CreateConfigDTO dto)
         {
-            var created = await _service.CreateAsync(dto);
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var created = await _service.CreateAsync(dto, role);
             return CreatedAtAction(nameof(GetByKey), new { key = created.Key },
-                new BaseResponseModel<object>(StatusCodes.Status201Created, ResponseCodeConstants.SUCCESS, created, "Config created.")
-            );
+                new BaseResponseModel<object>(StatusCodes.Status201Created, ResponseCodeConstants.SUCCESS, created, message: "Config created."));
         }
 
         [HttpPut("{key}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
         public async Task<IActionResult> Update(string key, [FromBody] UpdateConfigDTO dto)
         {
-            var updated = await _service.UpdateAsync(key, dto);
-            return Ok(BaseResponseModel<object>.OkResponseModel(updated,"Config updated."));
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var updated = await _service.UpdateAsync(key, dto, role);
+            return Ok(BaseResponseModel<object>.OkResponseModel(updated, "Config updated."));
         }
 
         [HttpDelete("{key}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
         public async Task<IActionResult> Delete(string key)
         {
-            await _service.DeleteAsync(key);
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            await _service.DeleteAsync(key, role);
             return NoContent();
+        }
+
+
+        [HttpPut("contests/{contestId:guid}/registration-window")]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
+        public async Task<IActionResult> SetRegistrationWindow(Guid contestId, [FromBody] SetRegistrationWindowDTO dto)
+        {
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            await _service.SetRegistrationWindowAsync(contestId, dto, role);
+            return Ok(BaseResponseModel<object>.OkResponseModel(new { contestId, dto.RegistrationStartUtc, dto.RegistrationEndUtc }, "Registration window set."));
+        }
+
+        [HttpPut("contests/{contestId:guid}/policy")]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
+        public async Task<IActionResult> SetContestPolicy(Guid contestId, [FromBody] SetContestPolicyDTO dto)
+        {
+            var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            await _service.SetContestPolicyAsync(contestId, dto, role);
+            return Ok(BaseResponseModel<object>.OkResponseModel(new { contestId, dto.TeamMembersMax, dto.TeamInviteTtlDays }, "Contest policy updated."));
         }
     }
 }
