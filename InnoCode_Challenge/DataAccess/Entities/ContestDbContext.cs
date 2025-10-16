@@ -1062,6 +1062,14 @@ public partial class ContestDbContext : DbContext
                 .HasMaxLength(255)
                 .IsUnicode(false)
                 .HasColumnName("description");
+            entity.Property(e => e.ExpectedOutput)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("expected_output");
+            entity.Property(e => e.Input)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("input");
             entity.Property(e => e.MemoryKb).HasColumnName("memory_kb");
             entity.Property(e => e.ProblemId).HasColumnName("problem_id");
             entity.Property(e => e.TimeLimitMs).HasColumnName("time_limit_ms");

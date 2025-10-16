@@ -1,5 +1,6 @@
 ﻿using BusinessLogic.IServices.Submissions;
 using Microsoft.AspNetCore.Mvc;
+using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
@@ -93,6 +94,24 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                         code: ResponseCodeConstants.SUCCESS,
                         message: "Update Submission successfully."
                     ));
+        }
+
+        /// <summary>
+        /// Evaluates a submission using the Judge0 service
+        /// </summary>
+        /// <param name="submissionDTO"></param>
+        /// <returns></returns>
+        [HttpPost("evaluate")]
+        public async Task<IActionResult> EvaluateSubmission([FromBody] CreateSubmissionDTO submissionDTO)
+        {
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(submissionDTO);
+
+            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Submission evaluated successfully."
+            ));
         }
     }
 }

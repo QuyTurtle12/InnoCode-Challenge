@@ -6,6 +6,10 @@
 
         public string TeamName { get; set; } = string.Empty;
 
+        public string? Status { get; set; }
+
+        public double Score { get; set; }
+
         public DateTime CreatedAt { get; set; }
     }
 }

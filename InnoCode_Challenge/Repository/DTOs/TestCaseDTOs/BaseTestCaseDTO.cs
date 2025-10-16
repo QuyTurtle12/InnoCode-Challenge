@@ -11,5 +11,7 @@
         public int? TimeLimitMs { get; set; }
 
         public int? MemoryKb { get; set; }
+        public string? Input { get; set; }
+        public string? ExpectedOutput { get; set; }
     }
 }

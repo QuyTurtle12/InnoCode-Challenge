@@ -51,14 +51,26 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// Creates a new test case
         /// </summary>
         [HttpPost]
-        public async Task<IActionResult> CreateTestCase(CreateTestCaseDTO testCaseDto)
+        public async Task<IActionResult> CreateTestCase([FromForm] CreateTestCaseDTO testCaseDto, IFormFile? inputFile, IFormFile? outputFile)
         {
+            if (inputFile != null)
+            {
+                using var reader = new StreamReader(inputFile.OpenReadStream());
+                testCaseDto.Input = await reader.ReadToEndAsync();
+            }
+
+            if (outputFile != null)
+            {
+                using var reader = new StreamReader(outputFile.OpenReadStream());
+                testCaseDto.ExpectedOutput = await reader.ReadToEndAsync();
+            }
+
             await _testCaseService.CreateTestCaseAsync(testCaseDto);
             return Ok(new BaseResponseModel(
-                         statusCode: StatusCodes.Status201Created,
-                         code: ResponseCodeConstants.SUCCESS,
-                         message: "Create Test Case successfully."
-                     ));
+                        statusCode: StatusCodes.Status201Created,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Create Test Case successfully."
+                    ));
         }
 
         /// <summary>

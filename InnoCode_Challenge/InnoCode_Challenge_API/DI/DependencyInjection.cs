@@ -234,6 +234,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
             services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
             services.AddScoped<IMentorRegistrationService, MentorRegistrationService>();
+            services.AddScoped<IJudge0Service, Judge0Service>();
         }
     }
 }
