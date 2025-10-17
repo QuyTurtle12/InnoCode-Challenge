@@ -367,11 +367,13 @@ namespace BusinessLogic.Services.Contests
                 await contestRepo.InsertAsync(entity);
                 await _unitOfWork.SaveAsync();
 
-                var teamMembersMax = dto.TeamMembersMax ?? 4;      
-                int? teamLimitMax = dto.TeamLimitMax;             
-                await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:team_members_max", teamMembersMax.ToString());
+                var teamMembersMax = dto.TeamMembersMax
+                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4); 
+                int? teamLimitMax = dto.TeamLimitMax
+                                     ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);    
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
                 if (teamLimitMax.HasValue)
-                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:team_limit_max", teamLimitMax.Value.ToString());
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(entity.ContestId), teamLimitMax.Value.ToString());
 
                 if (dto.RegistrationStart.HasValue)
                     await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_start", dto.RegistrationStart.Value.ToString("o"));
@@ -436,11 +438,16 @@ namespace BusinessLogic.Services.Contests
             if (string.IsNullOrEmpty(regStart) || string.IsNullOrEmpty(regEnd))
                 result.Missing.Add("Registration window not configured.");
 
-            var membersMax = await configRepo.Entities
-                .Where(c => c.Key == $"contest:{contestId}:team_members_max" && c.DeletedAt == null)
+            var membersMaxContest = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.ContestTeamMembersMax(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
-            if (string.IsNullOrEmpty(membersMax))
-                result.Missing.Add("Team members max not configured.");
+
+            var membersMaxDefault = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMax && c.DeletedAt == null)
+                .Select(c => c.Value).FirstOrDefaultAsync();
+
+            if (string.IsNullOrEmpty(membersMaxContest) && string.IsNullOrEmpty(membersMaxDefault))
+                result.Missing.Add("Team members max not configured (contest or global).");
 
             result.IsReady = result.Missing.Count == 0;
             return result;
@@ -504,6 +511,19 @@ namespace BusinessLogic.Services.Contests
             while (await repo.Entities.AnyAsync(c => c.Year == year && c.Name == candidate && c.DeletedAt == null));
 
             return candidate;
+        }
+        private static async Task<int> GetGlobalIntOrDefaultAsync(IGenericRepository<Config> repo, string key, int @default)
+        {
+            var value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+                                           .Select(c => c.Value).FirstOrDefaultAsync();
+            return int.TryParse(value, out var n) ? n : @default;
+        }
+
+        private static async Task<int?> GetGlobalNullableIntAsync(IGenericRepository<Config> repo, string key)
+        {
+            var value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+                                           .Select(c => c.Value).FirstOrDefaultAsync();
+            return int.TryParse(value, out var n) ? n : null;
         }
 
     }

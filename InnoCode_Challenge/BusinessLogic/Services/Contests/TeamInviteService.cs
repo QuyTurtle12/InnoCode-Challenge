@@ -84,14 +84,12 @@ namespace BusinessLogic.Services
             var team = await teamRepo.Entities
                 .Include(t => t.Contest)
                 .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.TeamId == teamId && t.DeletedAt == null);
-
-            if (team == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={teamId}");
+                .FirstOrDefaultAsync(t => t.TeamId == teamId && t.DeletedAt == null)
+                ?? throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={teamId}");
 
             // Policy checks
-            await EnsureRegistrationOpenAsync(team.ContestId, contestRepo, configRepo);
-            var maxMembers = await GetMaxTeamMembersAsync(team.ContestId, configRepo); // default 4
+            await EnsureRegistrationOpenAsync(team.ContestId, _uow.GetRepository<Contest>(), configRepo);
+            var maxMembers = await GetMaxTeamMembersAsync(team.ContestId, configRepo); 
             var currentMembers = await memberRepo.Entities.CountAsync(m => m.TeamId == teamId);
             if (currentMembers >= maxMembers)
                 throw new ErrorException(StatusCodes.Status409Conflict, "TEAM_FULL", "Team member limit reached.");
@@ -159,7 +157,7 @@ namespace BusinessLogic.Services
                                                 : i.InviteeEmail != null && i.InviteeEmail.ToLower() == inviteeEmail));
 
             var now = DateTime.UtcNow;
-            var ttlDays = dto.TtlDays ?? await GetInviteTtlDaysAsync(configRepo); // default 3
+            var ttlDays = dto.TtlDays ?? await GetInviteTtlDaysAsync(configRepo, team.ContestId); 
             var newExp = now.AddDays(ttlDays);
 
             if (pending != null)
@@ -169,17 +167,15 @@ namespace BusinessLogic.Services
                 inviteRepo.Update(pending);
                 await _uow.SaveAsync();
 
-                // TODO: send email with pending.Token
                 return await ProjectWithTokenAsync(pending.InviteId);
             }
 
-            // Create new invite
             var invite = new TeamInvite
             {
                 InviteId = Guid.NewGuid(),
                 TeamId = teamId,
                 StudentId = studentId,
-                InviteeEmail = studentId == null ? inviteeEmail : null, // lock to student if known
+                InviteeEmail = studentId == null ? inviteeEmail : null,
                 Token = Guid.NewGuid().ToString("N"),
                 ExpiresAt = newExp,
                 Status = Pending,
@@ -190,7 +186,6 @@ namespace BusinessLogic.Services
             await inviteRepo.InsertAsync(invite);
             await _uow.SaveAsync();
 
-            // TODO: send email with invite.Token
             return await ProjectWithTokenAsync(invite.InviteId);
         }
 
@@ -206,15 +201,14 @@ namespace BusinessLogic.Services
             var configRepo = _uow.GetRepository<Config>();
 
             var invite = await repo.Entities.Include(i => i.Team).ThenInclude(t => t.Contest)
-                .FirstOrDefaultAsync(i => i.InviteId == inviteId && i.TeamId == teamId);
-
-            if (invite == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "INVITE_NOT_FOUND", "Invite not found.");
+                .FirstOrDefaultAsync(i => i.InviteId == inviteId && i.TeamId == teamId)
+                ?? throw new ErrorException(StatusCodes.Status404NotFound, "INVITE_NOT_FOUND", "Invite not found.");
 
             if (invite.Status is not Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVITE_NOT_PENDING", "Only pending invites can be resent.");
 
             var now = DateTime.UtcNow;
+            var ttlDays = await GetInviteTtlDaysAsync(configRepo, invite.Team.ContestId);
 
             if (invite.ExpiresAt <= now)
             {
@@ -222,7 +216,6 @@ namespace BusinessLogic.Services
                 invite.Status = Expired;
                 repo.Update(invite);
 
-                var ttlDays = await GetInviteTtlDaysAsync(configRepo);
                 var newInvite = new TeamInvite
                 {
                     InviteId = Guid.NewGuid(),
@@ -238,18 +231,14 @@ namespace BusinessLogic.Services
                 await repo.InsertAsync(newInvite);
                 await _uow.SaveAsync();
 
-                // TODO: email newInvite.Token
                 return await ProjectWithTokenAsync(newInvite.InviteId);
             }
             else
             {
-                // extend + rotate token
                 invite.Token = Guid.NewGuid().ToString("N");
-                invite.ExpiresAt = now.AddDays(await GetInviteTtlDaysAsync(configRepo));
+                invite.ExpiresAt = now.AddDays(ttlDays);
                 repo.Update(invite);
                 await _uow.SaveAsync();
-
-                // TODO: email invite.Token
                 return await ProjectWithTokenAsync(invite.InviteId);
             }
         }
@@ -463,35 +452,43 @@ namespace BusinessLogic.Services
 
         private static async Task<int> GetMaxTeamMembersAsync(Guid contestId, IGenericRepository<Config> configRepo)
         {
-            var key = $"contest:{contestId}:team_members_max";
-            var value = await configRepo.Entities
-                .Where(c => c.Key == key && c.DeletedAt == null)
+            var perContest = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.ContestTeamMembersMax(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value)
                 .FirstOrDefaultAsync();
 
-            return int.TryParse(value, out var n) && n > 0 ? n : 4; // default 4
-        }
+            if (int.TryParse(perContest, out var n1) && n1 > 0) return n1;
 
-        private static async Task<int> GetInviteTtlDaysAsync(IGenericRepository<Config> configRepo)
-        {
-            var key = "team_invite_ttl_days";
-            var value = await configRepo.Entities
-                .Where(c => c.Key == key && c.DeletedAt == null)
+            var global = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMax && c.DeletedAt == null)
                 .Select(c => c.Value)
                 .FirstOrDefaultAsync();
 
-            return int.TryParse(value, out var n) && n >= 1 ? n : 3; // default 3 days
+            if (int.TryParse(global, out var n2) && n2 > 0) return n2;
+
+            return 4;
         }
 
-        private async Task<TeamInviteDTO> ProjectAsync(Guid inviteId)
+        private static async Task<int> GetInviteTtlDaysAsync(IGenericRepository<Config> configRepo, Guid contestId)
         {
-            var entity = await _uow.GetRepository<TeamInvite>().Entities
-                .Where(i => i.InviteId == inviteId)
-                .Include(i => i.Team).ThenInclude(t => t.Contest)
-                .AsNoTracking()
-                .FirstAsync();
+            // 1) per-contest override
+            var perContest = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.ContestInviteTtlDays(contestId) && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
 
-            return _mapper.Map<TeamInviteDTO>(entity);
+            if (int.TryParse(perContest, out var n1) && n1 >= 1) return n1;
+
+            // 2) global default
+            var global = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.Defaults_TeamInviteTtlDays && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (int.TryParse(global, out var n2) && n2 >= 1) return n2;
+
+            // 3) hard fallback
+            return 3;
         }
 
         private async Task<TeamInviteCreatedDTO> ProjectWithTokenAsync(Guid inviteId)
