@@ -10,5 +10,10 @@ namespace BusinessLogic.IServices.Contests
         Task UpdateContestAsync(Guid id, UpdateContestDTO contestDTO);
         Task DeleteContestAsync(Guid id);
         Task PublishContestAsync(Guid id);
+
+        Task<ContestCreatedDTO> CreateContestWithPolicyAsync(CreateContestAdvancedDTO dto);
+        Task<PublishReadinessDTO> CheckPublishReadinessAsync(Guid contestId);
+        Task PublishIfReadyAsync(Guid contestId);
+
     }
 }
