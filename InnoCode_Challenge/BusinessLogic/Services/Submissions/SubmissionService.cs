@@ -1,4 +1,5 @@
-﻿using AutoMapper;
+﻿using System.Security.Claims;
+using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Submissions;
 using DataAccess.Entities;
@@ -8,6 +9,7 @@ using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
@@ -19,14 +21,17 @@ namespace BusinessLogic.Services.Submissions
         private readonly IUOW _unitOfWork;
         private readonly IMapper _mapper;
         private readonly IJudge0Service _judge0Service;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         // Constructor
-        public SubmissionService(IMapper mapper, IUOW unitOfWork, IJudge0Service judge0Service)
+        public SubmissionService(IUOW unitOfWork, IMapper mapper, IJudge0Service judge0Service, IHttpContextAccessor httpContextAccessor)
         {
-            _mapper = mapper;
             _unitOfWork = unitOfWork;
+            _mapper = mapper;
             _judge0Service = judge0Service;
+            _httpContextAccessor = httpContextAccessor;
         }
+
 
         public async Task CreateSubmissionAsync(CreateSubmissionDTO submissionDTO)
         {
@@ -107,7 +112,15 @@ namespace BusinessLogic.Services.Submissions
                 PaginatedList<Submission> resultQuery = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
                 
                 // Map to DTOs
-                IReadOnlyCollection<GetSubmissionDTO> result = resultQuery.Items.Select(item => _mapper.Map<GetSubmissionDTO>(item)).ToList();
+                IReadOnlyCollection<GetSubmissionDTO> result = resultQuery.Items.Select(item =>
+                {
+                    GetSubmissionDTO? dto = _mapper.Map<GetSubmissionDTO>(item);
+
+                    dto.TeamName = item.Team?.Name ?? string.Empty;
+
+                    dto.SubmittedByStudentName = item.SubmittedByStudent?.User.Fullname!;
+                    return dto; 
+                }).ToList();
                 
                 // Create new paginated list with mapped DTOs
                 return new PaginatedList<GetSubmissionDTO>(
@@ -170,9 +183,12 @@ namespace BusinessLogic.Services.Submissions
         {
             try
             {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
                 // Get problem info
-                var problemRepo = _unitOfWork.GetRepository<Problem>();
-                var problem = await problemRepo.GetByIdAsync(submissionDTO.ProblemId);
+                IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+                Problem? problem = await problemRepo.GetByIdAsync(submissionDTO.ProblemId);
 
                 if (problem == null)
                 {
@@ -182,8 +198,8 @@ namespace BusinessLogic.Services.Submissions
                 }
 
                 // Get test cases for the problem
-                var testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-                var testCases = testCaseRepo.Entities
+                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+                IList<TestCase> testCases = testCaseRepo.Entities
                     .Where(tc => tc.ProblemId == submissionDTO.ProblemId)
                     .ToList();
 
@@ -194,30 +210,48 @@ namespace BusinessLogic.Services.Submissions
                         $"No test cases found for problem {submissionDTO.ProblemId}");
                 }
 
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefault();
+
+                // Count previous submissions for this problem by this student's team
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                int previousSubmissionsCount = await submissionRepo.Entities
+                    .Where(s => s.ProblemId == submissionDTO.ProblemId &&
+                           s.TeamId == submissionDTO.TeamId)
+                    .CountAsync();
+
                 // Create a submission record
-                var submission = new Submission
+                Submission submission = new Submission
                 {
                     SubmissionId = Guid.NewGuid(),
                     TeamId = submissionDTO.TeamId,
                     ProblemId = submissionDTO.ProblemId,
-                    SubmittedByStudentId = submissionDTO.SubmittedByStudentId,
+                    SubmittedByStudentId = studentId,
                     JudgedBy = "system",
-                    Status = "Pending",
+                    Status = SubmissionStatusEnum.Pending.ToString(),
                     Score = 0,
                     CreatedAt = DateTime.UtcNow
                 };
 
-                var submissionRepo = _unitOfWork.GetRepository<Submission>();
                 await submissionRepo.InsertAsync(submission);
 
                 // Save submission artifact (the code)
-                var artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
-                var artifact = new SubmissionArtifact
+                IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+                SubmissionArtifact artifact = new SubmissionArtifact
                 {
                     ArtifactId = Guid.NewGuid(),
                     SubmissionId = submission.SubmissionId,
                     Type = "code",
-                    Url = submissionDTO.Code, // Store code directly or save to storage service
+                    Url = submissionDTO.Code,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -225,7 +259,7 @@ namespace BusinessLogic.Services.Submissions
                 await _unitOfWork.SaveAsync();
 
                 // Convert to Judge0 request format
-                var judge0Request = new JudgeSubmissionRequestDTO
+                JudgeSubmissionRequestDTO judge0Request = new JudgeSubmissionRequestDTO
                 {
                     LanguageId = SubmissionHelpers.ConvertToJudge0LanguageId(problem.Language),
                     Code = submissionDTO.Code,
@@ -237,7 +271,6 @@ namespace BusinessLogic.Services.Submissions
                     TestCases = testCases.Select(tc => new JudgeTestCaseDTO
                     {
                         Id = tc.TestCaseId.ToString(),
-                        // You'll need to implement a way to store and retrieve test inputs/outputs
                         Stdin = tc.Input ?? string.Empty,
                         ExpectedOutput = tc.ExpectedOutput ?? string.Empty
                     }).ToList(),
@@ -245,31 +278,35 @@ namespace BusinessLogic.Services.Submissions
                     MemoryLimitKb = testCases.Max(tc => tc.MemoryKb) ?? 128000
                 };
 
-                // Call Judge0 service
-                var result = await _judge0Service.EvaluateSubmissionAsync(judge0Request);
+                // Auto evaluate submission using Judge0 service
+                JudgeSubmissionResultDTO result = await _judge0Service.AutoEvaluateSubmissionAsync(judge0Request);
 
-                // Save results
-                await SaveSubmissionResultAsync(submission.SubmissionId, result);
+                // Save results with penalty applied
+                await SaveSubmissionResultAsync(submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
 
                 return result;
             }
             catch (Exception ex)
             {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error evaluating submission: {ex.Message}");
             }
         }
 
-        public async Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result)
+        public async Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result,
+    int previousSubmissionsCount = 0, double? penaltyRate = null)
         {
             try
             {
-                _unitOfWork.BeginTransaction();
-
                 // Update submission status
-                var submissionRepo = _unitOfWork.GetRepository<Submission>();
-                var submission = await submissionRepo.GetByIdAsync(submissionId);
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                Submission? submission = await submissionRepo.GetByIdAsync(submissionId);
 
                 if (submission == null)
                 {
@@ -283,19 +320,19 @@ namespace BusinessLogic.Services.Submissions
                 double passedWeight = 0;
 
                 // Get test cases
-                var testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-                var testCases = testCaseRepo.Entities
+                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+                IList<TestCase> testCases = testCaseRepo.Entities
                     .Where(tc => tc.ProblemId == submission.ProblemId)
                     .ToList();
 
                 // Create submission details for each test case result
-                var submissionDetailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
+                IGenericRepository<SubmissionDetail> submissionDetailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
 
-                foreach (var caseResult in result.Cases)
+                foreach (JudgeCaseResultDTO caseResult in result.Cases)
                 {
                     // Find the corresponding test case
-                    var testCaseGuid = Guid.Parse(caseResult.Id);
-                    var testCase = testCases.FirstOrDefault(tc => tc.TestCaseId == testCaseGuid);
+                    Guid testCaseGuid = Guid.Parse(caseResult.Id);
+                    TestCase? testCase = testCases.FirstOrDefault(tc => tc.TestCaseId == testCaseGuid);
 
                     if (testCase == null) continue;
 
@@ -306,7 +343,7 @@ namespace BusinessLogic.Services.Submissions
                     }
 
                     // Save submission detail
-                    var detail = new SubmissionDetail
+                    SubmissionDetail detail = new SubmissionDetail
                     {
                         DetailsId = Guid.NewGuid(),
                         SubmissionId = submissionId,
@@ -321,18 +358,36 @@ namespace BusinessLogic.Services.Submissions
                     await submissionDetailRepo.InsertAsync(detail);
                 }
 
+                // Calculate raw score (before penalty)
+                double rawScore = totalWeight > 0 ? (passedWeight / totalWeight) * 100 : 0;
+
+                // Apply penalty if applicable
+                double finalScore = rawScore;
+                if (penaltyRate.HasValue && previousSubmissionsCount > 0)
+                {
+                    double penaltyPercentage = penaltyRate.Value * previousSubmissionsCount;
+                    double penaltyAmount = rawScore * penaltyPercentage; // Percentage value example: 0.1
+
+                    // Ensure score doesn't go below 0
+                    finalScore = Math.Max(0, rawScore - penaltyAmount);
+                }
+
                 // Update submission
-                submission.Status = result.Summary.Failed == 0 ? "Accepted" : "PartiallyAccepted";
-                submission.Score = totalWeight > 0 ? (passedWeight / totalWeight) * 100 : 0;
+                submission.Status = SubmissionStatusEnum.Finished.ToString();
+                submission.Score = finalScore;
 
+                // Update result summary
+                result.Summary.rawScore = rawScore;
+                result.Summary.penaltyScore = finalScore;
+
+                // Update the submission record
                 await submissionRepo.UpdateAsync(submission);
-                await _unitOfWork.SaveAsync();
 
-                _unitOfWork.CommitTransaction();
+                // Save all changes
+                await _unitOfWork.SaveAsync();
             }
             catch (Exception ex)
             {
-                _unitOfWork.RollBack();
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error saving submission results: {ex.Message}");

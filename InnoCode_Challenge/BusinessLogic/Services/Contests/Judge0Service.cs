@@ -1,10 +1,13 @@
 ﻿using System.Net.Http.Json;
 using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Razor;
 using Microsoft.Extensions.Configuration;
 using Repository.DTOs.JudgeDTOs;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -13,6 +16,8 @@ namespace BusinessLogic.Services.Contests
         private readonly HttpClient _httpClient;
         private readonly string _judge0BaseUrl;
         private readonly string _apiKey;
+        private const int POLLING_INTERVAL_MS = 1000;
+        private const int MAX_ATTEMPT = 10;
 
         public Judge0Service(IConfiguration configuration, HttpClient httpClient)
         {
@@ -24,12 +29,12 @@ namespace BusinessLogic.Services.Contests
             _httpClient.DefaultRequestHeaders.Add("X-RapidAPI-Host", "judge0-ce.p.rapidapi.com");
         }
 
-        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(JudgeSubmissionRequestDTO request)
+        public async Task<JudgeSubmissionResultDTO> AutoEvaluateSubmissionAsync(JudgeSubmissionRequestDTO request)
         {
             JudgeSubmissionResultDTO result = new JudgeSubmissionResultDTO
             {
                 ProblemId = request.Problem.Id,
-                LanguageId = request.LanguageId,
+                Language = SubmissionHelpers.ConvertIdToJudge0Language(request.LanguageId),
                 Summary = new JudgeSummaryDTO(),
                 Cases = new List<JudgeCaseResultDTO>()
             };
@@ -90,10 +95,8 @@ namespace BusinessLogic.Services.Contests
         {
             // Poll for results (with timeout)
             int attempts = 0;
-            const int maxAttempts = 10;
-            const int delayMs = 1000;
 
-            while (attempts < maxAttempts)
+            while (attempts < MAX_ATTEMPT)
             {
                 HttpResponseMessage response = await _httpClient.GetAsync($"{_judge0BaseUrl}/submissions/{token}?base64_encoded=false");
 
@@ -109,6 +112,7 @@ namespace BusinessLogic.Services.Contests
                             Id = testCase.Id,
                             Status = result?.Status?.Id == 3 ? "success" : "failed",
                             Judge0StatusId = result?.Status?.Id ?? 0,
+                            Judge0Status = Judge0Helpers.ConvertToJudge0StatusString(result?.Status?.Id),
                             Expected = testCase.ExpectedOutput,
                             Actual = result?.Stdout ?? "",
                             Stderr = result?.Stderr,
@@ -121,7 +125,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 attempts++;
-                await Task.Delay(delayMs);
+                await Task.Delay(POLLING_INTERVAL_MS);
             }
 
             // If we reach here, the submission timed out
@@ -129,7 +133,8 @@ namespace BusinessLogic.Services.Contests
             {
                 Id = testCase.Id,
                 Status = "error",
-                Judge0StatusId = 0,
+                Judge0StatusId = 4,
+                Judge0Status = Judge0StatusEnum.Error.ToString(),
                 Expected = testCase.ExpectedOutput,
                 Actual = "",
                 Stderr = "Submission timed out",

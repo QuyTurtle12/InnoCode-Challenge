@@ -3,7 +3,7 @@
     public class JudgeSubmissionResultDTO
     {
         public string ProblemId { get; set; } = string.Empty;
-        public int LanguageId { get; set; }
+        public string Language { get; set; } = string.Empty;
         public JudgeSummaryDTO Summary { get; set; } = new();
         public List<JudgeCaseResultDTO> Cases { get; set; } = new();
     }
@@ -13,6 +13,8 @@
         public int Total { get; set; }
         public int Passed { get; set; }
         public int Failed { get; set; }
+        public double rawScore { get; set; } = 0;
+        public double penaltyScore { get; set; } = 0;
     }
 
     public class JudgeCaseResultDTO
@@ -20,6 +22,7 @@
         public string Id { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public int Judge0StatusId { get; set; }
+        public string Judge0Status { get; set; } = string.Empty;
         public string Expected { get; set; } = string.Empty;
         public string Actual { get; set; } = string.Empty;
         public string? Stderr { get; set; }

@@ -12,6 +12,16 @@
             };
         }
 
+        public static string ConvertIdToJudge0Language(int language)
+        {
+            return language switch
+            {
+                71 => "python3",
+                70 => "python",
+                _ => "python3" // Default to Python3
+            };
+        }
+
         public static int? ParseRuntime(string? time)
         {
             if (string.IsNullOrEmpty(time)) return null;

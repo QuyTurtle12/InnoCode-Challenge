@@ -2,7 +2,7 @@
 {
     public class JudgeSubmissionRequestDTO
     {
-        public int LanguageId { get; set; }
+        public int LanguageId { get; set; } = 71;
         public string Code { get; set; } = string.Empty;
         public string? CodeUrl { get; set; }
         public JudgeProblemDTO Problem { get; set; } = new();

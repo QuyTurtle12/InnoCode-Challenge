@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.Submissions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDTOs;
@@ -102,6 +103,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// <param name="submissionDTO"></param>
         /// <returns></returns>
         [HttpPost("evaluate")]
+        [Authorize(Roles = RoleConstants.Student)]
         public async Task<IActionResult> EvaluateSubmission([FromBody] CreateSubmissionDTO submissionDTO)
         {
             JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(submissionDTO);
