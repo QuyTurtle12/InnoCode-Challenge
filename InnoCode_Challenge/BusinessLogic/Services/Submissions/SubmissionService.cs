@@ -1,7 +1,10 @@
 ﻿using System.Security.Claims;
 using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Submissions;
+using BusinessLogic.Services.FileStorages;
+using CloudinaryDotNet;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -22,14 +25,21 @@ namespace BusinessLogic.Services.Submissions
         private readonly IMapper _mapper;
         private readonly IJudge0Service _judge0Service;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ICloudinaryService _cloudinaryService;
 
         // Constructor
-        public SubmissionService(IUOW unitOfWork, IMapper mapper, IJudge0Service judge0Service, IHttpContextAccessor httpContextAccessor)
+        public SubmissionService(
+            IUOW unitOfWork,
+            IMapper mapper,
+            IJudge0Service judge0Service,
+            IHttpContextAccessor httpContextAccessor,
+            ICloudinaryService cloudinaryService)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
             _judge0Service = judge0Service;
             _httpContextAccessor = httpContextAccessor;
+            _cloudinaryService = cloudinaryService;
         }
 
         public async Task CreateSubmissionAsync(CreateSubmissionDTO submissionDTO)
@@ -390,6 +400,166 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error saving submission results: {ex.Message}");
+            }
+        }
+
+        public async Task<Guid> CreateFileSubmissionAsync(CreateFileSubmissionDTO submissionDTO, IFormFile file)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefault();
+
+                // Upload file to Cloudinary
+                string fileUrl = await _cloudinaryService.UploadFileAsync(file);
+
+                // Create a submission record
+                Submission submission = new Submission
+                {
+                    SubmissionId = Guid.NewGuid(),
+                    TeamId = submissionDTO.TeamId,
+                    ProblemId = submissionDTO.ProblemId,
+                    SubmittedByStudentId = studentId,
+                    JudgedBy = "pending",
+                    Status = SubmissionStatusEnum.Pending.ToString(),
+                    Score = 0,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                await submissionRepo.InsertAsync(submission);
+
+                // Save submission artifact (the file URL)
+                IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+                SubmissionArtifact artifact = new SubmissionArtifact
+                {
+                    ArtifactId = Guid.NewGuid(),
+                    SubmissionId = submission.SubmissionId,
+                    Type = "file",
+                    Url = fileUrl,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await artifactRepo.InsertAsync(artifact);
+
+                // Save changes to the database
+                await _unitOfWork.SaveAsync();
+
+                // Commit the transaction
+                _unitOfWork.CommitTransaction();
+
+                return submission.SubmissionId;
+            }
+            catch (Exception ex)
+            {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating file submission: {ex.Message}");
+            }
+        }
+
+        public async Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId)
+        {
+            try
+            {
+                // Get the submission and its artifacts
+                IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+
+                var fileArtifact = await artifactRepo.Entities
+                    .Where(a => a.SubmissionId == submissionId && a.Type == "file")
+                    .FirstOrDefaultAsync();
+
+                if (fileArtifact == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No file found for submission {submissionId}");
+                }
+
+                return fileArtifact.Url;
+            }
+            catch (Exception ex)
+            {
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving file download URL: {ex.Message}");
+            }
+        }
+
+        public async Task<bool> UpdateFileSubmissionScoreAsync(Guid submissionId, double score, string feedback)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get submission
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                var submission = await submissionRepo.GetByIdAsync(submissionId);
+
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Submission with ID {submissionId} not found");
+                }
+
+                // Get user ID from JWT token (the judge)
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Update submission
+                submission.Score = score;
+                submission.Status = SubmissionStatusEnum.Finished.ToString();
+                submission.JudgedBy = userId;
+
+                await submissionRepo.UpdateAsync(submission);
+
+                // Add feedback as a submission detail
+                IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
+                var detail = new SubmissionDetail
+                {
+                    DetailsId = Guid.NewGuid(),
+                    SubmissionId = submissionId,
+                    TestcaseId = null, // No test case for file submissions
+                    Weight = (int)score,
+                    Note = feedback,
+                    RuntimeMs = 0, // Not applicable
+                    MemoryKb = 0, // Not applicable
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await detailRepo.InsertAsync(detail);
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error updating file submission score: {ex.Message}");
             }
         }
 

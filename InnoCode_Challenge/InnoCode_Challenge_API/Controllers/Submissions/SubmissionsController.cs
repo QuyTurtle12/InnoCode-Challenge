@@ -5,6 +5,7 @@ using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Submissions
@@ -113,6 +114,88 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
                 message: "Submission evaluated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Upload a file submission (.zip or .rar)
+        /// </summary>
+        /// <param name="file">The file to upload (.zip or .rar)</param>
+        /// <param name="teamId">Team ID</param>
+        /// <param name="problemId">Problem ID</param>
+        /// <returns>Submission ID</returns>
+        [HttpPost]
+        [Route("upload")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UploadFileSubmission(
+            IFormFile file,
+            [FromForm] Guid teamId,
+            [FromForm] Guid problemId)
+        {
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new BaseResponseModel(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    code: ResponseCodeConstants.BADREQUEST,
+                    message: "No file was provided"
+                ));
+            }
+
+            var submissionDTO = new CreateFileSubmissionDTO
+            {
+                TeamId = teamId,
+                ProblemId = problemId
+            };
+
+            Guid submissionId = await _submissionService.CreateFileSubmissionAsync(submissionDTO, file);
+
+            return Ok(new BaseResponseModel<Guid>(
+                statusCode: StatusCodes.Status201Created,
+                code: ResponseCodeConstants.SUCCESS,
+                data: submissionId,
+                message: "File submission created successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Download a submitted file
+        /// </summary>
+        /// <param name="submissionId">ID of the submission</param>
+        /// <returns>Download URL for the file</returns>
+        [HttpGet("{submissionId}/download")]
+        public async Task<IActionResult> GetFileDownloadUrl(Guid submissionId)
+        {
+            string downloadUrl = await _submissionService.GetFileSubmissionDownloadUrlAsync(submissionId);
+
+            return Ok(new BaseResponseModel<string>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: downloadUrl,
+                message: "File download URL retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Update the score for a file submission (Judge only)
+        /// </summary>
+        /// <param name="submissionId">ID of the submission</param>
+        /// <param name="scoreDTO">Score and feedback</param>
+        /// <returns>Success message</returns>
+        [HttpPut("{submissionId}/score")]
+        [Authorize(Roles = RoleConstants.Judge)]
+        public async Task<IActionResult> UpdateFileSubmissionScore(
+            Guid submissionId,
+            FileSubmissionScoreDTO scoreDTO)
+        {
+            bool result = await _submissionService.UpdateFileSubmissionScoreAsync(
+                submissionId,
+                scoreDTO.Score,
+                scoreDTO.Feedback);
+
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "File submission score updated successfully."
             ));
         }
     }

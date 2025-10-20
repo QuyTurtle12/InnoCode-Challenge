@@ -28,6 +28,10 @@ using BusinessLogic.IServices.Students;
 using BusinessLogic.IServices.Submissions;
 using BusinessLogic.IServices.Users;
 using BusinessLogic.MappingProfiles.Users;
+using CloudinaryDotNet;
+using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.Services.FileStorages;
+using Utility.Helpers;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -43,6 +47,7 @@ namespace InnoCode_Challenge_API.DI
             services.ConfigCors();
             services.AddRepository();
             services.AddAutoMapper();
+            services.AddCloudinary(configuration);
             services.AddServices();
         }
         /// <summary>
@@ -198,10 +203,16 @@ namespace InnoCode_Challenge_API.DI
 
         }
 
-        private static void AddAutoMapper(this IServiceCollection services)
+        public static void AddAutoMapper(this IServiceCollection services)
         {
             // Register AutoMapper
             services.AddAutoMapper(typeof(UserProfile).Assembly);
+        }
+
+        public static void AddCloudinary(this IServiceCollection services, IConfiguration configuration)
+        {
+            services.Configure<CloudinarySettings>(
+                configuration.GetSection("CloudinarySettings"));
         }
 
         public static void AddServices(this IServiceCollection services)
@@ -236,6 +247,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IMentorRegistrationService, MentorRegistrationService>();
             services.AddScoped<IJudge0Service, Judge0Service>();
             services.AddScoped<IQuizService, QuizService>();
+            services.AddScoped<ICloudinaryService, CloudinaryService>();
         }
     }
 }

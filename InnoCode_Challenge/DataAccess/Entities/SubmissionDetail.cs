@@ -9,7 +9,7 @@ public partial class SubmissionDetail
 
     public Guid SubmissionId { get; set; }
 
-    public Guid TestcaseId { get; set; }
+    public Guid? TestcaseId { get; set; }
 
     public int? Weight { get; set; }
 
