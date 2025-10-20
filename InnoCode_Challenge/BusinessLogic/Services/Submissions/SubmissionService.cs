@@ -32,7 +32,6 @@ namespace BusinessLogic.Services.Submissions
             _httpContextAccessor = httpContextAccessor;
         }
 
-
         public async Task CreateSubmissionAsync(CreateSubmissionDTO submissionDTO)
         {
             try

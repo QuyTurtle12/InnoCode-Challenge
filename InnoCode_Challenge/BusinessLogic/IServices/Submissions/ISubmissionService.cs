@@ -11,6 +11,5 @@ namespace BusinessLogic.IServices.Submissions
         Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO SubmissionDTO);
         Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(CreateSubmissionDTO submissionDTO);
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
-
     }
 }
