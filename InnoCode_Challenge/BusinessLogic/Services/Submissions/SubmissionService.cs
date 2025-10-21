@@ -3,8 +3,6 @@ using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Submissions;
-using BusinessLogic.Services.FileStorages;
-using CloudinaryDotNet;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -116,7 +114,10 @@ namespace BusinessLogic.Services.Submissions
                 {
                     query = query.Where(s => s.Team.Name.Contains(teamName));
                 }
-                
+
+                // Order by creation date descending
+                query = query.OrderByDescending(s => s.CreatedAt);
+
                 // Get paginated data
                 PaginatedList<Submission> resultQuery = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
                 
@@ -524,10 +525,15 @@ namespace BusinessLogic.Services.Submissions
                         ResponseCodeConstants.BADREQUEST,
                         $"Null User Id");
 
+                // Get judge email
+                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
+                string judgeEmail = user?.Email ?? "unknown";
+
                 // Update submission
                 submission.Score = score;
                 submission.Status = SubmissionStatusEnum.Finished.ToString();
-                submission.JudgedBy = userId;
+                submission.JudgedBy = judgeEmail;
 
                 await submissionRepo.UpdateAsync(submission);
 
