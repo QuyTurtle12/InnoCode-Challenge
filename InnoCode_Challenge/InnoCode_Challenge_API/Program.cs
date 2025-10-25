@@ -5,12 +5,13 @@ using Microsoft.EntityFrameworkCore;
 using Utility.Helpers;
 
 var builder = WebApplication.CreateBuilder(args);
-// Add config for Cloudinary settings
-builder.Services.Configure<CloudinarySettings>(
-    builder.Configuration.GetSection("CloudinarySettings"));
 
 builder.Services.AddHttpClient();
 // Add services to the container.
+
+// Add config for Cloudinary settings
+builder.Services.Configure<CloudinarySettings>(
+    builder.Configuration.GetSection("CloudinarySettings"));
 
 builder.Services.AddControllers()
         .AddJsonOptions(options =>
