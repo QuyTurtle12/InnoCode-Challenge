@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.Contests;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ContestDTOs;
 using Repository.ResponseModel;
@@ -125,5 +126,33 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         message: "Delete contest successfully."
                     ));
         }
+
+        [HttpPost("advanced")]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
+        public async Task<IActionResult> CreateAdvanced([FromBody] CreateContestAdvancedDTO dto)
+        {
+            var created = await _contestService.CreateContestWithPolicyAsync(dto);
+            return CreatedAtAction(nameof(CheckPublishReadiness), new { id = created.ContestId },
+                new BaseResponseModel<object>(StatusCodes.Status201Created, ResponseCodeConstants.SUCCESS, created,
+                    message: "Contest created (draft) and policies bootstrapped."));
+        }
+
+        [HttpGet("{id:guid}/publish/check")]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
+        public async Task<IActionResult> CheckPublishReadiness(Guid id)
+        {
+            var check = await _contestService.CheckPublishReadinessAsync(id);
+            return Ok(new BaseResponseModel<object>(StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, check,
+                message: check.IsReady ? "Contest is ready to publish." : "Contest is NOT ready to publish."));
+        }
+
+        [HttpPost("{id:guid}/publish-if-ready")]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
+        public async Task<IActionResult> PublishIfReady(Guid id)
+        {
+            await _contestService.PublishIfReadyAsync(id);
+            return Ok(new BaseResponseModel(StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, "Contest published."));
+        }
+
     }
 }

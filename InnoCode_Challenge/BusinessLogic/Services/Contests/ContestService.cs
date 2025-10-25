@@ -2,6 +2,7 @@
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -320,5 +321,210 @@ namespace BusinessLogic.Services.Contests
                     $"Error updating Contests: {ex.Message}");
             }
         }
+
+        public async Task<ContestCreatedDTO> CreateContestWithPolicyAsync(CreateContestAdvancedDTO dto)
+        {
+            if (dto == null)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Payload cannot be null.");
+
+            if (string.IsNullOrWhiteSpace(dto.Name))
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Name is required.");
+
+            var currentYear = DateTime.UtcNow.Year;
+            if (dto.Year < currentYear)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Year must be ≥ {currentYear}.");
+
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            var nameTrim = dto.Name.Trim();
+
+            var exists = await contestRepo.Entities
+                .AnyAsync(c => c.Year == dto.Year && c.Name == nameTrim && c.DeletedAt == null);
+
+            if (exists)
+            {
+                var suggestion = await SuggestAlternateNameAsync(nameTrim, dto.Year, contestRepo);
+                var ex = new CoreException("CONTEST_DUPLICATE", "Contest name already exists for this year.", StatusCodes.Status409Conflict)
+                {
+                    AdditionalData = new Dictionary<string, object>
+                    {
+                        ["suggestion"] = suggestion
+                    }
+                };
+                throw ex;
+            }
+
+            var entity = _mapper.Map<Contest>(dto);
+            entity.ContestId = Guid.NewGuid();
+            entity.Name = nameTrim;
+            entity.Status = ContestStatusEnum.Draft.ToString(); // draft
+            entity.CreatedAt = DateTime.UtcNow;
+
+            _unitOfWork.BeginTransaction();
+            try
+            {
+                await contestRepo.InsertAsync(entity);
+                await _unitOfWork.SaveAsync();
+
+                var teamMembersMax = dto.TeamMembersMax
+                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4); 
+                int? teamLimitMax = dto.TeamLimitMax
+                                     ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);    
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
+                if (teamLimitMax.HasValue)
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(entity.ContestId), teamLimitMax.Value.ToString());
+
+                if (dto.RegistrationStart.HasValue)
+                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_start", dto.RegistrationStart.Value.ToString("o"));
+                if (dto.RegistrationEnd.HasValue)
+                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_end", dto.RegistrationEnd.Value.ToString("o"));
+
+                if (!string.IsNullOrWhiteSpace(dto.RewardsText))
+                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:rewards_text", dto.RewardsText!.Trim());
+
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+
+                var created = _mapper.Map<ContestCreatedDTO>(entity);
+                created.TeamMembersMax = teamMembersMax;
+                created.TeamLimitMax = teamLimitMax;
+                created.RewardsText = dto.RewardsText;
+                created.RegistrationStart = dto.RegistrationStart;
+                created.RegistrationEnd = dto.RegistrationEnd;
+                return created;
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+        }
+
+        public async Task<PublishReadinessDTO> CheckPublishReadinessAsync(Guid contestId)
+        {
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            var problemRepo = _unitOfWork.GetRepository<Problem>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            var contest = await contestRepo.Entities
+                .Include(c => c.Rounds)
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            var result = new PublishReadinessDTO { ContestId = contestId };
+
+            if (contest.Rounds == null || !contest.Rounds.Any())
+                result.Missing.Add("No rounds created.");
+
+            var roundIds = contest.Rounds.Select(r => r.RoundId).ToList();
+            if (roundIds.Any())
+            {
+                var problemCount = await problemRepo.Entities.CountAsync(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null);
+                if (problemCount < roundIds.Count)
+                    result.Missing.Add("One or more rounds missing a problem.");
+            }
+
+            var regStart = await configRepo.Entities
+                .Where(c => c.Key == $"contest:{contestId}:registration_start" && c.DeletedAt == null)
+                .Select(c => c.Value).FirstOrDefaultAsync();
+            var regEnd = await configRepo.Entities
+                .Where(c => c.Key == $"contest:{contestId}:registration_end" && c.DeletedAt == null)
+                .Select(c => c.Value).FirstOrDefaultAsync();
+
+            if (string.IsNullOrEmpty(regStart) || string.IsNullOrEmpty(regEnd))
+                result.Missing.Add("Registration window not configured.");
+
+            var membersMaxContest = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.ContestTeamMembersMax(contestId) && c.DeletedAt == null)
+                .Select(c => c.Value).FirstOrDefaultAsync();
+
+            var membersMaxDefault = await configRepo.Entities
+                .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMax && c.DeletedAt == null)
+                .Select(c => c.Value).FirstOrDefaultAsync();
+
+            if (string.IsNullOrEmpty(membersMaxContest) && string.IsNullOrEmpty(membersMaxDefault))
+                result.Missing.Add("Team members max not configured (contest or global).");
+
+            result.IsReady = result.Missing.Count == 0;
+            return result;
+        }
+
+        public async Task PublishIfReadyAsync(Guid contestId)
+        {
+            var check = await CheckPublishReadinessAsync(contestId);
+            if (!check.IsReady)
+            {
+                var ex = new CoreException("PUBLISH_BLOCKED", "Contest is not ready to publish.", StatusCodes.Status409Conflict)
+                {
+                    AdditionalData = new Dictionary<string, object> { ["missing"] = check.Missing }
+                };
+                throw ex;
+            }
+
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            var contest = await contestRepo.GetByIdAsync(contestId);
+            if (contest == null || contest.DeletedAt != null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            contest.Status = ContestStatusEnum.Published.ToString();
+            await contestRepo.UpdateAsync(contest);
+            await _unitOfWork.SaveAsync();
+        }
+
+
+        private static async Task UpsertConfigAsync(IGenericRepository<Config> repo, string key, string value)
+        {
+            var existing = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+            if (existing == null)
+            {
+                await repo.InsertAsync(new Config
+                {
+                    Key = key,
+                    Value = value,
+                    Scope = "contest",
+                    UpdatedAt = DateTime.UtcNow,
+                    DeletedAt = null
+                });
+            }
+            else
+            {
+                existing.Value = value;
+                existing.UpdatedAt = DateTime.UtcNow;
+                existing.DeletedAt = null;
+                await repo.UpdateAsync(existing);
+            }
+        }
+
+        private static async Task<string> SuggestAlternateNameAsync(string baseName, int year, IGenericRepository<Contest> repo)
+        {
+            var suffix = 2;
+            string candidate;
+            do
+            {
+                candidate = $"{baseName} ({suffix})";
+                suffix++;
+            }
+            while (await repo.Entities.AnyAsync(c => c.Year == year && c.Name == candidate && c.DeletedAt == null));
+
+            return candidate;
+        }
+        private static async Task<int> GetGlobalIntOrDefaultAsync(IGenericRepository<Config> repo, string key, int @default)
+        {
+            var value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+                                           .Select(c => c.Value).FirstOrDefaultAsync();
+            return int.TryParse(value, out var n) ? n : @default;
+        }
+
+        private static async Task<int?> GetGlobalNullableIntAsync(IGenericRepository<Config> repo, string key)
+        {
+            var value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+                                           .Select(c => c.Value).FirstOrDefaultAsync();
+            return int.TryParse(value, out var n) ? n : null;
+        }
+
     }
 }
