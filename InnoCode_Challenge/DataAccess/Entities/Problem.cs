@@ -19,6 +19,8 @@ public partial class Problem
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? Description { get; set; }
+
     public virtual Round Round { get; set; } = null!;
 
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();

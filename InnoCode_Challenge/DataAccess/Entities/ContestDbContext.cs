@@ -699,6 +699,9 @@ public partial class ContestDbContext : DbContext
                 .HasPrecision(0)
                 .HasColumnName("created_at");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
+            entity.Property(e => e.Description)
+                .HasMaxLength(255)
+                .IsUnicode(false);
             entity.Property(e => e.Language)
                 .HasMaxLength(20)
                 .IsUnicode(false)
@@ -924,7 +927,6 @@ public partial class ContestDbContext : DbContext
 
             entity.HasOne(d => d.Testcase).WithMany(p => p.SubmissionDetails)
                 .HasForeignKey(d => d.TestcaseId)
-                .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_submission_details_testcase");
         });
 

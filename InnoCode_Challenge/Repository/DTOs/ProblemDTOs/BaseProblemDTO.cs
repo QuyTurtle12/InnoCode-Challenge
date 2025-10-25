@@ -4,6 +4,8 @@
     {
         public Guid RoundId { get; set; }
 
+        public string Description { get; set; } = string.Empty;
+
         public string Language { get; set; } = null!;
 
         public double? PenaltyRate { get; set; }

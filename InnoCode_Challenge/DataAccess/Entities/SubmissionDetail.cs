@@ -25,5 +25,5 @@ public partial class SubmissionDetail
 
     public virtual Submission Submission { get; set; } = null!;
 
-    public virtual TestCase Testcase { get; set; } = null!;
+    public virtual TestCase? Testcase { get; set; }
 }
