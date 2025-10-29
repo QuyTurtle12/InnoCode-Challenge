@@ -70,6 +70,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Submission: {ex.Message}");
@@ -142,6 +148,11 @@ namespace BusinessLogic.Services.Submissions
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving paginated Submissions: {ex.Message}");
@@ -184,6 +195,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating Submission: {ex.Message}");
@@ -304,6 +321,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // Roll back transaction on error
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error evaluating submission: {ex.Message}");
@@ -399,6 +422,11 @@ namespace BusinessLogic.Services.Submissions
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error saving submission results: {ex.Message}");
@@ -486,6 +514,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // Roll back transaction on error
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating file submission: {ex.Message}");
@@ -514,6 +548,11 @@ namespace BusinessLogic.Services.Submissions
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving file download URL: {ex.Message}");
@@ -582,6 +621,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // Roll back transaction on error
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating file submission score: {ex.Message}");

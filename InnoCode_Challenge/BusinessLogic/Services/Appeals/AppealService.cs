@@ -49,6 +49,12 @@ namespace BusinessLogic.Services.Appeals
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Appeal: {ex.Message}");
@@ -69,8 +75,8 @@ namespace BusinessLogic.Services.Appeals
                 Appeal? appeal = await appealRepo.GetByIdAsync(id);
                 if (appeal == null)
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound, 
-                        ResponseCodeConstants.NOT_FOUND, 
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
                         $"Appeal with ID {id} not found");
                 }
 
@@ -87,6 +93,12 @@ namespace BusinessLogic.Services.Appeals
             {
                 // Roll back the transaction and throw a new custom exception
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Appeal: {ex.Message}");
@@ -106,43 +118,43 @@ namespace BusinessLogic.Services.Appeals
                     .Where(a => !a.DeletedAt.HasValue)
                     .Include(a => a.Team)
                     .Include(a => a.Owner);
-                
+
                 // Apply search filters if provided
                 if (idSearch.HasValue)
                 {
                     query = query.Where(a => a.AppealId == idSearch.Value);
                 }
-                
+
                 if (teamIdSearch.HasValue)
                 {
                     query = query.Where(a => a.TeamId == teamIdSearch.Value);
                 }
-                
+
                 if (ownerIdSearch.HasValue)
                 {
                     query = query.Where(a => a.OwnerId == ownerIdSearch.Value);
                 }
-                
+
                 if (!string.IsNullOrWhiteSpace(teamNameSearch))
                 {
                     query = query.Where(a => a.Team.Name.Contains(teamNameSearch));
                 }
-                
+
                 if (!string.IsNullOrWhiteSpace(ownerNameSearch))
                 {
                     query = query.Where(a => a.Owner.Fullname.Contains(ownerNameSearch));
                 }
-                
+
                 // Get paginated result
                 PaginatedList<Appeal> resultQuery = await appealRepo.GetPagingAsync(query, pageNumber, pageSize);
-                
+
                 // Map entity to DTO
-                IReadOnlyCollection<GetAppealDTO> result = resultQuery.Items.Select(item =>{
+                IReadOnlyCollection<GetAppealDTO> result = resultQuery.Items.Select(item => {
                     GetAppealDTO appealDTO = _mapper.Map<GetAppealDTO>(item);
 
                     return appealDTO;
                 }).ToList();
-                
+
                 // Create and return paginated list of DTOs
                 return new PaginatedList<GetAppealDTO>(
                     result,
@@ -153,6 +165,11 @@ namespace BusinessLogic.Services.Appeals
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving paginated appeals: {ex.Message}");
@@ -173,8 +190,8 @@ namespace BusinessLogic.Services.Appeals
                 Appeal? appeal = await appealRepo.GetByIdAsync(id);
                 if (appeal == null)
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound, 
-                        ResponseCodeConstants.NOT_FOUND, 
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
                         $"Appeal with ID {id} not found");
                 }
 
@@ -195,6 +212,12 @@ namespace BusinessLogic.Services.Appeals
             {
                 // Roll back the transaction and throw a new custom exception
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating Appeal: {ex.Message}");

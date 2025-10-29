@@ -48,6 +48,12 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+                
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating MCQ options: {ex.Message}");
@@ -85,6 +91,12 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+                
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting MCQ options: {ex.Message}");
@@ -135,6 +147,11 @@ namespace BusinessLogic.Services.Mcqs
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving MCQ options: {ex.Message}");
@@ -176,6 +193,12 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+                
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating MCQ option: {ex.Message}");

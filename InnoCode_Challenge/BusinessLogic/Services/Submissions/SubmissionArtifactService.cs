@@ -51,6 +51,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Submission Artifact: {ex.Message}");
@@ -94,6 +100,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Submission Artifact: {ex.Message}");
@@ -139,6 +151,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving Submission Artifacts: {ex.Message}");
@@ -182,6 +200,12 @@ namespace BusinessLogic.Services.Submissions
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating Submission Artifact: {ex.Message}");

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Repository.DTOs.AppealEvidenceDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.ExceptionCustom;
 
 namespace BusinessLogic.Services.Appeals
 {
@@ -46,7 +47,13 @@ namespace BusinessLogic.Services.Appeals
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw new Utility.ExceptionCustom.ErrorException(StatusCodes.Status500InternalServerError,
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Appeal Evidence: {ex.Message}");
             }
@@ -66,7 +73,7 @@ namespace BusinessLogic.Services.Appeals
                 // If the entity does not exist, throw a custom exception
                 if (existingAppealEvidence == null)
                 {
-                    throw new Utility.ExceptionCustom.ErrorException(StatusCodes.Status404NotFound,
+                    throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"Appeal Evidence with ID {id} not found.");
                 }
@@ -84,7 +91,13 @@ namespace BusinessLogic.Services.Appeals
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw new Utility.ExceptionCustom.ErrorException(StatusCodes.Status500InternalServerError,
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Appeal Evidence: {ex.Message}");
             }

@@ -122,6 +122,12 @@ namespace BusinessLogic.Services.Certificates
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+                
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error awarding certificates: {ex.Message}");
@@ -149,6 +155,11 @@ namespace BusinessLogic.Services.Certificates
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Certificate: {ex.Message}");
@@ -189,6 +200,12 @@ namespace BusinessLogic.Services.Certificates
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+                
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Certificate: {ex.Message}");
@@ -265,6 +282,11 @@ namespace BusinessLogic.Services.Certificates
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+                
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error fetching Certificates: {ex.Message}");

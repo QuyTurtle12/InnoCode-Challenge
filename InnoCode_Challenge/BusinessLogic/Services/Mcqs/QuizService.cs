@@ -165,6 +165,12 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // Roll back transaction on error
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error processing quiz submission: {ex.Message}");
@@ -237,6 +243,11 @@ namespace BusinessLogic.Services.Mcqs
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving quiz attempt result: {ex.Message}");
@@ -310,6 +321,11 @@ namespace BusinessLogic.Services.Mcqs
             }
             catch (Exception ex)
             {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving quiz attempts: {ex.Message}");
