@@ -132,15 +132,6 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
             [FromForm] Guid teamId,
             [FromForm] Guid problemId)
         {
-            if (file == null || file.Length == 0)
-            {
-                return BadRequest(new BaseResponseModel(
-                    statusCode: StatusCodes.Status400BadRequest,
-                    code: ResponseCodeConstants.BADREQUEST,
-                    message: "No file was provided"
-                ));
-            }
-
             var submissionDTO = new CreateFileSubmissionDTO
             {
                 TeamId = teamId,

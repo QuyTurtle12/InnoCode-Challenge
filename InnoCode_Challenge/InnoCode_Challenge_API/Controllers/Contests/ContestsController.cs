@@ -32,7 +32,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="endDate"></param>
         /// <returns></returns>
         [HttpGet]
-        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetContests(int pageNumber = 1, 
+        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetContests(int pageNumber = 1,
                                                                                  int pageSize = 10,
                                                                                  Guid? idSearch = null,
                                                                                  string? nameSearch = null,
@@ -40,7 +40,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                                                                                  DateTime? startDate = null,
                                                                                  DateTime? endDate = null)
         {
-            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, 
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch,
                                                                   nameSearch, yearSearch, startDate, endDate);
 
             var paging = new

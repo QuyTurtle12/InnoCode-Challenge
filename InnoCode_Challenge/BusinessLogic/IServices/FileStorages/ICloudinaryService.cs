@@ -4,7 +4,7 @@ namespace BusinessLogic.IServices.FileStorages
 {
     public interface ICloudinaryService
     {
-        Task<string> UploadFileAsync(IFormFile file, string folder = "submissions");
+        Task<string> UploadFileAsync(IFormFile file, string folder = "others");
         Task<bool> DeleteFileAsync(string publicId);
         string GetDownloadUrl(string publicId);
     }

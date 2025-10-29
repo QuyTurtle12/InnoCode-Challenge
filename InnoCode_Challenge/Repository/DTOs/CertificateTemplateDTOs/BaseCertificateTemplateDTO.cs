@@ -5,7 +5,5 @@
         public Guid ContestId { get; set; }
 
         public string Name { get; set; } = null!;
-
-        public string? FileUrl { get; set; }
     }
 }

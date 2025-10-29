@@ -35,11 +35,16 @@ namespace BusinessLogic.Services.FileStorages
 
             // Check file extension
             var extension = Path.GetExtension(file.FileName).ToLower();
-            if (extension != ".zip" && extension != ".rar")
+            if (extension != ".zip" &&
+                extension != ".rar" &&
+                extension != ".jpeg" &&
+                extension != ".jpg" &&
+                extension != ".pdf" &&
+                extension != ".png")
             {
                 throw new ErrorException(StatusCodes.Status400BadRequest,
                     ResponseCodeConstants.BADREQUEST,
-                    "Only .zip or .rar files are allowed");
+                    "Only .zip or .rar or .pdf or .png or .jpg or .jpeg files are allowed");
             }
 
             // Check file size (limit to 100MB)

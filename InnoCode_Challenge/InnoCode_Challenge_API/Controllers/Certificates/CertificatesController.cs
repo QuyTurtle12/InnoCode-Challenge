@@ -102,5 +102,22 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
                         message: "Delete Certificat successfully."
                     ));
         }
+
+        /// <summary>
+        /// Award certificates to teams
+        /// </summary>
+        /// <param name="dto"></param>
+        /// <returns></returns>
+        [HttpPost]
+        [Route("Award")]
+        public async Task<IActionResult> AwardCertificate(AwardCertificateDTO dto)
+        {
+            await _certificateService.AwardCertificateAsync(dto);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Award Certificate successfully."
+                    ));
+        }
     }
 }

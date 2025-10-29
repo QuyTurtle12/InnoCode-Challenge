@@ -57,9 +57,19 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// Creates a new certificate template
         /// </summary>
         [HttpPost]
-        public async Task<ActionResult> CreateCertificateTemplate(CreateCertificateTemplateDTO templateDTO)
+        public async Task<ActionResult> CreateCertificateTemplate(
+            IFormFile file,
+            [FromForm] Guid contestId,
+            [FromForm] string name
+            )
         {
-            await _certificateTemplateService.CreateCertificateTemplateAsync(templateDTO);
+            var templateDTO = new CreateCertificateTemplateDTO
+            {
+                ContestId = contestId,
+                Name = name
+            };
+
+            await _certificateTemplateService.CreateCertificateTemplateAsync(file, templateDTO);
 
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
@@ -72,9 +82,17 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// Updates an existing certificate template
         /// </summary>
         [HttpPut("{id}")]
-        public async Task<ActionResult> UpdateCertificateTemplate(Guid id, UpdateCertificateTemplateDTO templateDTO)
+        public async Task<ActionResult> UpdateCertificateTemplate(
+            Guid id,
+            IFormFile? file,
+            [FromForm] string? name)
         {
-            await _certificateTemplateService.UpdateCertificateTemplateAsync(id, templateDTO);
+            UpdateCertificateTemplateDTO templateDTO = new UpdateCertificateTemplateDTO
+            {
+                Name = name!
+            };
+
+            await _certificateTemplateService.UpdateCertificateTemplateAsync(id, file, templateDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,

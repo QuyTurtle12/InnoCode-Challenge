@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
+using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -408,6 +409,24 @@ namespace BusinessLogic.Services.Submissions
         {
             try
             {
+                // Validate file
+                if (file == null || file.Length == 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"No file was provided");
+                }
+
+                // Validate file type
+                List<string> allowedExtensions = new List<string> { ".zip", ".rar" };
+                string fileExtension = Path.GetExtension(file.FileName).ToLower();
+                if (!allowedExtensions.Contains(fileExtension))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
+                }
+
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
@@ -424,7 +443,7 @@ namespace BusinessLogic.Services.Submissions
                     .FirstOrDefault();
 
                 // Upload file to Cloudinary
-                string fileUrl = await _cloudinaryService.UploadFileAsync(file);
+                string fileUrl = await _cloudinaryService.UploadFileAsync(file, "submissions");
 
                 // Create a submission record
                 Submission submission = new Submission

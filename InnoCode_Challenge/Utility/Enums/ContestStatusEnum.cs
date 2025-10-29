@@ -4,6 +4,7 @@
     {
         Draft = 0,
         Published = 1,
-        Cancelled = 2
+        Cancelled = 2,
+        Closed = 3
     }
 }

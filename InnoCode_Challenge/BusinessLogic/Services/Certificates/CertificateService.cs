@@ -23,13 +23,115 @@ namespace BusinessLogic.Services.Certificates
             _unitOfWork = unitOfWork;
         }
 
+        public async Task AwardCertificateAsync(AwardCertificateDTO dto)
+        {
+            try
+            {
+                // Validate input
+                if (dto == null)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Award certificate data cannot be null.");
+                }
+
+                if (dto.templateId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Template ID is required.");
+                }
+
+                if (dto.teamIdList == null || !dto.teamIdList.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "At least one team must be selected.");
+                }
+
+                // Start a transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get repositories
+                IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
+                IGenericRepository<CertificateTemplate> templateRepo = _unitOfWork.GetRepository<CertificateTemplate>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+                // Verify template exists
+                CertificateTemplate? template = await templateRepo.GetByIdAsync(dto.templateId);
+                if (template == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Certificate template with ID {dto.templateId} not found.");
+                }
+
+                // Get all team members for the selected teams
+                IList<Team> teams = await teamRepo.Entities
+                    .Where(t => dto.teamIdList.Contains(t.TeamId))
+                    .Include(t => t.TeamMembers)
+                    .ToListAsync();
+
+                // Verify all teams exist
+                if (teams.Count != dto.teamIdList.Count)
+                {
+                    List<Guid> foundTeamIds = teams.Select(t => t.TeamId).ToList();
+                    List<Guid> missingTeamIds = dto.teamIdList.Except(foundTeamIds).ToList();
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Teams not found: {string.Join(", ", missingTeamIds)}");
+                }
+
+                // Prepare list to hold new certificates
+                List<Certificate> certificates = new List<Certificate>();
+
+                // Current timestamp for issuedAt
+                DateTime issuedAt = DateTime.UtcNow;
+
+                // Iterate through each team
+                foreach (Team team in teams)
+                {
+                    // Create certificates for all team members
+                    foreach (TeamMember member in team.TeamMembers)
+                    {
+                        Certificate certificate = new Certificate
+                        {
+                            CertificateId = Guid.NewGuid(),
+                            TemplateId = dto.templateId,
+                            TeamId = team.TeamId,
+                            StudentId = member.StudentId,
+                            FileUrl = template.FileUrl ?? "N/A",
+                            IssuedAt = issuedAt
+                        };
+
+                        // Add to the list
+                        certificates.Add(certificate);
+                    }
+                }
+
+                // Insert all certificates at once
+                await certificateRepo.InsertRangeAsync(certificates);
+
+                // Save changes to the database
+                await _unitOfWork.SaveAsync();
+
+                // Commit the transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // If something fails, roll back the transaction
+                _unitOfWork.RollBack();
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error awarding certificates: {ex.Message}");
+            }
+        }
+
         public async Task CreateCertificateAsync(CreateCertificateDTO dto)
         {
             try
             {
-                // Start a transaction
-                _unitOfWork.BeginTransaction();
-
                 // Get the repository for Certificate entity
                 IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
 
@@ -44,14 +146,9 @@ namespace BusinessLogic.Services.Certificates
 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
-
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Certificate: {ex.Message}");

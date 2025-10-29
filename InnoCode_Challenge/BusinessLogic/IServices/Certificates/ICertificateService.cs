@@ -8,5 +8,6 @@ namespace BusinessLogic.IServices.Certificates
         Task<PaginatedList<GetCertificateDTO>> GetPaginatedCertificateAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? teamIdSearch, Guid? studentIdSearch, string? certificateNameSearch, string? teamName, string? studentNameSearch);
         Task CreateCertificateAsync(CreateCertificateDTO DTO);
         Task DeleteCertificateAsync(Guid id);
+        Task AwardCertificateAsync(AwardCertificateDTO dto);
     }
 }

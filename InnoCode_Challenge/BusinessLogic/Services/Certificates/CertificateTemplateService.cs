@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Certificates;
+using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -15,18 +16,49 @@ namespace BusinessLogic.Services.Certificates
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly ICloudinaryService _cloudinaryService;
+
+        private const long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
         // Constructor
-        public CertificateTemplateService(IMapper mapper, IUOW unitOfWork)
+        public CertificateTemplateService(IMapper mapper, IUOW unitOfWork, ICloudinaryService cloudinaryService)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
+            _cloudinaryService = cloudinaryService;
         }
 
-        public async Task CreateCertificateTemplateAsync(CreateCertificateTemplateDTO templateDTO)
+        public async Task CreateCertificateTemplateAsync(IFormFile file, CreateCertificateTemplateDTO templateDTO)
         {
             try
             {
+                // Validate file
+                if (file == null || file.Length == 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Certificate template file is required.");
+                }
+
+                // Validate file type
+                List<string> allowedExtensions = new List<string>{ ".pdf", ".png", ".jpg", ".jpeg" };
+                string fileExtension = Path.GetExtension(file.FileName).ToLower();
+                if (!allowedExtensions.Contains(fileExtension))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
+                }
+
+                // Validate file size
+                const long maxFileSize = 10 * 1024 * 1024; // 10MB
+                if (file.Length > MAX_FILE_SIZE)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"File size exceeds the maximum allowed size of {maxFileSize / (1024 * 1024)}MB.");
+                }
+
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
@@ -37,17 +69,23 @@ namespace BusinessLogic.Services.Certificates
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
                 // Check if contest exists
-                var contestExists = await contestRepo.GetByIdAsync(templateDTO.ContestId);
+                Contest? contestExists = await contestRepo.GetByIdAsync(templateDTO.ContestId);
                 if (contestExists == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"Contest with ID {templateDTO.ContestId} not found.");
                 }
+
+                // Upload file to Cloudinary
+                string fileUrl = await _cloudinaryService.UploadFileAsync(file, "certificate templates");
 
                 // Create new template entity and map from DTO
                 CertificateTemplate template = _mapper.Map<CertificateTemplate>(templateDTO);
 
                 // Generate new ID for the template
                 template.TemplateId = Guid.NewGuid();
+
+                // Set the Cloudinary file URL
+                template.FileUrl = fileUrl;
 
                 // Insert the new template
                 await certificateTemplateRepo.InsertAsync(template);
@@ -171,7 +209,7 @@ namespace BusinessLogic.Services.Certificates
             }
         }
 
-        public async Task UpdateCertificateTemplateAsync(Guid id, UpdateCertificateTemplateDTO templateDTO)
+        public async Task UpdateCertificateTemplateAsync(Guid id, IFormFile? file, UpdateCertificateTemplateDTO templateDTO)
         {
             try
             {
@@ -184,29 +222,45 @@ namespace BusinessLogic.Services.Certificates
                 // Find the template
                 CertificateTemplate? template = await certificateTemplateRepo.GetByIdAsync(id);
 
+                //  If template not found, throw error
                 if (template == null)
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"Certificate template with ID {id} not found.");
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Certificate template with ID {id} not found.");
                 }
 
-                // Check if the contest ID has changed
-                if (template.ContestId != templateDTO.ContestId)
+                // Upload new file if provided
+                if (file != null && file.Length > 0)
                 {
-                    // Get repository for Contest entity to check if the new contest exists
-                    IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-
-                    // Check if the new contest exists
-                    var contestExists = await contestRepo.GetByIdAsync(templateDTO.ContestId);
-                    if (contestExists == null)
+                    // Validate file extension
+                    List<string> allowedExtensions = new List<string>{ ".pdf", ".png", ".jpg", ".jpeg", ".docx" };
+                    string? fileExtension = Path.GetExtension(file.FileName).ToLower();
+                    if (!allowedExtensions.Contains(fileExtension))
                     {
-                        throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"Contest with ID {templateDTO.ContestId} not found.");
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            $"File type {fileExtension} is not supported.");
                     }
+
+                    // Validate file size
+                    if (file.Length > MAX_FILE_SIZE)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "File size exceeds the maximum allowed size.");
+                    }
+
+                    // Upload new file to Cloudinary
+                    string fileUrl = await _cloudinaryService.UploadFileAsync(file, "certificates");
+                    template.FileUrl = fileUrl;
                 }
 
                 // Update properties
-                template.ContestId = templateDTO.ContestId;
-                template.Name = templateDTO.Name;
-                template.FileUrl = templateDTO.FileUrl;
+                if (!string.IsNullOrWhiteSpace(templateDTO.Name))
+                {
+                    template.Name = templateDTO.Name;
+                }
 
                 // Update the template
                 await certificateTemplateRepo.UpdateAsync(template);
@@ -221,6 +275,12 @@ namespace BusinessLogic.Services.Certificates
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating Certificate Template: {ex.Message}");

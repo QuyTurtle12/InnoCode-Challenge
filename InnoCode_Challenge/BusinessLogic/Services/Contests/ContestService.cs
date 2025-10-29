@@ -1,8 +1,11 @@
 ﻿using AutoMapper;
+using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Repository.DTOs.CertificateDTOs;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -16,13 +19,15 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly IServiceProvider _serviceProvider;
         private const int MIN_YEAR = 10;
 
         // Constructor
-        public ContestService(IMapper mapper, IUOW uow)
+        public ContestService(IMapper mapper, IUOW uow, IServiceProvider serviceProvider)
         {
             _mapper = mapper;
             _unitOfWork = uow;
+            _serviceProvider = serviceProvider;
         }
 
         public async Task CreateContestAsync(CreateContestDTO contestDTO)
@@ -526,5 +531,90 @@ namespace BusinessLogic.Services.Contests
             return int.TryParse(value, out var n) ? n : null;
         }
 
+        //public async Task CloseContestAsync(Guid id)
+        //{
+        //    try
+        //    {
+        //        // Start a transaction
+        //        _unitOfWork.BeginTransaction();
+
+        //        //Get repository for Contest
+        //        IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+        //        // Fetch the contest by ID
+        //        Contest? existingContest = await contestRepo
+        //            .Entities
+        //            .Where(c => c.ContestId == id)
+        //            .Include(c => c.CertificateTemplates)
+        //            .FirstOrDefaultAsync();
+
+        //        // Validate if contest exists
+        //        if (existingContest == null || existingContest.DeletedAt.HasValue)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+        //        }
+
+        //        // Get repository for LeaderboardEntry
+        //        IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+        //        // Fetch the leaderboard entry for the given contest ID and rank 1 team
+        //        LeaderboardEntry? leaderboardEntry = await leaderboardRepo
+        //            .Entities
+        //            .Where(le => le.ContestId == id && le.Rank == 1)
+        //            .Include(le => le.Team)
+        //                .ThenInclude(t => t.TeamMembers)
+        //                    .ThenInclude(tm => tm.Student)
+        //            .FirstOrDefaultAsync();
+
+        //        // Validate if leaderboard entry exists
+        //        if (leaderboardEntry == null)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status400BadRequest,
+        //                ResponseCodeConstants.BADREQUEST,
+        //                "Cannot found leaderboard in this contest.");
+        //        }
+
+        //        // Get template ID once
+        //        Guid templateId = existingContest.CertificateTemplates.First().TemplateId;
+
+        //        // Award certificates to each team member concurrently using separate scopes
+        //        IEnumerable<Task> certificateTasks = leaderboardEntry.Team.TeamMembers.Select(async member =>
+        //        {
+        //            using IServiceScope scope = _serviceProvider.CreateScope();
+        //            ICertificateService scopedCertificateService = scope.ServiceProvider.GetRequiredService<ICertificateService>();
+
+        //            await scopedCertificateService.CreateCertificateAsync(new CreateCertificateDTO
+        //            {
+        //                StudentId = member.StudentId,
+        //                TeamId = member.TeamId,
+        //                TemplateId = templateId,
+        //                FileUrl = string.Empty
+        //            });
+        //        });
+
+        //        // Wait for all certificate creation tasks to complete
+        //        await Task.WhenAll(certificateTasks);
+
+        //        // Set contest status to Closed
+        //        existingContest.Status = ContestStatusEnum.Closed.ToString();
+
+        //        // Update the contest
+        //        await contestRepo.UpdateAsync(existingContest);
+
+        //        // Save changes to database
+        //        await _unitOfWork.SaveAsync();
+
+        //        // Commit the transaction
+        //        _unitOfWork.CommitTransaction();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        // If something fails, roll back the transaction
+        //        _unitOfWork.RollBack();
+        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
+        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+        //            $"Error closing Contest: {ex.Message}");
+        //    }
+        //}
     }
 }
