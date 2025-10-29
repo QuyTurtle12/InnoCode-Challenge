@@ -8,5 +8,7 @@ namespace BusinessLogic.IServices.Contests
         Task<PaginatedList<GetLeaderboardEntryDTO>> GetPaginatedLeaderboardAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? contestNameSearch);
         Task CreateLeaderboardAsync(CreateLeaderboardEntryDTO LeaderboardDTO);
         Task UpdateLeaderboardAsync(UpdateLeaderboardEntryDTO LeaderboardDTO);
+        //Task UpdateTeamScoreAsync(Guid contestId, Guid teamId, double newScore);
+
     }
 }

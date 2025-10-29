@@ -9,7 +9,6 @@ using BusinessLogic.IServices.Students;
 using BusinessLogic.IServices.Submissions;
 using BusinessLogic.IServices.Users;
 using BusinessLogic.MappingProfiles.Users;
-using CloudinaryDotNet;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.Services.FileStorages;
 using Utility.Helpers;
@@ -50,6 +49,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddRepository();
             services.AddAutoMapper();
             services.AddCloudinary(configuration);
+            services.AddSignalR();
             services.AddServices();
         }
         /// <summary>
@@ -217,6 +217,16 @@ namespace InnoCode_Challenge_API.DI
                 configuration.GetSection("CloudinarySettings"));
         }
 
+        public static void AddSignalR(this IServiceCollection services)
+        {
+            services.AddSignalR(options =>
+            {
+                options.EnableDetailedErrors = true;
+                options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+                options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+            });
+        }
+
         public static void AddServices(this IServiceCollection services)
         {
             services.AddLogging();
@@ -253,7 +263,9 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IConfigService, ConfigService>();
             services.AddScoped<IAttachmentService, AttachmentService>();
             services.AddScoped<IActivityLogService, ActivityLogService>();
-            services.AddScoped<ITeamInviteService, TeamInviteService>(); 
+            services.AddScoped<ITeamInviteService, TeamInviteService>();
+            services.AddScoped<ILeaderboardEntryService, LeaderboardEntryService>();
+            services.AddScoped<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
         }
     }
 }

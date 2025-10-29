@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using BusinessLogic.Hubs;
 using InnoCode_Challenge_API.DI;
 using InnoCode_Challenge_API.Middleware;
 using Microsoft.EntityFrameworkCore;
@@ -7,11 +8,6 @@ using Utility.Helpers;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHttpClient();
-// Add services to the container.
-
-// Add config for Cloudinary settings
-builder.Services.Configure<CloudinarySettings>(
-    builder.Configuration.GetSection("CloudinarySettings"));
 
 builder.Services.AddControllers()
         .AddJsonOptions(options =>
@@ -33,14 +29,14 @@ app.UseSwaggerUI();
 app.UseHttpsRedirection();
 
 app.UseCors("AllowAllOrigins");
-
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseMiddleware<CustomExceptionHandlerMiddleware>();
 
-app.MapControllers();
+app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 
+app.MapControllers();
 app.Run();
 
 

@@ -632,6 +632,5 @@ namespace BusinessLogic.Services.Submissions
                     $"Error updating file submission score: {ex.Message}");
             }
         }
-
     }
 }

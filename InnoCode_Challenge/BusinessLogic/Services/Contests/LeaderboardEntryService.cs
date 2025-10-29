@@ -15,12 +15,14 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly ILeaderboardRealtimeService _realtimeService;
 
         // Constructor
-        public LeaderboardEntryService(IMapper mapper, IUOW uow)
+        public LeaderboardEntryService(IMapper mapper, IUOW uow, ILeaderboardRealtimeService realtimeService)
         {
             _mapper = mapper;
             _unitOfWork = uow;
+            _realtimeService = realtimeService;
         }
 
         public async Task CreateLeaderboardAsync(CreateLeaderboardEntryDTO leaderboardDTO)
@@ -39,6 +41,8 @@ namespace BusinessLogic.Services.Contests
 
                 // Get the repository for LeaderboardEntry
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+                List<TeamInfo> teamInfoList = new List<TeamInfo>();
 
                 foreach (Guid item in leaderboardDTO.teamIdList)
                 {
@@ -63,6 +67,15 @@ namespace BusinessLogic.Services.Contests
                     // Insert the new Leaderboard Entry
                     await leaderboardRepo.InsertAsync(leaderboardEntry);
 
+                    // Collect team info for broadcasting
+                    teamInfoList.Add(new TeamInfo
+                    {
+                        TeamId = item,
+                        TeamName = string.Empty, // Will be populated from database
+                        Rank = count,
+                        Score = 0
+                    });
+
                     // Decrement the count for the next rank
                     count--;
                 }
@@ -72,6 +85,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit the transaction if all operations succeed
                 _unitOfWork.CommitTransaction();
+
+                // Broadcast real-time update
+                await _realtimeService.BroadcastLeaderboardUpdateAsync(leaderboardDTO.ContestId, teamInfoList);
             }
             catch (Exception ex)
             {
@@ -99,8 +115,9 @@ namespace BusinessLogic.Services.Contests
                 // Get the repository for LeaderboardEntry
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
-                // Get all leaderboard entries for the specified contest
+                // Get all leaderboard entries for the specified contest with Team info
                 IList<LeaderboardEntry> entries = leaderboardRepo.Entities
+                    .Include(e => e.Team)
                     .Where(e => e.ContestId == leaderboardDTO.ContestId)
                     .OrderByDescending(e => e.Score)  // Order by score in descending order
                     .ToList();
@@ -116,13 +133,27 @@ namespace BusinessLogic.Services.Contests
                 // Generate a shared snapshot time for all entries
                 DateTime sharedSnapshot = DateTime.UtcNow;
 
+                // Collect team info for broadcasting
+                List<TeamInfo> teamInfoList = new List<TeamInfo>();
+
                 // Update ranks based on the ordered scores
                 int currentRank = 1;
                 foreach (LeaderboardEntry entry in entries)
                 {
-                    entry.Rank = currentRank++;
+                    entry.Rank = currentRank;
                     entry.SnapshotAt = sharedSnapshot;
                     await leaderboardRepo.UpdateAsync(entry);
+
+                    // Collect team info
+                    teamInfoList.Add(new TeamInfo
+                    {
+                        TeamId = entry.TeamId,
+                        TeamName = entry.Team?.Name ?? "Unknown",
+                        Rank = currentRank,
+                        Score = entry.Score ?? 0
+                    });
+
+                    currentRank++;
                 }
 
                 // Save changes to the database
@@ -130,6 +161,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit the transaction if all operations succeed
                 _unitOfWork.CommitTransaction();
+
+                // Broadcast real-time leaderboard update
+                await _realtimeService.BroadcastLeaderboardUpdateAsync(leaderboardDTO.ContestId, teamInfoList);
             }
             catch (Exception ex)
             {
@@ -239,5 +273,83 @@ namespace BusinessLogic.Services.Contests
                     $"Error retrieving grouped leaderboard: {ex.Message}");
             }
         }
+
+        //public async Task UpdateTeamScoreAsync(Guid contestId, Guid teamId, double newScore)
+        //{
+        //    try
+        //    {
+        //        _unitOfWork.BeginTransaction();
+
+        //        var leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+        //        // Find the team's leaderboard entry
+        //        var entry = await leaderboardRepo.Entities
+        //            .Include(e => e.Team)
+        //            .FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == teamId);
+
+        //        if (entry == null)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status404NotFound,
+        //                ResponseCodeConstants.NOT_FOUND,
+        //                $"Leaderboard entry not found for team {teamId} in contest {contestId}");
+        //        }
+
+        //        // Update score
+        //        entry.Score = newScore;
+        //        entry.SnapshotAt = DateTime.UtcNow;
+        //        await leaderboardRepo.UpdateAsync(entry);
+        //        await _unitOfWork.SaveAsync();
+
+        //        // Recalculate ranks
+        //        var allEntries = await leaderboardRepo.Entities
+        //            .Include(e => e.Team)
+        //            .Where(e => e.ContestId == contestId)
+        //            .OrderByDescending(e => e.Score)
+        //            .ToListAsync();
+
+        //        int rank = 1;
+        //        List<TeamInfo> teamInfoList = new List<TeamInfo>();
+
+        //        foreach (var e in allEntries)
+        //        {
+        //            e.Rank = rank;
+        //            e.SnapshotAt = DateTime.UtcNow;
+        //            await leaderboardRepo.UpdateAsync(e);
+
+        //            teamInfoList.Add(new TeamInfo
+        //            {
+        //                TeamId = e.TeamId,
+        //                TeamName = e.Team?.Name ?? "Unknown",
+        //                Rank = rank,
+        //                Score = e.Score ?? 0
+        //            });
+
+        //            rank++;
+        //        }
+
+        //        await _unitOfWork.SaveAsync();
+        //        _unitOfWork.CommitTransaction();
+
+        //        // Broadcast the updated leaderboard in real-time
+        //        await _realtimeService.BroadcastLeaderboardUpdateAsync(contestId, teamInfoList);
+
+        //        // Also send specific notification for the team whose score changed
+        //        var updatedEntry = teamInfoList.First(t => t.TeamId == teamId);
+        //        await _realtimeService.NotifyScoreUpdateAsync(contestId, teamId, updatedEntry.Score, updatedEntry.Rank);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _unitOfWork.RollBack();
+
+        //        if (ex is ErrorException)
+        //        {
+        //            throw;
+        //        }
+
+        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
+        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+        //            $"Error updating team score: {ex.Message}");
+        //    }
+        //}
     }
 }
