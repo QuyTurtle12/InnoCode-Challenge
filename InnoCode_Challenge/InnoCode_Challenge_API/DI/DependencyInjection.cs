@@ -237,6 +237,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IRoundService, RoundService>();
             services.AddScoped<IMcqQuestionService, McqQuestionService>();
             services.AddScoped<IMcqOptionService, McqOptionService>();
+            services.AddScoped<IMcqTestService, McqTestService>();
             services.AddScoped<IMcqTestQuestionService, McqTestQuestionService>();
             services.AddScoped<IMcqAttemptService, McqAttemptService>();
             services.AddScoped<IMcqAttemptItemService, McqAttemptItemService>();

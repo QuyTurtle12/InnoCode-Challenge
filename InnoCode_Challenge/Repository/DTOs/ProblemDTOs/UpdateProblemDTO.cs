@@ -9,6 +9,6 @@ namespace Repository.DTOs.ProblemDTOs
         [Required]
         [EnumDataType(typeof(ProblemTypeEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]
-        public ProblemTypeEnum Type { get; set; } = ProblemTypeEnum.Coding;
+        public ProblemTypeEnum Type { get; set; } = ProblemTypeEnum.Manual;
     }
 }

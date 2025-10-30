@@ -52,21 +52,21 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                     ));
         }
 
-        /// <summary>
-        /// Create a new Mcq Test
-        /// </summary>
-        /// <param name="mcqTestDTO"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public async Task<IActionResult> CreateMcqTest([FromBody] CreateMcqTestDTO mcqTestDTO)
-        {
-            await _mcqTestService.CreateMcqTestAsync(mcqTestDTO);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status201Created,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Create Mcq Test successfully."
-                    ));
-        }
+        ///// <summary>
+        ///// Create a new Mcq Test
+        ///// </summary>
+        ///// <param name="mcqTestDTO"></param>
+        ///// <returns></returns>
+        //[HttpPost]
+        //public async Task<IActionResult> CreateMcqTest([FromBody] CreateMcqTestDTO mcqTestDTO)
+        //{
+        //    await _mcqTestService.CreateMcqTestAsync(mcqTestDTO);
+        //    return Ok(new BaseResponseModel(
+        //                statusCode: StatusCodes.Status201Created,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                message: "Create Mcq Test successfully."
+        //            ));
+        //}
 
         /// <summary>
         /// Update an existing Mcq Test by id

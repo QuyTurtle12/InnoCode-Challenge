@@ -22,15 +22,16 @@ namespace BusinessLogic.Services.Mcqs
             _unitOfWork = uow;
         }
 
-        public async Task CreateMcqTestAsync(CreateMcqTestDTO mcqTestDTO)
+        public async Task CreateMcqTestAsync(Guid roundId, CreateMcqTestDTO mcqTestDTO)
         {
             try
             {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
 
                 // Map DTO to entity
                 McqTest mcqTest = _mapper.Map<McqTest>(mcqTestDTO);
+
+                // Assign roundId
+                mcqTest.RoundId = roundId;
 
                 // Get mcqTest repository
                 IGenericRepository<McqTest> McqTestRepo = _unitOfWork.GetRepository<McqTest>();
@@ -40,14 +41,9 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
-
-                // Commit transaction
-                _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
                 
                 if (ex is ErrorException)
                 {

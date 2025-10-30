@@ -10,8 +10,7 @@ namespace BusinessLogic.MappingProfiles.Contests
         {
             CreateMap<CreateProblemDTO, Problem>().ReverseMap();
             CreateMap<UpdateProblemDTO, Problem>().ReverseMap();
-            CreateMap<Problem, GetProblemDTO>()
-                .ForMember(dest => dest.RoundName, opt => opt.MapFrom(src => src.Round.Name));
+            CreateMap<Problem, GetProblemDTO>().ReverseMap();
         }
     }
 }

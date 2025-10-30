@@ -23,18 +23,19 @@ namespace BusinessLogic.Services.Contests
             _unitOfWork = unitOfWork;
         }
 
-        public async Task CreateProblemAsync(CreateProblemDTO problemDTO)
+        public async Task CreateProblemAsync(Guid roundId, CreateProblemDTO problemDTO)
         {
             try
             {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
                     
                 // Map DTO to entity and insert
                 Problem problem = _mapper.Map<Problem>(problemDTO);
                 
                 // Get the problem repository
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+
+                // Assign the roundId
+                problem.RoundId = roundId;
 
                 // Set creation timestamp
                 problem.CreatedAt = DateTime.UtcNow;
@@ -44,14 +45,9 @@ namespace BusinessLogic.Services.Contests
                 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
-                
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
                 
                 if (ex is ErrorException)
                 {

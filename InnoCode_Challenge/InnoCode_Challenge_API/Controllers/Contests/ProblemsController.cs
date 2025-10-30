@@ -19,21 +19,21 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             _problemService = problemService;
         }
 
-        /// <summary>
-        /// Create a new problem
-        /// </summary>
-        /// <param name="problemDTO"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public async Task<IActionResult> CreateProblem(CreateProblemDTO problemDTO)
-        {
-            await _problemService.CreateProblemAsync(problemDTO);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status201Created,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Create Problem successfully."
-                    ));
-        }
+        ///// <summary>
+        ///// Create a new problem
+        ///// </summary>
+        ///// <param name="problemDTO"></param>
+        ///// <returns></returns>
+        //[HttpPost]
+        //public async Task<IActionResult> CreateProblem(CreateProblemDTO problemDTO)
+        //{
+        //    await _problemService.CreateProblemAsync(problemDTO);
+        //    return Ok(new BaseResponseModel(
+        //                statusCode: StatusCodes.Status201Created,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                message: "Create Problem successfully."
+        //            ));
+        //}
 
         /// <summary>
         /// Get paginated problems with optional filters

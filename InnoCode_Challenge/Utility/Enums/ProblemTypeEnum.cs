@@ -2,7 +2,8 @@
 {
     public enum ProblemTypeEnum
     {
-        Coding,
-        Projectt
+        McqTest,
+        AutoEvaluation,
+        Manual
     }
 }

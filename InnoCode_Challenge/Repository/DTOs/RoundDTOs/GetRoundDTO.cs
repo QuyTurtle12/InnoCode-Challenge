@@ -1,4 +1,7 @@
-﻿namespace Repository.DTOs.RoundDTOs
+﻿using Repository.DTOs.McqTestDTOs;
+using Repository.DTOs.ProblemDTOs;
+
+namespace Repository.DTOs.RoundDTOs
 {
     public class GetRoundDTO : BaseRoundDTO
     {
@@ -9,5 +12,11 @@
         public string RoundName { get; set; } = string.Empty;
 
         public string ContestName { get; set; } = string.Empty;
+
+        public string? ProblemType { get; set; }
+
+        public GetProblemDTO? Problem { get; set; }
+
+        public GetMcqTestDTO? McqTest { get; set; }
     }
 }
