@@ -8,5 +8,9 @@
         public string Role { get; set; } = null!;
         public string FullName { get; set; } = null!;
         public string Email { get; set; } = null!;
+        public string RefreshToken { get; set; } = null!;
+        public DateTime RefreshExpiresAt { get; set; }
+        public bool EmailVerified { get; set; }
+
     }
 }

@@ -40,7 +40,8 @@ namespace BusinessLogic.Services.Users
             var email = NormalizeEmail(dto.Email);
 
             var userRepo = _unitOfWork.GetRepository<User>();
-            bool emailExists = userRepo.Entities.Any(u => u.Email == dto.Email);
+            bool emailExists = await userRepo.Entities.AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+
 
             if (emailExists)
                 throw new ErrorException(
@@ -58,7 +59,7 @@ namespace BusinessLogic.Services.Users
                 Email = email,
                 PasswordHash = PasswordHasher.Hash(dto.Password),
                 Role = RoleConstants.Student,
-                Status = "Active",
+                Status = "Unverified",
                 CreatedAt = now,
                 UpdatedAt = now
             };
@@ -66,16 +67,20 @@ namespace BusinessLogic.Services.Users
             await userRepo.InsertAsync(user);
             await _unitOfWork.SaveAsync();
 
-            var token = GenerateJwtToken(user);
-
+            var accessToken = GenerateJwtToken(user);
+            var (refreshToken, refreshExp) = GenerateRefreshToken(user); 
+            
             return new AuthResponseDTO
             {
-                Token = token,
+                Token = accessToken,
                 ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
+                RefreshToken = refreshToken,             
+                RefreshExpiresAt = refreshExp,           
                 UserId = user.UserId.ToString(),
                 Role = user.Role,
                 FullName = user.Fullname,
-                Email = user.Email
+                Email = user.Email,
+                EmailVerified = string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase) 
             };
         }
 
@@ -91,6 +96,9 @@ namespace BusinessLogic.Services.Users
             if (user == null || !PasswordHasher.Verify(dto.Password, user.PasswordHash))
                 throw new ErrorException(StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS", "Email or password is incorrect.");
 
+            if (string.Equals(user.Status, "Unverified", StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "USER_UNVERIFIED", "Please verify your email.");
+
 
             if (!string.Equals(user.Status, "Active", StringComparison.Ordinal))
                 throw new ErrorException(
@@ -99,18 +107,120 @@ namespace BusinessLogic.Services.Users
                   "Your account has been disabled."
                 );
 
-            var token = GenerateJwtToken(user);
+            var accessToken = GenerateJwtToken(user);
+            var (refreshToken, refreshExp) = GenerateRefreshToken(user);
 
             return new AuthResponseDTO
             {
-                Token = token,
+                Token = accessToken,
                 ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
+                RefreshToken = refreshToken,               
+                RefreshExpiresAt = refreshExp,             
                 UserId = user.UserId.ToString(),
                 Role = user.Role,
                 FullName = user.Fullname,
-                Email = user.Email
+                Email = user.Email,
+                EmailVerified = string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase) 
+
             };
         }
+        public async Task<string> GenerateVerificationTokenAsync()
+        {
+            var user = await GetCurrentLoggedInUser()
+                ?? throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Sign in required.");
+
+            if (string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "ALREADY_VERIFIED", "Email already verified.");
+
+            return GenerateVerificationToken(user);
+        }
+
+        public async Task VerifyEmailAsync(string token)
+        {
+            var principal = ValidateToken(
+                token,
+                audience: _jwtSettings.Audience + ":email_verify",
+                requireType: "email_verify"
+            );
+
+            var sub = principal.FindFirstValue(JwtRegisteredClaimNames.Sub)
+          ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            var email = GetClaim(principal, JwtRegisteredClaimNames.Email, ClaimTypes.Email, "email") ?? string.Empty;
+
+            if (!Guid.TryParse(sub, out var userId))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_TOKEN", "Invalid user.");
+
+            var repo = _unitOfWork.GetRepository<User>();
+            var user = await repo.GetByIdAsync(userId)
+                ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
+
+            if (!string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_MISMATCH", "Token does not match user email.");
+
+            if (!string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+            {
+                user.Status = "Active";
+                user.UpdatedAt = DateTime.UtcNow;
+                await _unitOfWork.SaveAsync();
+            }
+        }
+
+        public async Task ChangePasswordAsync(ChangePasswordDTO dto)
+        {
+            var user = await GetCurrentLoggedInUser()
+                ?? throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Sign in required.");
+
+            if (!PasswordHasher.Verify(dto.CurrentPassword, user.PasswordHash))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_CURRENT_PASSWORD", "Current password is incorrect.");
+
+            user.PasswordHash = PasswordHasher.Hash(dto.NewPassword);
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task<AuthResponseDTO> RefreshAsync(string refreshToken)
+        {
+            var principal = ValidateToken(
+                refreshToken,
+                audience: _jwtSettings.Audience + ":refresh",
+                requireType: "refresh"
+            );
+
+            var sub = principal.FindFirstValue(JwtRegisteredClaimNames.Sub)
+          ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(sub, out var userId))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_REFRESH", "Invalid user.");
+
+            var repo = _unitOfWork.GetRepository<User>();
+            var user = await repo.GetByIdAsync(userId)
+                ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
+
+            if (!string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "USER_INACTIVE", "Your account is not active.");
+
+            var access = GenerateJwtToken(user);
+            var (newRefresh, refreshExp) = GenerateRefreshToken(user);
+
+            return new AuthResponseDTO
+            {
+                Token = access,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
+                RefreshToken = newRefresh,
+                RefreshExpiresAt = refreshExp,
+                UserId = user.UserId.ToString(),
+                Role = user.Role,
+                FullName = user.Fullname,
+                Email = user.Email,
+                EmailVerified = true
+            };
+        }
+        public Task LogoutAsync(string refreshToken)
+        {
+            return Task.CompletedTask;
+        }
+
 
         private string GenerateJwtToken(User user)
         {
@@ -120,10 +230,12 @@ namespace BusinessLogic.Services.Users
             var claims = new List<Claim>
             {
                 new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
-                new Claim(ClaimTypes.NameIdentifier,    user.UserId.ToString()), 
+                new Claim(ClaimTypes.NameIdentifier,    user.UserId.ToString()),
                 new Claim(JwtRegisteredClaimNames.Email,user.Email),
                 new Claim(ClaimTypes.Role,              user.Role),
                 new Claim(ClaimTypes.Name,              user.Fullname ?? string.Empty),
+                new Claim("email_verified", (string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase)).ToString().ToLowerInvariant()), 
+                new Claim("typ","access"),
                 new Claim(JwtRegisteredClaimNames.Jti,  Guid.NewGuid().ToString()),
                 new Claim(JwtRegisteredClaimNames.Iat,  EpochTime.GetIntDate(DateTime.UtcNow).ToString(), ClaimValueTypes.Integer64),
             };
@@ -139,6 +251,150 @@ namespace BusinessLogic.Services.Users
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
+
+        private (string token, DateTime expiresAt) GenerateRefreshToken(User user)
+        {
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var expires = DateTime.UtcNow.AddMinutes(_jwtSettings.RefreshExpiryMinutes);
+
+            var claims = new List<Claim>
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                new Claim("typ","refresh"),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
+
+            var token = new JwtSecurityToken(
+                issuer: _jwtSettings.Issuer,
+                audience: _jwtSettings.Audience + ":refresh",
+                claims: claims,
+                notBefore: DateTime.UtcNow,
+                expires: expires,
+                signingCredentials: creds
+            );
+
+            return (new JwtSecurityTokenHandler().WriteToken(token), expires);
+        }
+        public async Task<string?> GenerateResetPasswordTokenAsync(string emailInput)
+        {
+            var email = NormalizeEmail(emailInput);
+
+            var repo = _unitOfWork.GetRepository<User>();
+            var user = await repo.Entities
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+
+            if (user is null) return null;
+
+            return GeneratePasswordResetToken(user);
+        }
+
+        public async Task ResetPasswordAsync(ResetPasswordDTO dto)
+        {
+            var principal = ValidateToken(
+                dto.Token,
+                audience: _jwtSettings.Audience + ":password_reset",
+                requireType: "password_reset"
+            );
+
+            var sub = GetClaim(principal, JwtRegisteredClaimNames.Sub, ClaimTypes.NameIdentifier);
+            var tokenEmail = GetClaim(principal, JwtRegisteredClaimNames.Email, ClaimTypes.Email, "email") ?? string.Empty;
+
+            if (!Guid.TryParse(sub, out var userId))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_TOKEN", "Invalid user.");
+
+            var repo = _unitOfWork.GetRepository<User>();
+            var user = await repo.GetByIdAsync(userId)
+                ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
+
+            if (!string.Equals(user.Email, tokenEmail, StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_MISMATCH", "Token does not match user email.");
+
+            user.PasswordHash = PasswordHasher.Hash(dto.NewPassword);
+            user.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.SaveAsync();
+        }
+
+        private string GeneratePasswordResetToken(User user)
+        {
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: _jwtSettings.Issuer,
+                audience: _jwtSettings.Audience + ":password_reset",
+                claims: new[]
+                {
+                new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                new Claim("typ","password_reset"),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+                },
+                notBefore: DateTime.UtcNow,
+                expires: DateTime.UtcNow.AddMinutes(30),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        private string GenerateVerificationToken(User user)
+        {
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: _jwtSettings.Issuer,
+                audience: _jwtSettings.Audience + ":email_verify",
+                claims: new[]
+                {
+                    new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                    new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                    new Claim("typ","email_verify"),
+                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+                },
+                notBefore: DateTime.UtcNow,
+                expires: DateTime.UtcNow.AddMinutes(30),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+        private ClaimsPrincipal ValidateToken(string token, string audience, string requireType)
+        {
+            var handler = new JwtSecurityTokenHandler();
+
+            var parameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = _jwtSettings.Issuer,
+                ValidateAudience = true,
+                ValidAudience = audience,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key)),
+                ValidateLifetime = true,
+                ClockSkew = TimeSpan.FromMinutes(1)
+            };
+
+            ClaimsPrincipal principal;
+            try
+            {
+                principal = handler.ValidateToken(token, parameters, out _);
+            }
+            catch
+            {
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "INVALID_TOKEN", "Invalid or expired token.");
+            }
+
+            var typ = principal.FindFirst("typ")?.Value;
+            if (!string.Equals(typ, requireType, StringComparison.Ordinal))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_TOKEN_TYPE", "Wrong token type.");
+
+            return principal;
+        }
+
         public async Task<User?> GetCurrentLoggedInUser()
         {
             var currentId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -151,6 +407,15 @@ namespace BusinessLogic.Services.Users
         }
 
         private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+        private static string? GetClaim(ClaimsPrincipal p, params string[] types)
+        {
+            foreach (var t in types)
+            {
+                var v = p.FindFirst(t)?.Value;
+                if (!string.IsNullOrEmpty(v)) return v;
+            }
+            return null;
+        }
 
     }
 }
