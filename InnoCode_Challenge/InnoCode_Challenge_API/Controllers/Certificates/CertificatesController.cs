@@ -71,21 +71,21 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
                     ));
         }
 
-        /// <summary>
-        /// Create a new certificate
-        /// </summary>
-        /// <param name="certificate"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public async Task<IActionResult> CreateCertificate(CreateCertificateDTO certificate)
-        {
-            await _certificateService.CreateCertificateAsync(certificate);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status201Created,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Create Certificate successfully."
-                    ));
-        }
+        ///// <summary>
+        ///// Create a new certificate
+        ///// </summary>
+        ///// <param name="certificate"></param>
+        ///// <returns></returns>
+        //[HttpPost]
+        //public async Task<IActionResult> CreateCertificate(CreateCertificateDTO certificate)
+        //{
+        //    await _certificateService.CreateCertificateAsync(certificate);
+        //    return Ok(new BaseResponseModel(
+        //                statusCode: StatusCodes.Status201Created,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                message: "Create Certificate successfully."
+        //            ));
+        //}
 
         /// <summary>
         /// Delete a certificate by ID

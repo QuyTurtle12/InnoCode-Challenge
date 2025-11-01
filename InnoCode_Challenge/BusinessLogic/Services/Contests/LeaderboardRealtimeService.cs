@@ -25,19 +25,5 @@ namespace BusinessLogic.Services.Contests
                     Timestamp = DateTime.UtcNow
                 });
         }
-
-        public async Task NotifyScoreUpdateAsync(Guid contestId, Guid teamId, double newScore, int newRank)
-        {
-            await _hubContext.Clients
-                .Group($"leaderboard_{contestId}")
-                .SendAsync("ScoreUpdated", new
-                {
-                    ContestId = contestId,
-                    TeamId = teamId,
-                    Score = newScore,
-                    Rank = newRank,
-                    Timestamp = DateTime.UtcNow
-                });
-        }
     }
 }

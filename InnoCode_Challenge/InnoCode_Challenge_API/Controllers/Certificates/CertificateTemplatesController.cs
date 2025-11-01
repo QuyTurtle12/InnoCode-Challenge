@@ -23,7 +23,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// Gets a paginated list of certificate templates
         /// </summary>
         [HttpGet]
-        public async Task<ActionResult<PaginatedList<GetCertificateTemplateDTO>>> GetCertificateTemplates(
+        public async Task<IActionResult> GetCertificateTemplates(
             int pageNumber = 1,
             int pageSize = 10,
             Guid? idSearch = null,
@@ -57,7 +57,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// Creates a new certificate template
         /// </summary>
         [HttpPost]
-        public async Task<ActionResult> CreateCertificateTemplate(
+        public async Task<IActionResult> CreateCertificateTemplate(
             IFormFile file,
             [FromForm] Guid contestId,
             [FromForm] string name
@@ -82,7 +82,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// Updates an existing certificate template
         /// </summary>
         [HttpPut("{id}")]
-        public async Task<ActionResult> UpdateCertificateTemplate(
+        public async Task<IActionResult> UpdateCertificateTemplate(
             Guid id,
             IFormFile? file,
             [FromForm] string? name)
@@ -104,7 +104,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// Deletes a certificate template
         /// </summary>
         [HttpDelete("{id}")]
-        public async Task<ActionResult> DeleteCertificateTemplate(Guid id)
+        public async Task<IActionResult> DeleteCertificateTemplate(Guid id)
         {
             await _certificateTemplateService.DeleteCertificateTemplateAsync(id);
             return Ok(new BaseResponseModel(
