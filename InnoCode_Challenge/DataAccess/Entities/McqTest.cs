@@ -13,6 +13,8 @@ public partial class McqTest
 
     public string? Config { get; set; }
 
+    public DateTime? DeletedAt { get; set; }
+
     public virtual ICollection<McqAttemptItem> McqAttemptItems { get; set; } = new List<McqAttemptItem>();
 
     public virtual ICollection<McqAttempt> McqAttempts { get; set; } = new List<McqAttempt>();

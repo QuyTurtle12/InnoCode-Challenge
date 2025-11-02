@@ -156,19 +156,12 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
                 }
 
-                //// Delete related Problem if exists
-                //if (round.Problem != null)
-                //{
-                //    IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                //    round.Problem.DeletedAt = DateTime.UtcNow;
-                //    await problemRepo.UpdateAsync(round.Problem);
-                //}
-
                 // Delete related Problem if exists
                 if (round.Problem != null)
                 {
                     IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                    await problemRepo.DeleteAsync(round.Problem);
+                    round.Problem.DeletedAt = DateTime.UtcNow;
+                    await problemRepo.UpdateAsync(round.Problem);
                 }
 
                 // Delete related McqTests if exists
@@ -177,12 +170,14 @@ namespace BusinessLogic.Services.Contests
                     IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
                     foreach (var mcqTest in round.McqTests)
                     {
-                        await mcqTestRepo.DeleteAsync(mcqTest);
+                        mcqTest.DeletedAt = DateTime.UtcNow;
+                        await mcqTestRepo.UpdateAsync(mcqTest);
                     }
                 }
 
                 // Delete the round
-                await roundRepo.DeleteAsync(round);
+                round.DeletedAt = DateTime.UtcNow;
+                await roundRepo.UpdateAsync(round);
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
@@ -221,6 +216,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Get all rounds with related entities
                 IQueryable<Round> query = roundRepo.Entities
+                    .Where(r => !r.DeletedAt.HasValue)
                     .Include(r => r.Contest)
                     .Include(r => r.Problem)
                     .Include(r => r.McqTests);
@@ -408,7 +404,7 @@ namespace BusinessLogic.Services.Contests
 
             // Get all rounds for this contest (excluding the current round if updating)
             IQueryable<Round> existingRoundsQuery = roundRepo.Entities
-                .Where(r => r.ContestId == contestId);
+                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue);
 
             if (excludeRoundId.HasValue)
             {

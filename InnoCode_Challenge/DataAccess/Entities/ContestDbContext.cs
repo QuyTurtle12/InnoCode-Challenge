@@ -512,6 +512,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.Config)
                 .IsUnicode(false)
                 .HasColumnName("config");
+            entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Name)
                 .HasMaxLength(120)
                 .IsUnicode(false)
@@ -749,6 +750,7 @@ public partial class ContestDbContext : DbContext
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("round_id");
             entity.Property(e => e.ContestId).HasColumnName("contest_id");
+            entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.End)
                 .HasPrecision(0)
                 .HasColumnName("end");

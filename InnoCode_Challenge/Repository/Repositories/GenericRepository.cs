@@ -78,9 +78,14 @@ namespace Repository.Repositories
             _context.Entry(obj).State = EntityState.Modified;
         }
 
+        /// <summary>
+        /// Marks the entity as modified in the change tracker.
+        /// Note: This is a synchronous operation. Use SaveAsync() to persist changes.
+        /// </summary>
         public Task UpdateAsync(T obj)
         {
-            return Task.FromResult(_dbSet.Update(obj));
+            _context.Entry(obj).State = EntityState.Modified;
+            return Task.CompletedTask;
         }
 
         public async Task<IEnumerable<T>> GetAllAsync()

@@ -15,6 +15,8 @@ public partial class Round
 
     public DateTime End { get; set; }
 
+    public DateTime? DeletedAt { get; set; }
+
     public virtual Contest Contest { get; set; } = null!;
 
     public virtual ICollection<McqAttempt> McqAttempts { get; set; } = new List<McqAttempt>();
