@@ -8,9 +8,16 @@ namespace BusinessLogic.MappingProfiles.Certificates
     {
         public CertificateProfile() 
         {
+            // Base mapping
             CreateMap<Certificate, GetCertificateDTO>()
-                .ForMember(dest => dest.CertificateName, opt => opt.MapFrom(src => src.Template.Name))
-                .ForMember(dest => dest.TeamName, opt => opt.MapFrom(src => src.Team != null ? src.Team.Name : string.Empty));
+                .ForMember(dest => dest.TeamName, opt => opt.MapFrom(src => src.Team != null ? src.Team.Name : string.Empty))
+                .ForMember(dest => dest.TemplateName, opt => opt.MapFrom(src => src.Template != null ? src.Template.Name : string.Empty));
+
+            // Derived mapping for GetMyCertificateDTO
+            CreateMap<Certificate, GetMyCertificateDTO>()
+                .IncludeBase<Certificate, GetCertificateDTO>()
+                .ForMember(dest => dest.CertificateId, opt => opt.MapFrom(src => src.CertificateId));
+
             CreateMap<CreateCertificateDTO, Certificate>().ReverseMap();
         }
     }

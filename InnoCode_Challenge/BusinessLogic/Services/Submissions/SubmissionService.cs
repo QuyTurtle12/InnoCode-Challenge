@@ -7,6 +7,7 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
 using Repository.ResponseModel;
@@ -94,8 +95,10 @@ namespace BusinessLogic.Services.Submissions
                     .Entities
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
-                        .ThenInclude(st => st!.User);
-                
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                    .Include(s => s.SubmissionArtifacts);
+
                 // Apply filters if provided
                 if (idSearch.HasValue)
                 {
@@ -136,6 +139,36 @@ namespace BusinessLogic.Services.Submissions
                     dto.TeamName = item.Team?.Name ?? string.Empty;
 
                     dto.SubmittedByStudentName = item.SubmittedByStudent?.User.Fullname!;
+
+                    dto.submissionAttemptNumber = submissionRepo.Entities
+                        .Where(s => s.ProblemId == item.ProblemId &&
+                                    s.SubmittedByStudentId == item.SubmittedByStudentId &&
+                                    s.CreatedAt <= item.CreatedAt)
+                        .Count();
+
+                    // Map Testcase details to DTOs
+                    if (item.SubmissionDetails != null)
+                    {
+                        dto.Details = item.SubmissionDetails
+                            .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                            .ToList();
+                    }
+                    else
+                    {
+                        dto.Details = null;
+                    }
+
+                    // Map Artifacts to DTOs
+                    if (item.SubmissionArtifacts != null)
+                    {
+                        dto.Artifacts = item.SubmissionArtifacts
+                            .Select(artifact => _mapper.Map<Repository.DTOs.SubmissionArtifactDTOs.GetSubmissionArtifactDTO>(artifact))
+                            .ToList();
+                    }
+                    else
+                    {
+                        dto.Artifacts = null;
+                    }
                     return dto; 
                 }).ToList();
                 
@@ -622,6 +655,92 @@ namespace BusinessLogic.Services.Submissions
                 // Roll back transaction on error
                 _unitOfWork.RollBack();
 
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error updating file submission score: {ex.Message}");
+            }
+        }
+
+        public async Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid problemId)
+        {
+            try
+            {
+                // Get the submission repository
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefault();
+
+                // Find the latest submission for the problem by the logged-in student
+                Submission? submission = await submissionRepo.Entities
+                   .Where(s => s.ProblemId == problemId &&
+                                s.SubmittedByStudentId == studentId)
+                    .Include(s => s.Team)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                    .Include(s => s.SubmissionArtifacts)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                // Validate submission existence
+                if (submission == null) {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No submission found for problem {problemId} by the logged-in student");
+                }
+
+                // Map to DTO
+                GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
+                dto.TeamName = submission.Team?.Name ?? string.Empty;
+                dto.SubmittedByStudentName = submission.SubmittedByStudent?.User.Fullname ?? string.Empty;
+                dto.submissionAttemptNumber = await submissionRepo.Entities
+                    .Where(s => s.ProblemId == problemId &&
+                                s.SubmittedByStudentId == submission.SubmittedByStudentId &&
+                                s.CreatedAt <= submission.CreatedAt)
+                    .CountAsync();
+
+                // Map Testcase details to DTOs
+                if (submission.SubmissionDetails != null)
+                {
+                    dto.Details = submission.SubmissionDetails
+                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .ToList();
+                } else
+                {
+                    dto.Details = null;
+                }
+
+                // Map Artifacts to DTOs
+                if (submission.SubmissionArtifacts != null)
+                {
+                    dto.Artifacts = submission.SubmissionArtifacts
+                        .Select(artifact => _mapper.Map<Repository.DTOs.SubmissionArtifactDTOs.GetSubmissionArtifactDTO>(artifact))
+                        .ToList();
+                }
+                else
+                {
+                    dto.Artifacts = null;
+                }
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
                 if (ex is ErrorException)
                 {
                     throw;

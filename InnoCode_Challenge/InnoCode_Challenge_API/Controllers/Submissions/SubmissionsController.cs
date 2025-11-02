@@ -1,11 +1,11 @@
-﻿using BusinessLogic.IServices.Submissions;
+﻿using System.ComponentModel.DataAnnotations;
+using BusinessLogic.IServices.Submissions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
-using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Submissions
@@ -63,6 +63,19 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                         additionalData: paging,
                         message: "Submission retrieved successfully."
                     ));
+        }
+
+        [HttpGet("result/me")]
+        [Authorize(Roles = RoleConstants.Student)]
+        public async Task<IActionResult> GetSubmissionResultOfLoggedInStudent([Required] Guid problemId)
+        {
+            GetSubmissionDTO result = await _submissionService.GetSubmissionResultOfLoggedInStudentAsync(problemId);
+            return Ok(new BaseResponseModel<GetSubmissionDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Submission result retrieved successfully."
+            ));
         }
 
         /// <summary>

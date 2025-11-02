@@ -13,60 +13,61 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
     {
         private readonly IMcqTestService _mcqTestService;
 
-        // Constructor
-        public McqTestsController(IMcqTestService mcqTestService)
-        {
-            _mcqTestService = mcqTestService;
-        }
-
-        /// <summary>
-        /// Get paginated list of Mcq Tests with optional filtering by id and roundId
-        /// </summary>
-        /// <param name="pageNumber"></param>
-        /// <param name="pageSize"></param>
-        /// <param name="idSearch"></param>
-        /// <param name="roundIdSearch"></param>
-        /// <returns></returns>
-        [HttpGet]
-        public async Task<IActionResult> GetMcqTests(int pageNumber = 1, int pageSize = 10, 
-            Guid? idSearch = null, Guid? roundIdSearch = null)
-        {
-            PaginatedList<GetMcqTestDTO> result = await _mcqTestService.GetPaginatedMcqTestAsync(pageNumber, pageSize, idSearch, roundIdSearch);
-
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
-
-            return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Mcq Test retrieved successfully."
-                    ));
-        }
+        //// Constructor
+        //public McqTestsController(IMcqTestService mcqTestService)
+        //{
+        //    _mcqTestService = mcqTestService;
+        //}
 
         ///// <summary>
-        ///// Create a new Mcq Test
+        ///// Get paginated list of Mcq Tests with optional filtering by id and roundId
         ///// </summary>
-        ///// <param name="mcqTestDTO"></param>
+        ///// <param name="pageNumber"></param>
+        ///// <param name="pageSize"></param>
+        ///// <param name="idSearch"></param>
+        ///// <param name="roundIdSearch"></param>
         ///// <returns></returns>
-        //[HttpPost]
-        //public async Task<IActionResult> CreateMcqTest([FromBody] CreateMcqTestDTO mcqTestDTO)
+        //[HttpGet]
+        //public async Task<IActionResult> GetMcqTests(int pageNumber = 1, int pageSize = 10, 
+        //    Guid? idSearch = null, Guid? roundIdSearch = null)
         //{
-        //    await _mcqTestService.CreateMcqTestAsync(mcqTestDTO);
-        //    return Ok(new BaseResponseModel(
-        //                statusCode: StatusCodes.Status201Created,
+        //    PaginatedList<GetMcqTestDTO> result = await _mcqTestService.GetPaginatedMcqTestAsync(pageNumber, pageSize, idSearch, roundIdSearch);
+
+        //    var paging = new
+        //    {
+        //        result.PageNumber,
+        //        result.PageSize,
+        //        result.TotalPages,
+        //        result.TotalCount,
+        //        result.HasPreviousPage,
+        //        result.HasNextPage
+        //    };
+
+        //    return Ok(new BaseResponseModel<object>(
+        //                statusCode: StatusCodes.Status200OK,
         //                code: ResponseCodeConstants.SUCCESS,
-        //                message: "Create Mcq Test successfully."
+        //                data: result.Items,
+        //                additionalData: paging,
+        //                message: "Mcq Test retrieved successfully."
         //            ));
         //}
+
+        /// <summary>
+        /// Create a new Mcq Test for a specific round
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="mcqTestDTO"></param>
+        /// <returns></returns>
+        [HttpPost]
+        public async Task<IActionResult> CreateMcqTest(Guid roundId, CreateMcqTestDTO mcqTestDTO)
+        {
+            await _mcqTestService.CreateMcqTestAsync(roundId, mcqTestDTO);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status201Created,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Create Mcq Test successfully."
+                    ));
+        }
 
         /// <summary>
         /// Update an existing Mcq Test by id

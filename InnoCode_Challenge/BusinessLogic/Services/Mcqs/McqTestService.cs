@@ -26,7 +26,6 @@ namespace BusinessLogic.Services.Mcqs
         {
             try
             {
-
                 // Map DTO to entity
                 McqTest mcqTest = _mapper.Map<McqTest>(mcqTestDTO);
 

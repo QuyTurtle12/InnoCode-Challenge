@@ -15,6 +15,6 @@ namespace BusinessLogic.IServices.Submissions
         Task<Guid> CreateFileSubmissionAsync(CreateFileSubmissionDTO submissionDTO, IFormFile file);
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);
         Task<bool> UpdateFileSubmissionScoreAsync(Guid submissionId, double score, string feedback);
-
+        Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid problemId);
     }
 }

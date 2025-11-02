@@ -151,7 +151,6 @@ namespace BusinessLogic.Services.Mcqs
                         McqOptions = item.McqOptions.Select(o => new GetMcqOptionDTO
                         {
                             OptionId = o.OptionId,
-                            QuestionId = o.QuestionId,
                             Text = o.Text,
                             IsCorrect = o.IsCorrect
                         }).ToList(),

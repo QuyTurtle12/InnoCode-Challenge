@@ -1,4 +1,6 @@
-﻿namespace Repository.DTOs.McqTestDTOs
+﻿using Repository.DTOs.McqTestQuestionDTOs;
+
+namespace Repository.DTOs.McqTestDTOs
 {
     public class GetMcqTestDTO : BaseMcqTestDTO
     {

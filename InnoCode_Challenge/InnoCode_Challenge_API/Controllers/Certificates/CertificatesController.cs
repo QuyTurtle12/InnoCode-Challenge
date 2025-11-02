@@ -1,4 +1,5 @@
-﻿using BusinessLogic.IServices.Certificates;
+﻿using System.ComponentModel.DataAnnotations;
+using BusinessLogic.IServices.Certificates;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.CertificateDTOs;
 using Repository.ResponseModel;
@@ -22,6 +23,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// <summary>
         /// Get paginated list of certificates with optional search parameters
         /// </summary>
+        /// <param name="contestId"></param>
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
@@ -31,8 +33,9 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// <param name="teamName"></param>
         /// <param name="studentNameSearch"></param>
         /// <returns></returns>
-        [HttpGet]
+        [HttpGet("{contestId}")]
         public async Task<IActionResult> GetCertificates(
+            [Required] Guid contestId,
             int pageNumber = 1,
             int pageSize = 10,
             Guid? idSearch = null,
@@ -40,17 +43,55 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
             Guid? studentIdSearch = null,
             string? certificateNameSearch = null,
             string? teamName = null,
-            string? studentNameSearch = null)
+            string? studentNameSearch = null
+            )
         {
-            PaginatedList<GetCertificateDTO> result = await _certificateService.GetPaginatedCertificateAsync(
+            PaginatedList<GetAllTeamCertificateDTO> result = await _certificateService.GetPaginatedCertificateAsync(
                 pageNumber,
                 pageSize,
                 idSearch,
+                contestId,
                 teamIdSearch,
                 studentIdSearch,
                 certificateNameSearch,
                 teamName,
                 studentNameSearch);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: result.Items,
+                        additionalData: paging,
+                        message: "Certificate retrieved successfully."
+                    ));
+        }
+
+        [HttpGet("me")]
+        public async Task<IActionResult> GetMyCertificates(
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? idSearch = null,
+            Guid? contestIdSearch = null,
+            string? contestNameSearch = null
+            )
+        {
+            PaginatedList<GetMyCertificateDTO> result = await _certificateService.GetMyPaginatedCertificateAsync(
+                pageNumber,
+                pageSize,
+                idSearch,
+                contestIdSearch,
+                contestNameSearch
+                );
 
             var paging = new
             {

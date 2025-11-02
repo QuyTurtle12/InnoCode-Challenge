@@ -1,5 +1,4 @@
 ﻿using System.Security.Claims;
-using AutoMapper;
 using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -15,13 +14,11 @@ namespace BusinessLogic.Services.Mcqs
     public class QuizService : IQuizService
     {
         private readonly IUOW _unitOfWork;
-        private readonly IMapper _mapper;
         private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public QuizService(IUOW unitOfWork, IMapper mapper, IHttpContextAccessor httpContextAccessor)
+        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor)
         {
             _unitOfWork = unitOfWork;
-            _mapper = mapper;
             _httpContextAccessor = httpContextAccessor;
         }
 
@@ -314,6 +311,73 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Create new paginated list with mapped DTOs
                 return new PaginatedList<QuizAttemptSummaryDTO>(
+                    result,
+                    resultQuery.TotalCount,
+                    resultQuery.PageNumber,
+                    resultQuery.PageSize);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving quiz attempts: {ex.Message}");
+            }
+        }
+
+        public async Task<PaginatedList<GetQuizDTO>> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId)
+        {
+            try
+            {
+                // Validate pageNumber and pageSize
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Get repository for Round entities
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+
+                IQueryable<Round> query = roundRepo.Entities
+                    .Where(r => r.RoundId == roundId)
+                    .Include(r => r.McqTests)
+                        .ThenInclude(t => t.McqTestQuestions)
+                            .ThenInclude(tq => tq.Question)
+                                .ThenInclude(q => q.McqOptions)
+                    .OrderByDescending(t => t.Name);
+
+                // Get paginated results
+                PaginatedList<Round> resultQuery = await roundRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+                IReadOnlyCollection<GetQuizDTO> result = resultQuery.Items.Select(item =>
+                {
+                    GetQuizDTO quizDTO = new GetQuizDTO
+                    {
+                        RoundId = item.RoundId,
+                        McqTests = item.McqTests.Select(t => new McqTestDTO
+                        {
+                            TestId = t.TestId,
+                            Questions = t.McqTestQuestions.Select(q => new QuestionDTO
+                            {
+                                QuestionId = q.QuestionId,
+                                Text = q.Question?.Text ?? string.Empty,
+                                Options = q.Question?.McqOptions.Select(o => new OptionDTO
+                                {
+                                    OptionId = o.OptionId,
+                                    Text = o.Text,
+                                    IsCorrect = o.IsCorrect
+                                }).ToList() ?? new List<OptionDTO>()
+                            }).ToList()
+                        }).ToList()
+                    };
+                    return quizDTO;
+                }).ToList();
+
+                return new PaginatedList<GetQuizDTO>(
                     result,
                     resultQuery.TotalCount,
                     resultQuery.PageNumber,
