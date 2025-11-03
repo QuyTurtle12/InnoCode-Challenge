@@ -1,11 +1,8 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Repository.DTOs.CertificateDTOs;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -19,77 +16,75 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
-        private readonly IServiceProvider _serviceProvider;
         private const int MIN_YEAR = 10;
 
         // Constructor
-        public ContestService(IMapper mapper, IUOW uow, IServiceProvider serviceProvider)
+        public ContestService(IMapper mapper, IUOW uow)
         {
             _mapper = mapper;
             _unitOfWork = uow;
-            _serviceProvider = serviceProvider;
         }
 
-        public async Task CreateContestAsync(CreateContestDTO contestDTO)
-        {
-            try
-            {
-                // Start a transaction
-                _unitOfWork.BeginTransaction();
+        //public async Task CreateContestAsync(CreateContestDTO contestDTO)
+        //{
+        //    try
+        //    {
+        //        // Start a transaction
+        //        _unitOfWork.BeginTransaction();
 
-                // Validate input data
-                if (contestDTO == null)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest data cannot be null.");
-                }
+        //        // Validate input data
+        //        if (contestDTO == null)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest data cannot be null.");
+        //        }
 
-                // Validate name
-                if (string.IsNullOrWhiteSpace(contestDTO.Name))
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest name is required.");
-                }
+        //        // Validate name
+        //        if (string.IsNullOrWhiteSpace(contestDTO.Name))
+        //        {
+        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest name is required.");
+        //        }
 
-                // Validate year
-                int currentYear = DateTime.UtcNow.Year;
-                if (contestDTO.Year < currentYear)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Contest year must be greater than {currentYear}.");
-                }
+        //        // Validate year
+        //        int currentYear = DateTime.UtcNow.Year;
+        //        if (contestDTO.Year < currentYear)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Contest year must be greater than {currentYear}.");
+        //        }
 
-                // Map DTO to entity
-                Contest newContest = _mapper.Map<Contest>(contestDTO);
+        //        // Map DTO to entity
+        //        Contest newContest = _mapper.Map<Contest>(contestDTO);
 
-                // Set initial status to Draft
-                newContest.Status = ContestStatusEnum.Draft.ToString();
+        //        // Set initial status to Draft
+        //        newContest.Status = ContestStatusEnum.Draft.ToString();
 
-                // Set creation timestamp
-                newContest.CreatedAt = DateTime.UtcNow;
+        //        // Set creation timestamp
+        //        newContest.CreatedAt = DateTime.UtcNow;
 
-                // Get repository and insert new contest
-                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-                await contestRepo.InsertAsync(newContest);
+        //        // Get repository and insert new contest
+        //        IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+        //        await contestRepo.InsertAsync(newContest);
 
-                // Save changes to database
-                await _unitOfWork.SaveAsync();
+        //        // Save changes to database
+        //        await _unitOfWork.SaveAsync();
 
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-                
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-                
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Contests: {ex.Message}");
-            }
-        }
+        //        // Commit the transaction
+        //        _unitOfWork.CommitTransaction();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        // If something fails, roll back the transaction
+        //        _unitOfWork.RollBack();
+
+        //        if (ex is ErrorException)
+        //        {
+        //            throw;
+        //        }
+
+        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
+        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+        //            $"Error creating Contests: {ex.Message}");
+        //    }
+        //}
 
         public async Task DeleteContestAsync(Guid id)
         {
@@ -139,12 +134,12 @@ namespace BusinessLogic.Services.Contests
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                
+
                 if (ex is ErrorException)
                 {
                     throw;
                 }
-                
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Contests: {ex.Message}");
@@ -235,63 +230,63 @@ namespace BusinessLogic.Services.Contests
                 {
                     throw;
                 }
-                
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving Contests: {ex.Message}");
             }
         }
 
-        public async Task PublishContestAsync(Guid id)
-        {
-            try
-            {
-                // Start a transaction
-                _unitOfWork.BeginTransaction();
+        //public async Task PublishContestAsync(Guid id)
+        //{
+        //    try
+        //    {
+        //        // Start a transaction
+        //        _unitOfWork.BeginTransaction();
 
-                // Validate contest ID
-                if (id == Guid.Empty)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
-                }
+        //        // Validate contest ID
+        //        if (id == Guid.Empty)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
+        //        }
 
-                // Get repository and fetch the contest by ID
-                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-                Contest? existingContest = await contestRepo.GetByIdAsync(id);
+        //        // Get repository and fetch the contest by ID
+        //        IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+        //        Contest? existingContest = await contestRepo.GetByIdAsync(id);
 
-                // Check if the contest exists
-                if (existingContest == null || existingContest.DeletedAt.HasValue)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
-                }
+        //        // Check if the contest exists
+        //        if (existingContest == null || existingContest.DeletedAt.HasValue)
+        //        {
+        //            throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+        //        }
 
-                // Set status to Published
-                existingContest.Status = ContestStatusEnum.Published.ToString();
+        //        // Set status to Published
+        //        existingContest.Status = ContestStatusEnum.Published.ToString();
 
-                // Update the contest
-                await contestRepo.UpdateAsync(existingContest);
+        //        // Update the contest
+        //        await contestRepo.UpdateAsync(existingContest);
 
-                // Save changes to database
-                await _unitOfWork.SaveAsync();
+        //        // Save changes to database
+        //        await _unitOfWork.SaveAsync();
 
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-                
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-                
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error publishing Contests: {ex.Message}");
-            }
-        }
+        //        // Commit the transaction
+        //        _unitOfWork.CommitTransaction();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        // If something fails, roll back the transaction
+        //        _unitOfWork.RollBack();
+
+        //        if (ex is ErrorException)
+        //        {
+        //            throw;
+        //        }
+
+        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
+        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+        //            $"Error publishing Contests: {ex.Message}");
+        //    }
+        //}
 
         public async Task UpdateContestAsync(Guid id, UpdateContestDTO contestDTO)
         {
@@ -344,12 +339,12 @@ namespace BusinessLogic.Services.Contests
             {
                 // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                
+
                 if (ex is ErrorException)
                 {
                     throw;
                 }
-                
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating Contests: {ex.Message}");
@@ -358,161 +353,253 @@ namespace BusinessLogic.Services.Contests
 
         public async Task<ContestCreatedDTO> CreateContestWithPolicyAsync(CreateContestAdvancedDTO dto)
         {
-            if (dto == null)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Payload cannot be null.");
-
-            if (string.IsNullOrWhiteSpace(dto.Name))
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Name is required.");
-
-            var currentYear = DateTime.UtcNow.Year;
-            if (dto.Year < currentYear)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Year must be ≥ {currentYear}.");
-
-            var contestRepo = _unitOfWork.GetRepository<Contest>();
-            var configRepo = _unitOfWork.GetRepository<Config>();
-
-            var nameTrim = dto.Name.Trim();
-
-            var exists = await contestRepo.Entities
-                .AnyAsync(c => c.Year == dto.Year && c.Name == nameTrim && c.DeletedAt == null);
-
-            if (exists)
-            {
-                var suggestion = await SuggestAlternateNameAsync(nameTrim, dto.Year, contestRepo);
-                var ex = new CoreException("CONTEST_DUPLICATE", "Contest name already exists for this year.", StatusCodes.Status409Conflict)
-                {
-                    AdditionalData = new Dictionary<string, object>
-                    {
-                        ["suggestion"] = suggestion
-                    }
-                };
-                throw ex;
-            }
-
-            var entity = _mapper.Map<Contest>(dto);
-            entity.ContestId = Guid.NewGuid();
-            entity.Name = nameTrim;
-            entity.Status = ContestStatusEnum.Draft.ToString(); // draft
-            entity.CreatedAt = DateTime.UtcNow;
-
-            _unitOfWork.BeginTransaction();
             try
             {
+                // Start a transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate input data
+                if (dto == null)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Payload cannot be null.");
+
+                if (string.IsNullOrWhiteSpace(dto.Name))
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Name is required.");
+
+                int currentYear = DateTime.UtcNow.Year;
+                if (dto.Year < currentYear)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Year must be ≥ {currentYear}.");
+
+                if (dto.RegistrationStart.HasValue && dto.RegistrationEnd.HasValue && dto.RegistrationStart.Value >= dto.RegistrationEnd.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration start must be before registration end.");
+
+                if (dto.Start.HasValue && dto.End.HasValue && dto.Start.Value >= dto.End.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest start must be before contest end.");
+
+                if (dto.RegistrationStart.HasValue && dto.Start.HasValue && dto.RegistrationStart.Value >= dto.Start.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration start must be before contest start.");
+
+                if (dto.RegistrationEnd.HasValue && dto.Start.HasValue && dto.RegistrationEnd.Value >= dto.Start.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration end must be before contest start.");
+
+                // Get repositories
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Trim name for consistent checking
+                string nameTrim = dto.Name.Trim();
+
+                // Check if a contest with the same name and year already exists
+                bool exists = await contestRepo.Entities
+                    .AnyAsync(c => c.Year == dto.Year && c.Name == nameTrim && c.DeletedAt == null);
+
+                // Check for duplicate contest name in the same year
+                if (exists)
+                {
+                    string? suggestion = await SuggestAlternateNameAsync(nameTrim, dto.Year, contestRepo);
+                    CoreException ex = new CoreException(ResponseCodeConstants.DUPLICATE, "Contest name already exists for this year.", StatusCodes.Status409Conflict)
+                    {
+                        AdditionalData = new Dictionary<string, object>
+                        {
+                            ["suggestion"] = suggestion
+                        }
+                    };
+                    throw ex;
+                }
+
+                // Map DTO to entity
+                Contest entity = _mapper.Map<Contest>(dto);
+                entity.ContestId = Guid.NewGuid();
+                entity.Name = nameTrim;
+                entity.Status = ContestStatusEnum.Draft.ToString();
+                entity.CreatedAt = DateTime.UtcNow;
+
+                // Insert the new contest
                 await contestRepo.InsertAsync(entity);
                 await _unitOfWork.SaveAsync();
 
-                var teamMembersMax = dto.TeamMembersMax
-                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4); 
+                // Set contest-specific configurations
+                int teamMembersMax = dto.TeamMembersMax
+                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4);
                 int? teamLimitMax = dto.TeamLimitMax
-                                     ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);    
+                                     ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);
+
+                // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
+                
+                // Set team limit max
                 if (teamLimitMax.HasValue)
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(entity.ContestId), teamLimitMax.Value.ToString());
-
+                
+                // Set registration times
                 if (dto.RegistrationStart.HasValue)
                     await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_start", dto.RegistrationStart.Value.ToString("o"));
                 if (dto.RegistrationEnd.HasValue)
                     await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_end", dto.RegistrationEnd.Value.ToString("o"));
 
+                // Set rewards text
                 if (!string.IsNullOrWhiteSpace(dto.RewardsText))
                     await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:rewards_text", dto.RewardsText!.Trim());
 
+                // Save all config changes
                 await _unitOfWork.SaveAsync();
+
+                // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
-                var created = _mapper.Map<ContestCreatedDTO>(entity);
+                // Map to created DTO
+                ContestCreatedDTO created = _mapper.Map<ContestCreatedDTO>(entity);
                 created.TeamMembersMax = teamMembersMax;
                 created.TeamLimitMax = teamLimitMax;
                 created.RewardsText = dto.RewardsText;
                 created.RegistrationStart = dto.RegistrationStart;
                 created.RegistrationEnd = dto.RegistrationEnd;
+
+                // Return the created contest DTO
                 return created;
             }
-            catch
+            catch (Exception ex)
             {
+                // If something fails, roll back the transaction
                 _unitOfWork.RollBack();
-                throw;
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                if (ex is CoreException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating Contests: {ex.Message}");
             }
         }
 
         public async Task<PublishReadinessDTO> CheckPublishReadinessAsync(Guid contestId)
         {
-            var contestRepo = _unitOfWork.GetRepository<Contest>();
-            var roundRepo = _unitOfWork.GetRepository<Round>();
-            var problemRepo = _unitOfWork.GetRepository<Problem>();
-            var configRepo = _unitOfWork.GetRepository<Config>();
+            // Get repositories
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
-            var contest = await contestRepo.Entities
+            // Fetch the contest with its rounds
+            Contest? contest = await contestRepo.Entities
                 .Include(c => c.Rounds)
                 .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
 
+            // Validate contest existence
             if (contest == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
 
-            var result = new PublishReadinessDTO { ContestId = contestId };
+            // Initialize result DTO
+            PublishReadinessDTO result = new PublishReadinessDTO { ContestId = contestId };
 
+            // Check for rounds
             if (contest.Rounds == null || !contest.Rounds.Any())
                 result.Missing.Add("No rounds created.");
 
-            var roundIds = contest.Rounds.Select(r => r.RoundId).ToList();
+            // Check for problems in each round
+            List<Guid>? roundIds = contest.Rounds!.Select(r => r.RoundId).ToList();
             if (roundIds.Any())
             {
-                var problemCount = await problemRepo.Entities.CountAsync(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null);
+                // Count problems associated with the contest's rounds
+                int problemCount = await problemRepo.Entities.CountAsync(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null);
                 if (problemCount < roundIds.Count)
                     result.Missing.Add("One or more rounds missing a problem.");
             }
 
-            var regStart = await configRepo.Entities
+            // Check registration window configuration
+            string? regStart = await configRepo.Entities
                 .Where(c => c.Key == $"contest:{contestId}:registration_start" && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
-            var regEnd = await configRepo.Entities
+            string? regEnd = await configRepo.Entities
                 .Where(c => c.Key == $"contest:{contestId}:registration_end" && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
+            // Validate registration window presence
             if (string.IsNullOrEmpty(regStart) || string.IsNullOrEmpty(regEnd))
                 result.Missing.Add("Registration window not configured.");
 
-            var membersMaxContest = await configRepo.Entities
+            // Check team members max configuration
+            string? membersMaxContest = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.ContestTeamMembersMax(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
-            var membersMaxDefault = await configRepo.Entities
+            // Fallback to global default if contest-specific not set
+            string? membersMaxDefault = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMax && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
+            // Validate team members max presence
             if (string.IsNullOrEmpty(membersMaxContest) && string.IsNullOrEmpty(membersMaxDefault))
                 result.Missing.Add("Team members max not configured (contest or global).");
 
+            // Final readiness determination
             result.IsReady = result.Missing.Count == 0;
             return result;
         }
 
         public async Task PublishIfReadyAsync(Guid contestId)
         {
-            var check = await CheckPublishReadinessAsync(contestId);
-            if (!check.IsReady)
+            try
             {
-                var ex = new CoreException("PUBLISH_BLOCKED", "Contest is not ready to publish.", StatusCodes.Status409Conflict)
+                // Check publish readiness
+                PublishReadinessDTO check = await CheckPublishReadinessAsync(contestId);
+
+                // If not ready, throw exception with details
+                if (!check.IsReady)
                 {
-                    AdditionalData = new Dictionary<string, object> { ["missing"] = check.Missing }
-                };
-                throw ex;
+                    CoreException ex = new CoreException("PUBLISH_BLOCKED", "Contest is not ready to publish.", StatusCodes.Status409Conflict)
+                    {
+                        AdditionalData = new Dictionary<string, object> { ["missing"] = check.Missing }
+                    };
+                    throw ex;
+                }
+
+                // Get contest repository
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                // Fetch the contest
+                Contest? contest = await contestRepo.GetByIdAsync(contestId);
+
+                // Validate contest existence
+                if (contest == null || contest.DeletedAt != null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+                // Update contest status to Published
+                contest.Status = ContestStatusEnum.Published.ToString();
+                await contestRepo.UpdateAsync(contest);
+                await _unitOfWork.SaveAsync();
             }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
 
-            var contestRepo = _unitOfWork.GetRepository<Contest>();
-            var contest = await contestRepo.GetByIdAsync(contestId);
-            if (contest == null || contest.DeletedAt != null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+                if (ex is CoreException)
+                {
+                    throw;
+                }
 
-            contest.Status = ContestStatusEnum.Published.ToString();
-            await contestRepo.UpdateAsync(contest);
-            await _unitOfWork.SaveAsync();
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating Contests: {ex.Message}");
+            }
         }
 
 
         private static async Task UpsertConfigAsync(IGenericRepository<Config> repo, string key, string value)
         {
-            var existing = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+            // Check for existing config
+            Config? existing = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+
+            // Insert or update accordingly
             if (existing == null)
             {
                 await repo.InsertAsync(new Config
@@ -535,7 +622,8 @@ namespace BusinessLogic.Services.Contests
 
         private static async Task<string> SuggestAlternateNameAsync(string baseName, int year, IGenericRepository<Contest> repo)
         {
-            var suffix = 2;
+            // Suggest names with numeric suffixes until an available one is found
+            int suffix = 2;
             string candidate;
             do
             {
@@ -548,102 +636,18 @@ namespace BusinessLogic.Services.Contests
         }
         private static async Task<int> GetGlobalIntOrDefaultAsync(IGenericRepository<Config> repo, string key, int @default)
         {
-            var value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+            // Fetch the config value
+            string? value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
                                            .Select(c => c.Value).FirstOrDefaultAsync();
-            return int.TryParse(value, out var n) ? n : @default;
+            return int.TryParse(value, out int n) ? n : @default;
         }
 
         private static async Task<int?> GetGlobalNullableIntAsync(IGenericRepository<Config> repo, string key)
         {
-            var value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+            // Fetch the config value
+            string? value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
                                            .Select(c => c.Value).FirstOrDefaultAsync();
-            return int.TryParse(value, out var n) ? n : null;
+            return int.TryParse(value, out int n) ? n : null;
         }
-
-        //public async Task CloseContestAsync(Guid id)
-        //{
-        //    try
-        //    {
-        //        // Start a transaction
-        //        _unitOfWork.BeginTransaction();
-
-        //        //Get repository for Contest
-        //        IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-
-        //        // Fetch the contest by ID
-        //        Contest? existingContest = await contestRepo
-        //            .Entities
-        //            .Where(c => c.ContestId == id)
-        //            .Include(c => c.CertificateTemplates)
-        //            .FirstOrDefaultAsync();
-
-        //        // Validate if contest exists
-        //        if (existingContest == null || existingContest.DeletedAt.HasValue)
-        //        {
-        //            throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
-        //        }
-
-        //        // Get repository for LeaderboardEntry
-        //        IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
-
-        //        // Fetch the leaderboard entry for the given contest ID and rank 1 team
-        //        LeaderboardEntry? leaderboardEntry = await leaderboardRepo
-        //            .Entities
-        //            .Where(le => le.ContestId == id && le.Rank == 1)
-        //            .Include(le => le.Team)
-        //                .ThenInclude(t => t.TeamMembers)
-        //                    .ThenInclude(tm => tm.Student)
-        //            .FirstOrDefaultAsync();
-
-        //        // Validate if leaderboard entry exists
-        //        if (leaderboardEntry == null)
-        //        {
-        //            throw new ErrorException(StatusCodes.Status400BadRequest,
-        //                ResponseCodeConstants.BADREQUEST,
-        //                "Cannot found leaderboard in this contest.");
-        //        }
-
-        //        // Get template ID once
-        //        Guid templateId = existingContest.CertificateTemplates.First().TemplateId;
-
-        //        // Award certificates to each team member concurrently using separate scopes
-        //        IEnumerable<Task> certificateTasks = leaderboardEntry.Team.TeamMembers.Select(async member =>
-        //        {
-        //            using IServiceScope scope = _serviceProvider.CreateScope();
-        //            ICertificateService scopedCertificateService = scope.ServiceProvider.GetRequiredService<ICertificateService>();
-
-        //            await scopedCertificateService.CreateCertificateAsync(new CreateCertificateDTO
-        //            {
-        //                StudentId = member.StudentId,
-        //                TeamId = member.TeamId,
-        //                TemplateId = templateId,
-        //                FileUrl = string.Empty
-        //            });
-        //        });
-
-        //        // Wait for all certificate creation tasks to complete
-        //        await Task.WhenAll(certificateTasks);
-
-        //        // Set contest status to Closed
-        //        existingContest.Status = ContestStatusEnum.Closed.ToString();
-
-        //        // Update the contest
-        //        await contestRepo.UpdateAsync(existingContest);
-
-        //        // Save changes to database
-        //        await _unitOfWork.SaveAsync();
-
-        //        // Commit the transaction
-        //        _unitOfWork.CommitTransaction();
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        // If something fails, roll back the transaction
-        //        _unitOfWork.RollBack();
-        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
-        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-        //            $"Error closing Contest: {ex.Message}");
-        //    }
-        //}
     }
 }

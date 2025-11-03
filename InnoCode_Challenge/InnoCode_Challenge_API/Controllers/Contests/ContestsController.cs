@@ -62,21 +62,21 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
-        /// <summary>
-        /// Create a New Contest
-        /// </summary>
-        /// <param name="contestDTO"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public async Task<IActionResult> CreateContest(CreateContestDTO contestDTO)
-        {
-            await _contestService.CreateContestAsync(contestDTO);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status201Created,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Create contest successfully."
-                    ));
-        }
+        ///// <summary>
+        ///// Create a New Contest
+        ///// </summary>
+        ///// <param name="contestDTO"></param>
+        ///// <returns></returns>
+        //[HttpPost]
+        //public async Task<IActionResult> CreateContest(CreateContestDTO contestDTO)
+        //{
+        //    await _contestService.CreateContestAsync(contestDTO);
+        //    return Ok(new BaseResponseModel(
+        //                statusCode: StatusCodes.Status201Created,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                message: "Create contest successfully."
+        //            ));
+        //}
 
         /// <summary>
         /// Update an Existing Contest
@@ -95,21 +95,21 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
-        /// <summary>
-        /// Publish a Contest
-        /// </summary>
-        /// <param name="id"></param>
-        /// <returns></returns>
-        [HttpPut("{id}/publish")]
-        public async Task<IActionResult> PublishedContest(Guid id)
-        {
-            await _contestService.PublishContestAsync(id);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Publish contest successfully."
-                    ));
-        }
+        ///// <summary>
+        ///// Publish a Contest
+        ///// </summary>
+        ///// <param name="id"></param>
+        ///// <returns></returns>
+        //[HttpPut("{id}/publish")]
+        //public async Task<IActionResult> PublishedContest(Guid id)
+        //{
+        //    await _contestService.PublishContestAsync(id);
+        //    return Ok(new BaseResponseModel(
+        //                statusCode: StatusCodes.Status200OK,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                message: "Publish contest successfully."
+        //            ));
+        //}
 
         /// <summary>
         /// Delete a Contest
