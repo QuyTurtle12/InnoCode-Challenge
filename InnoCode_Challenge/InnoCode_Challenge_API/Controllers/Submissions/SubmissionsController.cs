@@ -65,7 +65,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                     ));
         }
 
-        [HttpGet("result/me")]
+        [HttpGet("{problemId}/result/me")]
         [Authorize(Roles = RoleConstants.Student)]
         public async Task<IActionResult> GetSubmissionResultOfLoggedInStudent([Required] Guid problemId)
         {

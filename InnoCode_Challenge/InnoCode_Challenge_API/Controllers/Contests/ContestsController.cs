@@ -137,7 +137,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     message: "Contest created (draft) and policies bootstrapped."));
         }
 
-        [HttpGet("{id}/publish/check")]
+        [HttpGet("{id}/check")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> CheckPublishReadiness(Guid id)
         {
@@ -146,7 +146,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 message: check.IsReady ? "Contest is ready to publish." : "Contest is NOT ready to publish."));
         }
          
-        [HttpPost("{id}/publish-if-ready")]
+        [HttpPost("{id}/publish")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> PublishIfReady(Guid id)
         {
