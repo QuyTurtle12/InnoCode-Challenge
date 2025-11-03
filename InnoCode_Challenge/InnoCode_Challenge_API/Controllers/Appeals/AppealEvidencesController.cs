@@ -19,21 +19,21 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
             _appealEvidenceService = appealEvidenceService;
         }
 
-        /// <summary>
-        /// Create a new Appeal Evidence
-        /// </summary>
-        /// <param name="appealEvidenceDTO"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public async Task<IActionResult> CreateAppealEvidence(CreateAppealEvidenceDTO appealEvidenceDTO)
-        {
-            await _appealEvidenceService.CreateAppealEvidenceAsync(appealEvidenceDTO);
-            return Ok(new BaseResponseModel(
-                         statusCode: StatusCodes.Status201Created,
-                         code: ResponseCodeConstants.SUCCESS,
-                         message: "Create Appeal Evidence successfully."
-                     ));
-        }
+        ///// <summary>
+        ///// Create a new Appeal Evidence
+        ///// </summary>
+        ///// <param name="appealEvidenceDTO"></param>
+        ///// <returns></returns>
+        //[HttpPost]
+        //public async Task<IActionResult> CreateAppealEvidence(CreateAppealEvidenceDTO appealEvidenceDTO)
+        //{
+        //    await _appealEvidenceService.CreateAppealEvidenceAsync(appealEvidenceDTO);
+        //    return Ok(new BaseResponseModel(
+        //                 statusCode: StatusCodes.Status201Created,
+        //                 code: ResponseCodeConstants.SUCCESS,
+        //                 message: "Create Appeal Evidence successfully."
+        //             ));
+        //}
 
         /// <summary>
         /// Delete an Appeal Evidence by ID

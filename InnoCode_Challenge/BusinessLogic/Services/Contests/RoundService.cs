@@ -30,7 +30,7 @@ namespace BusinessLogic.Services.Contests
             _problemService = problemService;
         }
 
-        public async Task CreateRoundAsync(CreateRoundDTO roundDTO)
+        public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
         {
             try
             {
@@ -56,8 +56,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Validate against contest dates and other rounds
-                await ValidateRoundDatesAsync(roundDTO.ContestId, roundDTO.Start, roundDTO.End, null);
-
+                await ValidateRoundDatesAsync(contestId, roundDTO.Start, roundDTO.End, null);
 
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();

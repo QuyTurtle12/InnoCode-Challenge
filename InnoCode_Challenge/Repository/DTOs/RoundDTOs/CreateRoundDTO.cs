@@ -8,8 +8,6 @@ namespace Repository.DTOs.RoundDTOs
 {
     public class CreateRoundDTO : BaseRoundDTO
     {
-        public Guid ContestId { get; set; }
-
         [Required]
         [EnumDataType(typeof(ProblemTypeEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]

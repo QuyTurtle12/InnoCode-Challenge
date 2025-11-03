@@ -1,4 +1,5 @@
 ﻿using System.Security.Claims;
+using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -15,11 +16,13 @@ namespace BusinessLogic.Services.Mcqs
     {
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ILeaderboardEntryService _leaderboardService;
 
-        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor)
+        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService)
         {
             _unitOfWork = unitOfWork;
             _httpContextAccessor = httpContextAccessor;
+            _leaderboardService = leaderboardService;
         }
 
         public async Task<QuizResultDTO> ProcessQuizSubmissionAsync(CreateQuizSubmissionDTO quizSubmissionDTO)
@@ -135,6 +138,33 @@ namespace BusinessLogic.Services.Mcqs
                 attempt.Score = score;
                 await attemptRepo.UpdateAsync(attempt);
                 await _unitOfWork.SaveAsync();
+
+                // Get the team ID from the student
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                Guid? teamId = await teamMemberRepo.Entities
+                    .Where(tm => tm.StudentId == studentId)
+                    .Select(tm => tm.TeamId)
+                    .FirstOrDefaultAsync();
+
+                // Get contest ID from the round
+                Guid contestId = await _unitOfWork.GetRepository<Round>().Entities
+                    .Where(r => r.RoundId == mcqTest.RoundId)
+                    .Select(r => r.ContestId)
+                    .FirstOrDefaultAsync();
+
+                // Update team score in leaderboard if team exists
+                if (teamId.HasValue && contestId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _leaderboardService.AddScoreToTeamAsync(contestId, teamId.Value, score);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log but don't fail the quiz submission if leaderboard update fails
+                        Console.WriteLine($"Failed to update leaderboard: {ex.Message}");
+                    }
+                }
 
                 // Get test name
                 string testName = mcqTest.Name ?? "Unknown Test";
@@ -364,6 +394,8 @@ namespace BusinessLogic.Services.Mcqs
                             Questions = t.McqTestQuestions.Select(q => new QuestionDTO
                             {
                                 QuestionId = q.QuestionId,
+                                Weight = q.Weight,
+                                OrderIndex = q.OrderIndex,
                                 Text = q.Question?.Text ?? string.Empty,
                                 Options = q.Question?.McqOptions.Select(o => new OptionDTO
                                 {

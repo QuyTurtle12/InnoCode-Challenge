@@ -58,7 +58,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <param name="roundId"></param>
         /// <param name="mcqTestDTO"></param>
         /// <returns></returns>
-        [HttpPost]
+        [HttpPost("{roundId}")]
         public async Task<IActionResult> CreateMcqTest(Guid roundId, CreateMcqTestDTO mcqTestDTO)
         {
             await _mcqTestService.CreateMcqTestAsync(roundId, mcqTestDTO);

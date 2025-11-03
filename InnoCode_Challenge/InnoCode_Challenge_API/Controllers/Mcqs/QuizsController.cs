@@ -73,7 +73,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get detailed results for a specific quiz attempt
+        /// Get detailed results of a specific quiz attempt
         /// </summary>
         /// <param name="attemptId">ID of the quiz attempt</param>
         /// <returns>Detailed quiz results including answers</returns>
@@ -91,7 +91,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get paginated list of quiz attempts
+        /// Get paginated list of all quiz attempts
         /// </summary>
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>

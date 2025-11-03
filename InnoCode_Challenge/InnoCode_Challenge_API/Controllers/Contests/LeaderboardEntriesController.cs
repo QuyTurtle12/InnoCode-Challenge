@@ -1,4 +1,6 @@
-﻿using BusinessLogic.IServices.Contests;
+﻿using System.ComponentModel.DataAnnotations;
+using BusinessLogic.IServices.Contests;
+using DataAccess.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.LeaderboardEntryDTOs;
@@ -21,16 +23,16 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <summary>
         /// Get paginated leaderboard
         /// </summary>
-        [HttpGet]
+        [HttpGet("{contestId}")]
         public async Task<IActionResult> GetLeaderboard(
+            [Required] Guid contestId,
             int pageNumber = 1,
             int pageSize = 10,
             Guid? idSearch = null,
-            Guid? contestIdSearch = null,
             string? contestNameSearch = null)
         {
             var result = await _leaderboardService.GetPaginatedLeaderboardAsync(
-                pageNumber, pageSize, idSearch, contestIdSearch, contestNameSearch);
+                pageNumber, pageSize, idSearch, contestId, contestNameSearch);
 
             var paging = new
             {
@@ -66,37 +68,37 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
-        /// <summary>
-        /// Update leaderboard rankings
-        /// </summary>
-        [HttpPut]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
-        public async Task<IActionResult> UpdateLeaderboard([FromBody] UpdateLeaderboardEntryDTO dto)
-        {
-            await _leaderboardService.UpdateLeaderboardAsync(dto);
-            return Ok(new BaseResponseModel(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                message: "Leaderboard updated successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Update team score in real-time
-        /// </summary>
-        //[HttpPut("score")]
+        ///// <summary>
+        ///// Update leaderboard rankings
+        ///// </summary>
+        //[HttpPost("{contestId}/recalculate")]
         //[Authorize(Policy = "RequireStaffOrAdmin")]
-        //public async Task<IActionResult> UpdateTeamScore(
-        //    Guid contestId,
-        //    Guid teamId,
-        //    double newScore)
+        //public async Task<IActionResult> UpdateLeaderboard(Guid contestId)
         //{
-        //    await _leaderboardService.UpdateTeamScoreAsync(contestId, teamId, newScore);
+        //    await _leaderboardService.UpdateLeaderboardAsync(contestId);
         //    return Ok(new BaseResponseModel(
         //        statusCode: StatusCodes.Status200OK,
         //        code: ResponseCodeConstants.SUCCESS,
-        //        message: "Team score updated and broadcasted successfully."
+        //        message: "Leaderboard updated successfully."
         //    ));
         //}
+
+        /// <summary>
+        /// Update team score (staff/admin only)
+        /// </summary>
+        [HttpPut("contests/{contestId}/teams/{teamId}/score")]
+        [Authorize(Policy = "RequireStaffOrAdmin")]
+        public async Task<IActionResult> UpdateTeamScore(
+            Guid contestId,
+            Guid teamId,
+            double newScore)
+        {
+            await _leaderboardService.UpdateTeamScoreAsync(contestId, teamId, newScore);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Team score updated and broadcasted successfully."
+            ));
+        }
     }
 }

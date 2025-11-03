@@ -108,7 +108,7 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<PaginatedList<GetMcqQuestionDTO>> GetPaginatedMcqQuestionAsync(int pageNumber, int pageSize, Guid? idSearch)
+        public async Task<PaginatedList<GetMcqQuestionDTO>> GetPaginatedMcqQuestionAsync(int pageNumber, int pageSize, Guid? idSearch, Guid bankId)
         {
             try
             {
@@ -124,7 +124,7 @@ namespace BusinessLogic.Services.Mcqs
                 // Create base query
                 IQueryable<McqQuestion> query = mcqQuestionRepo
                     .Entities
-                    .Where(q => q.DeletedAt == null)
+                    .Where(q => q.BankId == bankId && !q.DeletedAt.HasValue)
                     .Include(q => q.Bank)
                     .Include(q => q.McqOptions);
 

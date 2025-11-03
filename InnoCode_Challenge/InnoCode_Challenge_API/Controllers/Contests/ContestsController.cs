@@ -128,7 +128,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         [HttpPost("advanced")]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
+        [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> CreateAdvanced([FromBody] CreateContestAdvancedDTO dto)
         {
             var created = await _contestService.CreateContestWithPolicyAsync(dto);
@@ -137,17 +137,17 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     message: "Contest created (draft) and policies bootstrapped."));
         }
 
-        [HttpGet("{id:guid}/publish/check")]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
+        [HttpGet("{id}/publish/check")]
+        [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> CheckPublishReadiness(Guid id)
         {
             var check = await _contestService.CheckPublishReadinessAsync(id);
             return Ok(new BaseResponseModel<object>(StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, check,
                 message: check.IsReady ? "Contest is ready to publish." : "Contest is NOT ready to publish."));
         }
-
-        [HttpPost("{id:guid}/publish-if-ready")]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
+         
+        [HttpPost("{id}/publish-if-ready")]
+        [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> PublishIfReady(Guid id)
         {
             await _contestService.PublishIfReadyAsync(id);

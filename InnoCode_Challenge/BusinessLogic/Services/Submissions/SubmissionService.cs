@@ -10,7 +10,6 @@ using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
-using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -26,6 +25,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly IJudge0Service _judge0Service;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly ILeaderboardEntryService _leaderboardService;
 
         // Constructor
         public SubmissionService(
@@ -33,55 +33,57 @@ namespace BusinessLogic.Services.Submissions
             IMapper mapper,
             IJudge0Service judge0Service,
             IHttpContextAccessor httpContextAccessor,
-            ICloudinaryService cloudinaryService)
+            ICloudinaryService cloudinaryService,
+            ILeaderboardEntryService leaderboardService)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
             _judge0Service = judge0Service;
             _httpContextAccessor = httpContextAccessor;
             _cloudinaryService = cloudinaryService;
+            _leaderboardService = leaderboardService;
         }
 
-        public async Task CreateSubmissionAsync(CreateSubmissionDTO submissionDTO)
-        {
-            try
-            {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
+        //public async Task CreateSubmissionAsync(CreateSubmissionDTO submissionDTO)
+        //{
+        //    try
+        //    {
+        //        // Begin transaction
+        //        _unitOfWork.BeginTransaction();
                 
-                // Map DTO to entity
-                Submission submission = _mapper.Map<Submission>(submissionDTO);
+        //        // Map DTO to entity
+        //        Submission submission = _mapper.Map<Submission>(submissionDTO);
                 
-                // Get the submission repository
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+        //        // Get the submission repository
+        //        IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
-                // Set creation timestamp
-                submission.CreatedAt = DateTime.UtcNow;
+        //        // Set creation timestamp
+        //        submission.CreatedAt = DateTime.UtcNow;
 
-                // Insert the new submission
-                await submissionRepo.InsertAsync(submission);
+        //        // Insert the new submission
+        //        await submissionRepo.InsertAsync(submission);
                 
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
+        //        // Save changes to the database
+        //        await _unitOfWork.SaveAsync();
                 
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
+        //        // Commit the transaction
+        //        _unitOfWork.CommitTransaction();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        // If something fails, roll back the transaction
+        //        _unitOfWork.RollBack();
 
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
+        //        if (ex is ErrorException)
+        //        {
+        //            throw;
+        //        }
 
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Submission: {ex.Message}");
-            }
-        }
+        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
+        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+        //            $"Error creating Submission: {ex.Message}");
+        //    }
+        //}
 
         public async Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? problemIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName)
         {
@@ -93,6 +95,7 @@ namespace BusinessLogic.Services.Submissions
                 // Start with base query
                 IQueryable<Submission> query = submissionRepo
                     .Entities
+                    .Where(s => !s.DeletedAt.HasValue)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
                         .ThenInclude(st => st!.User)
@@ -366,8 +369,7 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result,
-    int previousSubmissionsCount = 0, double? penaltyRate = null)
+        public async Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount = 0, double? penaltyRate = null)
         {
             try
             {
@@ -503,6 +505,30 @@ namespace BusinessLogic.Services.Submissions
                     .Select(s => s.StudentId)
                     .FirstOrDefault();
 
+                // Get the submission repository
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Get previous submissions for this problem by this student's team
+                List<Submission>? previousSubmissions = await _unitOfWork.GetRepository<Submission>()
+                    .Entities
+                    .Where(s => s.ProblemId == submissionDTO.ProblemId &&
+                                s.TeamId == submissionDTO.TeamId &&
+                                !s.DeletedAt.HasValue)
+                    .ToListAsync();
+
+                // Mark previous submissions as deleted
+                if (previousSubmissions != null)
+                {
+                    foreach (Submission item in previousSubmissions)
+                    {
+                        item.DeletedAt = DateTime.UtcNow;
+
+                        await submissionRepo.UpdateAsync(item);
+                    }
+
+                    await _unitOfWork.SaveAsync();
+                }
+
                 // Upload file to Cloudinary
                 string fileUrl = await _cloudinaryService.UploadFileAsync(file, "submissions");
 
@@ -519,7 +545,6 @@ namespace BusinessLogic.Services.Submissions
                     CreatedAt = DateTime.UtcNow
                 };
 
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 await submissionRepo.InsertAsync(submission);
 
                 // Save submission artifact (the file URL)
@@ -601,7 +626,11 @@ namespace BusinessLogic.Services.Submissions
 
                 // Get submission
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                var submission = await submissionRepo.GetByIdAsync(submissionId);
+                Submission? submission = await submissionRepo.Entities
+                    .Where(s => s.SubmissionId == submissionId)
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                    .FirstOrDefaultAsync();
 
                 if (submission == null)
                 {
@@ -644,6 +673,19 @@ namespace BusinessLogic.Services.Submissions
 
                 await detailRepo.InsertAsync(detail);
                 await _unitOfWork.SaveAsync();
+
+                // Update leaderboard
+                Guid contestId = submission.Problem.Round.ContestId;
+                try
+                {
+                    // Update team score in leaderboard
+                    await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, score);
+                }
+                catch (Exception ex)
+                {
+                    // Log the error but do not fail the entire operation
+                    Console.WriteLine($"Failed to update leaderboard: {ex.Message}");
+                }
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();

@@ -135,6 +135,9 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireJudgeRole",
                     policy => policy.RequireRole(RoleConstants.Judge));
 
+                options.AddPolicy("RequireOrganizerRole",
+                    policy => policy.RequireRole(RoleConstants.ContestOrganizer));
+
                 options.AddPolicy("RequireOrganizerOrAdmin",
                     policy => policy.RequireRole(RoleConstants.ContestOrganizer, RoleConstants.Admin));
             });

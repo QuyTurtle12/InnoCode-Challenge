@@ -1,8 +1,5 @@
 ﻿using BusinessLogic.IServices.Contests;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
-using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
@@ -60,10 +57,10 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <summary>
         /// Create a new round
         /// </summary>
-        [HttpPost]
-        public async Task<IActionResult> CreateRound(CreateRoundDTO roundDTO)
+        [HttpPost("{contestId}")]
+        public async Task<IActionResult> CreateRound(Guid contestId, CreateRoundDTO roundDTO)
         {
-            await _roundService.CreateRoundAsync(roundDTO);
+            await _roundService.CreateRoundAsync(contestId, roundDTO);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,

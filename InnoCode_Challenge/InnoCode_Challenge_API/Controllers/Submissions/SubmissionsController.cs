@@ -78,21 +78,21 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
             ));
         }
 
-        /// <summary>
-        /// Creates a new submission
-        /// </summary>
-        /// <param name="submissionDto"></param>
-        /// <returns></returns>
-        [HttpPost]
-        public async Task<IActionResult> CreateSubmission(CreateSubmissionDTO submissionDto)
-        {
-            await _submissionService.CreateSubmissionAsync(submissionDto);
-            return Ok(new BaseResponseModel(
-                         statusCode: StatusCodes.Status201Created,
-                         code: ResponseCodeConstants.SUCCESS,
-                         message: "Create Submission successfully."
-                     ));
-        }
+        ///// <summary>
+        ///// Creates a new submission
+        ///// </summary>
+        ///// <param name="submissionDto"></param>
+        ///// <returns></returns>
+        //[HttpPost]
+        //public async Task<IActionResult> CreateSubmission(CreateSubmissionDTO submissionDto)
+        //{
+        //    await _submissionService.CreateSubmissionAsync(submissionDto);
+        //    return Ok(new BaseResponseModel(
+        //                 statusCode: StatusCodes.Status201Created,
+        //                 code: ResponseCodeConstants.SUCCESS,
+        //                 message: "Create Submission successfully."
+        //             ));
+        //}
 
         /// <summary>
         /// Updates an existing submission
@@ -116,9 +116,9 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// </summary>
         /// <param name="submissionDTO"></param>
         /// <returns></returns>
-        [HttpPost("evaluate")]
+        [HttpPost("evaluations")]
         [Authorize(Roles = RoleConstants.Student)]
-        public async Task<IActionResult> EvaluateSubmission([FromBody] CreateSubmissionDTO submissionDTO)
+        public async Task<IActionResult> EvaluateSubmission(CreateSubmissionDTO submissionDTO)
         {
             JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(submissionDTO);
 
@@ -138,7 +138,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// <param name="problemId">Problem ID</param>
         /// <returns>Submission ID</returns>
         [HttpPost]
-        [Route("upload")]
+        [Route("files")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadFileSubmission(
             IFormFile file,

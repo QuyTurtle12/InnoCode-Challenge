@@ -105,7 +105,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task UpdateLeaderboardAsync(UpdateLeaderboardEntryDTO leaderboardDTO)
+        public async Task UpdateLeaderboardAsync(Guid contestId)
         {
             try
             {
@@ -118,7 +118,7 @@ namespace BusinessLogic.Services.Contests
                 // Get all leaderboard entries for the specified contest with Team info
                 IList<LeaderboardEntry> entries = leaderboardRepo.Entities
                     .Include(e => e.Team)
-                    .Where(e => e.ContestId == leaderboardDTO.ContestId)
+                    .Where(e => e.ContestId == contestId)
                     .OrderByDescending(e => e.Score)  // Order by score in descending order
                     .ToList();
 
@@ -127,7 +127,7 @@ namespace BusinessLogic.Services.Contests
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
-                        $"No leaderboard entries found for contest ID: {leaderboardDTO.ContestId}");
+                        $"No leaderboard entries found for contest ID: {contestId}");
                 }
 
                 // Generate a shared snapshot time for all entries
@@ -163,7 +163,7 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.CommitTransaction();
 
                 // Broadcast real-time leaderboard update
-                await _realtimeService.BroadcastLeaderboardUpdateAsync(leaderboardDTO.ContestId, teamInfoList);
+                await _realtimeService.BroadcastLeaderboardUpdateAsync(contestId, teamInfoList);
             }
             catch (Exception ex)
             {
@@ -317,6 +317,58 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating team score: {ex.Message}");
+            }
+        }
+
+        public async Task AddScoreToTeamAsync(Guid contestId, Guid teamId, double scoreToAdd)
+        {
+            try
+            {
+                // Start a new transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get the repository for LeaderboardEntry
+                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+                // Find the team's leaderboard entry
+                LeaderboardEntry? entry = await leaderboardRepo.Entities
+                    .FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == teamId);
+
+                // If entry not found, throw an exception
+                if (entry == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Leaderboard entry not found for team {teamId} in contest {contestId}");
+                }
+
+                // Add to existing score
+                entry.Score = (entry.Score ?? 0) + scoreToAdd;
+                entry.SnapshotAt = DateTime.UtcNow;
+
+                // Update the entry in the repository
+                leaderboardRepo.Update(entry);
+                await _unitOfWork.SaveAsync();
+
+                // Commit the transaction
+                _unitOfWork.CommitTransaction();
+
+                // Recalculate ranks and broadcast
+                await RecalculateRanksAsync(contestId);
+            }
+            catch (Exception ex)
+            {
+                // Roll back the transaction in case of error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error adding score to team: {ex.Message}");
             }
         }
 

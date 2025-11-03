@@ -77,8 +77,8 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <summary>
         /// Updates an existing appeal
         /// </summary>
-        [HttpPut("{id:guid}")]
-        public async Task<IActionResult> UpdateAppeal(Guid id, [FromBody] UpdateAppealDTO appealDto)
+        [HttpPut("{id}")]
+        public async Task<IActionResult> UpdateAppeal(Guid id, UpdateAppealDTO appealDto)
         {
             await _appealService.UpdateAppealAsync(id, appealDto);
             return Ok(new BaseResponseModel(
@@ -91,7 +91,7 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <summary>
         /// Deletes an appeal
         /// </summary>
-        [HttpDelete("{id:guid}")]
+        [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteAppeal(Guid id)
         {
             await _appealService.DeleteAppealAsync(id);

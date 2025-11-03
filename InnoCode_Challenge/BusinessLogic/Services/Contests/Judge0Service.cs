@@ -1,7 +1,6 @@
 ﻿using System.Net.Http.Json;
 using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc.Razor;
 using Microsoft.Extensions.Configuration;
 using Repository.DTOs.JudgeDTOs;
 using Utility.Constant;
@@ -110,13 +109,13 @@ namespace BusinessLogic.Services.Contests
                         return new JudgeCaseResultDTO
                         {
                             Id = testCase.Id,
-                            Status = result?.Status?.Id == 3 ? "success" : "failed",
+                            Status = result?.Status?.Id == 3 ? "success" : "failed", // 3 means code accepted
                             Judge0StatusId = result?.Status?.Id ?? 0,
                             Judge0Status = Judge0Helpers.ConvertToJudge0StatusString(result?.Status?.Id),
-                            Expected = testCase.ExpectedOutput,
-                            Actual = result?.Stdout ?? "",
-                            Stderr = result?.Stderr,
-                            CompileOutput = result?.CompileOutput,
+                            Expected = testCase.ExpectedOutput.Trim(),
+                            Actual = (result?.Stdout ?? "").Trim(),
+                            Stderr = result?.Stderr?.Trim(),
+                            CompileOutput = result?.CompileOutput?.Trim(),
                             Time = result?.Time,
                             MemoryKb = result?.Memory,
                             Token = token

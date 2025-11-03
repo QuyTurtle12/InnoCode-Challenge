@@ -150,7 +150,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         /// <param name="dto"></param>
         /// <returns></returns>
         [HttpPost]
-        [Route("Award")]
+        [Route("award")]
         public async Task<IActionResult> AwardCertificate(AwardCertificateDTO dto)
         {
             await _certificateService.AwardCertificateAsync(dto);

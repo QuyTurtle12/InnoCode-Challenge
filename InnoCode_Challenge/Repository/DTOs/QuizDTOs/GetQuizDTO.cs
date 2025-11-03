@@ -18,6 +18,8 @@ namespace Repository.DTOs.QuizDTOs
     {
         public Guid QuestionId { get; set; }
         public string Text { get; set; } = string.Empty;
+        public double Weight { get; set; } = 0;
+        public int? OrderIndex { get; set; }
         public List<OptionDTO> Options { get; set; } = new();
     }
 

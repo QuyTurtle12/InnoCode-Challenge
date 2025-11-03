@@ -21,7 +21,7 @@
     {
         public string Id { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
-        public int Judge0StatusId { get; set; }
+        public int Judge0StatusId { get; set; } // 1 (In Queue), 2 (Processing), 3 (Accepted), 4+ (Various Error States)
         public string Judge0Status { get; set; } = string.Empty;
         public string Expected { get; set; } = string.Empty;
         public string Actual { get; set; } = string.Empty;

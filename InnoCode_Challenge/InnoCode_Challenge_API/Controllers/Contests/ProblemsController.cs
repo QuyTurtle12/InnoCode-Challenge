@@ -35,44 +35,44 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         //            ));
         //}
 
-        /// <summary>
-        /// Get paginated problems with optional filters
-        /// </summary>
-        /// <param name="pageNumber">Current page number</param>
-        /// <param name="pageSize">Number of items per page</param>
-        /// <param name="idSearch">Optional problem ID filter</param>
-        /// <param name="roundIdSearch">Optional round ID filter</param>
-        /// <param name="roundNameSearch">Optional round name filter</param>
-        /// <returns>Paginated list of problems</returns>
-        [HttpGet]
-        public async Task<ActionResult<PaginatedList<GetProblemDTO>>> GetProblems(
-            int pageNumber = 1,
-            int pageSize = 10,
-            Guid? idSearch = null,
-            Guid? roundIdSearch = null,
-            string? roundNameSearch = null)
-        {
-            PaginatedList<GetProblemDTO> result = await _problemService.GetPaginatedProblemAsync(
-                pageNumber, pageSize, idSearch, roundIdSearch, roundNameSearch);
+        ///// <summary>
+        ///// Get paginated problems with optional filters
+        ///// </summary>
+        ///// <param name="pageNumber">Current page number</param>
+        ///// <param name="pageSize">Number of items per page</param>
+        ///// <param name="idSearch">Optional problem ID filter</param>
+        ///// <param name="roundIdSearch">Optional round ID filter</param>
+        ///// <param name="roundNameSearch">Optional round name filter</param>
+        ///// <returns>Paginated list of problems</returns>
+        //[HttpGet]
+        //public async Task<ActionResult<PaginatedList<GetProblemDTO>>> GetProblems(
+        //    int pageNumber = 1,
+        //    int pageSize = 10,
+        //    Guid? idSearch = null,
+        //    Guid? roundIdSearch = null,
+        //    string? roundNameSearch = null)
+        //{
+        //    PaginatedList<GetProblemDTO> result = await _problemService.GetPaginatedProblemAsync(
+        //        pageNumber, pageSize, idSearch, roundIdSearch, roundNameSearch);
 
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
+        //    var paging = new
+        //    {
+        //        result.PageNumber,
+        //        result.PageSize,
+        //        result.TotalPages,
+        //        result.TotalCount,
+        //        result.HasPreviousPage,
+        //        result.HasNextPage
+        //    };
 
-            return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Problem retrieved successfully."
-                    ));
-        }
+        //    return Ok(new BaseResponseModel<object>(
+        //                statusCode: StatusCodes.Status200OK,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                data: result.Items,
+        //                additionalData: paging,
+        //                message: "Problem retrieved successfully."
+        //            ));
+        //}
 
         /// <summary>
         /// Update an existing problem
