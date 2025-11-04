@@ -1,8 +1,10 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
+using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -173,7 +175,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Get contest repository
-                var contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
                 // Get all available contests
                 IQueryable<Contest> query = contestRepo.Entities.Where(c => !c.DeletedAt.HasValue);
@@ -210,10 +212,64 @@ namespace BusinessLogic.Services.Contests
                 // Change to paginated list to facilitate mapping process
                 PaginatedList<Contest> resultQuery = await contestRepo.GetPagingAsync(query, pageNumber, pageSize);
 
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Extract all contest IDs from the results
+                List<Guid> contestIds = resultQuery.Items.Select(c => c.ContestId).ToList();
+
+                // Load all configs for all contests in one query (performance optimization)
+                List<Config> configs = await configRepo.Entities
+                    .Where(c => contestIds.Any(id => c.Key.Contains(id.ToString())) && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Create a lookup dictionary for faster access
+                ILookup<string, Config> configLookup = configs.ToLookup(c => c.Key);
+
                 // Map the result to DTO
                 IReadOnlyCollection<GetContestDTO> result = resultQuery.Items.Select(item =>
                 {
+                    // Map base properties
                     GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(item);
+
+                    // Fetch team members max from config
+                    string teamMemberMaxKey = ConfigKeys.ContestTeamMembersMax(item.ContestId);
+                    Config? teamMemberMaxConfig = configLookup[teamMemberMaxKey].FirstOrDefault();
+                    if (teamMemberMaxConfig != null && int.TryParse(teamMemberMaxConfig.Value, out int teamMemberMax))
+                    {
+                        contestDTO.TeamMembersMax = teamMemberMax;
+                    }
+
+                    // Fetch team limit max from config
+                    string teamLimitMaxKey = ConfigKeys.ContestTeamLimitMax(item.ContestId);
+                    Config? teamLimitMaxConfig = configLookup[teamLimitMaxKey].FirstOrDefault();
+                    if (teamLimitMaxConfig != null && int.TryParse(teamLimitMaxConfig.Value, out int teamLimitMax))
+                    {
+                        contestDTO.TeamLimitMax = teamLimitMax;
+                    }
+
+                    // Fetch registration start from config
+                    string regStartKey = ConfigKeys.ContestRegStart(item.ContestId);
+                    Config? regStartConfig = configLookup[regStartKey].FirstOrDefault();
+                    if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
+                    {
+                        contestDTO.RegistrationStart = regStart;
+                    }
+
+                    // Fetch registration end from config
+                    string regEndKey = ConfigKeys.ContestRegEnd(item.ContestId);
+                    Config? regEndConfig = configLookup[regEndKey].FirstOrDefault();
+                    if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
+                    {
+                        contestDTO.RegistrationEnd = regEnd;
+                    }
+
+                    // Fetch rewards text from config
+                    string rewardsKey = ConfigKeys.ContestRewards (item.ContestId);
+                    Config? rewardsConfig = configLookup[rewardsKey].FirstOrDefault();
+                    if (rewardsConfig != null && !string.IsNullOrWhiteSpace(rewardsConfig.Value))
+                    {
+                        contestDTO.RewardsText = rewardsConfig.Value;
+                    }
 
                     return contestDTO;
                 }).ToList();
@@ -237,58 +293,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        //public async Task PublishContestAsync(Guid id)
-        //{
-        //    try
-        //    {
-        //        // Start a transaction
-        //        _unitOfWork.BeginTransaction();
-
-        //        // Validate contest ID
-        //        if (id == Guid.Empty)
-        //        {
-        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
-        //        }
-
-        //        // Get repository and fetch the contest by ID
-        //        IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-        //        Contest? existingContest = await contestRepo.GetByIdAsync(id);
-
-        //        // Check if the contest exists
-        //        if (existingContest == null || existingContest.DeletedAt.HasValue)
-        //        {
-        //            throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
-        //        }
-
-        //        // Set status to Published
-        //        existingContest.Status = ContestStatusEnum.Published.ToString();
-
-        //        // Update the contest
-        //        await contestRepo.UpdateAsync(existingContest);
-
-        //        // Save changes to database
-        //        await _unitOfWork.SaveAsync();
-
-        //        // Commit the transaction
-        //        _unitOfWork.CommitTransaction();
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        // If something fails, roll back the transaction
-        //        _unitOfWork.RollBack();
-
-        //        if (ex is ErrorException)
-        //        {
-        //            throw;
-        //        }
-
-        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
-        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-        //            $"Error publishing Contests: {ex.Message}");
-        //    }
-        //}
-
-        public async Task UpdateContestAsync(Guid id, UpdateContestDTO contestDTO)
+        public async Task<GetContestDTO> UpdateContestAsync(Guid id, UpdateContestDTO contestDTO)
         {
             try
             {
@@ -301,9 +306,40 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest data cannot be null.");
                 }
 
+                // Validate contest ID
                 if (id == Guid.Empty)
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
+                }
+
+                // Validate year
+                if (contestDTO.Year < DateTime.UtcNow.Year)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest year cannot be in the past.");
+                }
+
+                // Validate date ranges
+                if (contestDTO.Start.HasValue && contestDTO.End.HasValue && contestDTO.Start.Value >= contestDTO.End.Value)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest start date must be earlier than end date.");
+                }
+
+                // Validate registration dates
+                if (contestDTO.RegistrationStart.HasValue && contestDTO.RegistrationEnd.HasValue && contestDTO.RegistrationStart.Value >= contestDTO.RegistrationEnd.Value)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration start date must be earlier than registration end date.");
+                }
+
+                // Validate registration start date vs contest dates
+                if (contestDTO.RegistrationStart.HasValue && contestDTO.Start.HasValue && contestDTO.RegistrationStart.Value >= contestDTO.Start.Value)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration start date must be earlier than contest start date.");
+                }
+
+                // Validate registration end date vs contest dates
+                if (contestDTO.RegistrationEnd.HasValue && contestDTO.Start.HasValue && contestDTO.RegistrationEnd.Value >= contestDTO.Start.Value)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration end date must be earlier than contest start date.");
                 }
 
                 // Validate name
@@ -314,6 +350,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Get repository and fetch the contest by ID
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Get existing contest
                 Contest? existingContest = await contestRepo.GetByIdAsync(id);
 
                 // Check if the contest exists
@@ -324,7 +363,29 @@ namespace BusinessLogic.Services.Contests
 
                 // Update properties from DTO
                 _mapper.Map(contestDTO, existingContest);
-                existingContest.Status = contestDTO.Status.ToString();
+
+                // Set contest-specific configurations
+                int teamMembersMax = contestDTO.TeamMembersMax
+                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4);
+                int? teamLimitMax = contestDTO.TeamLimitMax
+                                     ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);
+
+                // Insert or update config entries
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(existingContest.ContestId), teamMembersMax.ToString());
+
+                // Set team limit max
+                if (teamLimitMax.HasValue)
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(existingContest.ContestId), teamLimitMax.Value.ToString());
+
+                // Set registration times
+                if (contestDTO.RegistrationStart.HasValue)
+                    await UpsertConfigAsync(configRepo, $"contest:{existingContest.ContestId}:registration_start", contestDTO.RegistrationStart.Value.ToString("o"));
+                if (contestDTO.RegistrationEnd.HasValue)
+                    await UpsertConfigAsync(configRepo, $"contest:{existingContest.ContestId}:registration_end", contestDTO.RegistrationEnd.Value.ToString("o"));
+
+                // Set rewards text
+                if (!string.IsNullOrWhiteSpace(contestDTO.RewardsText))
+                    await UpsertConfigAsync(configRepo, $"contest:{existingContest.ContestId}:rewards_text", contestDTO.RewardsText!.Trim());
 
                 // Update the contest
                 await contestRepo.UpdateAsync(existingContest);
@@ -334,6 +395,11 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
+
+                // Return the updated contest DTO
+                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null);
+
+                return result.Items.First();
             }
             catch (Exception ex)
             {

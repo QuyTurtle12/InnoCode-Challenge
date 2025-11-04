@@ -87,8 +87,9 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateContest(Guid id, UpdateContestDTO contestDTO)
         {
-            await _contestService.UpdateContestAsync(id, contestDTO);
-            return Ok(new BaseResponseModel(
+            GetContestDTO result = await _contestService.UpdateContestAsync(id, contestDTO);
+            return Ok(new BaseResponseModel<object>(
+                        data: result,
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
                         message: "Update contest successfully."

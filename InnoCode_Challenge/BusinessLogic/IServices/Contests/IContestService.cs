@@ -7,7 +7,7 @@ namespace BusinessLogic.IServices.Contests
     {
         Task<PaginatedList<GetContestDTO>> GetPaginatedContestAsync(int pageNumber, int pageSize, Guid? idSearch, string? nameSearch, int? yearSearch, DateTime? startDate, DateTime? endDate);
         //Task CreateContestAsync(CreateContestDTO contestDTO);
-        Task UpdateContestAsync(Guid id, UpdateContestDTO contestDTO);
+        Task<GetContestDTO> UpdateContestAsync(Guid id, UpdateContestDTO contestDTO);
         Task DeleteContestAsync(Guid id);
         //Task PublishContestAsync(Guid id);
         Task<ContestCreatedDTO> CreateContestWithPolicyAsync(CreateContestAdvancedDTO dto);
