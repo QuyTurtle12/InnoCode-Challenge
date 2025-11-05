@@ -318,14 +318,16 @@ public partial class ContestDbContext : DbContext
 
             entity.ToTable("contests");
 
-            entity.HasIndex(e => new { e.Year, e.Name }, "UQ_contests_year_name").IsUnique();
-
             entity.Property(e => e.ContestId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("contest_id");
             entity.Property(e => e.CreatedAt)
                 .HasPrecision(0)
                 .HasColumnName("created_at");
+            entity.Property(e => e.CreatedBy)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("created_by");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Description)
                 .HasMaxLength(200)

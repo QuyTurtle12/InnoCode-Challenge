@@ -25,6 +25,8 @@ public partial class Contest
 
     public DateTime? End { get; set; }
 
+    public string? CreatedBy { get; set; }
+
     public virtual ICollection<CertificateTemplate> CertificateTemplates { get; set; } = new List<CertificateTemplate>();
 
     public virtual ICollection<LeaderboardEntry> LeaderboardEntries { get; set; } = new List<LeaderboardEntry>();
