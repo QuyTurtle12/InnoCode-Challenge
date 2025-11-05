@@ -16,7 +16,6 @@ namespace InnoCode_Challenge_API.Controllers
         public TeamInviteActionsController(ITeamInviteService service) => _service = service;
 
         [HttpPost("accept")]
-        [Authorize(Roles = RoleConstants.Student)]
         public async Task<IActionResult> Accept([FromQuery] string token)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -25,7 +24,6 @@ namespace InnoCode_Challenge_API.Controllers
         }
 
         [HttpPost("decline")]
-        [Authorize(Roles = RoleConstants.Student)]
         public async Task<IActionResult> Decline([FromQuery] string token)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
