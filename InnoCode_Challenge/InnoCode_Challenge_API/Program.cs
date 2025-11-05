@@ -39,5 +39,3 @@ app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 app.MapControllers();
 app.Run();
 
-
-      

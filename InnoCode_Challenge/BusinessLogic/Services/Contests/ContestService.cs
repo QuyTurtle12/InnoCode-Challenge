@@ -231,6 +231,12 @@ namespace BusinessLogic.Services.Contests
                     // Map base properties
                     GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(item);
 
+                    // Convert start/end to ISO 8601 format
+                    if (contestDTO.Start.HasValue)
+                        contestDTO.Start = DateTime.SpecifyKind(contestDTO.Start.Value, DateTimeKind.Local);
+                    if (contestDTO.End.HasValue)
+                        contestDTO.End = DateTime.SpecifyKind(contestDTO.End.Value, DateTimeKind.Local);
+
                     // Fetch team members max from config
                     string teamMemberMaxKey = ConfigKeys.ContestTeamMembersMax(item.ContestId);
                     Config? teamMemberMaxConfig = configLookup[teamMemberMaxKey].FirstOrDefault();
@@ -361,6 +367,27 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
                 }
 
+                // Trim name for consistent checking
+                string nameTrim = contestDTO.Name.Trim();
+
+                // Check if a contest with the same name and year already exists
+                bool exists = await contestRepo.Entities
+                    .AnyAsync(c => c.Year == contestDTO.Year && (c.Name == nameTrim && c.Name != existingContest.Name) && c.DeletedAt == null);
+
+                // Check for duplicate contest name in the same year
+                if (exists)
+                {
+                    string? suggestion = await SuggestAlternateNameAsync(nameTrim, contestDTO.Year, contestRepo);
+                    CoreException ex = new CoreException(ResponseCodeConstants.DUPLICATE, "Contest name already exists for this year.", StatusCodes.Status409Conflict)
+                    {
+                        AdditionalData = new Dictionary<string, object>
+                        {
+                            ["suggestion"] = suggestion
+                        }
+                    };
+                    throw ex;
+                }
+
                 // Update properties from DTO
                 _mapper.Map(contestDTO, existingContest);
 
@@ -379,13 +406,13 @@ namespace BusinessLogic.Services.Contests
 
                 // Set registration times
                 if (contestDTO.RegistrationStart.HasValue)
-                    await UpsertConfigAsync(configRepo, $"contest:{existingContest.ContestId}:registration_start", contestDTO.RegistrationStart.Value.ToString("o"));
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(existingContest.ContestId), contestDTO.RegistrationStart.Value.ToUniversalTime().ToString("o"));
                 if (contestDTO.RegistrationEnd.HasValue)
-                    await UpsertConfigAsync(configRepo, $"contest:{existingContest.ContestId}:registration_end", contestDTO.RegistrationEnd.Value.ToString("o"));
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(existingContest.ContestId), contestDTO.RegistrationEnd.Value.ToUniversalTime().ToString("o"));
 
                 // Set rewards text
                 if (!string.IsNullOrWhiteSpace(contestDTO.RewardsText))
-                    await UpsertConfigAsync(configRepo, $"contest:{existingContest.ContestId}:rewards_text", contestDTO.RewardsText!.Trim());
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestRewards(existingContest.ContestId), contestDTO.RewardsText!.Trim());
 
                 // Update the contest
                 await contestRepo.UpdateAsync(existingContest);
@@ -407,6 +434,11 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.RollBack();
 
                 if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                if (ex is CoreException)
                 {
                     throw;
                 }
@@ -495,16 +527,16 @@ namespace BusinessLogic.Services.Contests
                 // Set team limit max
                 if (teamLimitMax.HasValue)
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(entity.ContestId), teamLimitMax.Value.ToString());
-                
+
                 // Set registration times
                 if (dto.RegistrationStart.HasValue)
-                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_start", dto.RegistrationStart.Value.ToString("o"));
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(entity.ContestId), dto.RegistrationStart.Value.ToString("o"));
                 if (dto.RegistrationEnd.HasValue)
-                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:registration_end", dto.RegistrationEnd.Value.ToString("o"));
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(entity.ContestId), dto.RegistrationEnd.Value.ToString("o"));
 
                 // Set rewards text
                 if (!string.IsNullOrWhiteSpace(dto.RewardsText))
-                    await UpsertConfigAsync(configRepo, $"contest:{entity.ContestId}:rewards_text", dto.RewardsText!.Trim());
+                    await UpsertConfigAsync(configRepo, ConfigKeys.ContestRewards(entity.ContestId), dto.RewardsText!.Trim());
 
                 // Save all config changes
                 await _unitOfWork.SaveAsync();
