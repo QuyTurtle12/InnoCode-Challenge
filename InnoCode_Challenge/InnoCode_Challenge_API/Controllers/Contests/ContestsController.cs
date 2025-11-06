@@ -62,6 +62,49 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
+        /// <summary>
+        /// Get Contests that this logged-in student is participated with Pagination and Optional Filters
+        /// </summary>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="idSearch"></param>
+        /// <param name="nameSearch"></param>
+        /// <param name="yearSearch"></param>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <returns></returns>
+        [HttpGet("mine")]
+        [Authorize(Policy ="RequireStudentRole")]
+        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetParticipatedContests(int pageNumber = 1,
+                                                                                 int pageSize = 10,
+                                                                                 Guid? idSearch = null,
+                                                                                 string? nameSearch = null,
+                                                                                 int? yearSearch = null,
+                                                                                 DateTime? startDate = null,
+                                                                                 DateTime? endDate = null)
+        {
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch,
+                                                                  nameSearch, yearSearch, startDate, endDate, true);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: result.Items,
+                        additionalData: paging,
+                        message: "Contests retrieved successfully."
+                    ));
+        }
+
         ///// <summary>
         ///// Create a New Contest
         ///// </summary>

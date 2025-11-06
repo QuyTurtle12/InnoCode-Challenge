@@ -1,4 +1,5 @@
-﻿using AutoMapper;
+﻿using System.Security.Claims;
+using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -16,13 +17,15 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly IHttpContextAccessor _httpContextAccessor;
         private const int MIN_YEAR = 10;
 
         // Constructor
-        public ContestService(IMapper mapper, IUOW uow)
+        public ContestService(IMapper mapper, IUOW uow, IHttpContextAccessor httpContextAccessor)
         {
             _mapper = mapper;
             _unitOfWork = uow;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -85,7 +88,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<PaginatedList<GetContestDTO>> GetPaginatedContestAsync(int pageNumber, int pageSize, Guid? idSearch, string? nameSearch, int? yearSearch, DateTime? startDate, DateTime? endDate)
+        public async Task<PaginatedList<GetContestDTO>> GetPaginatedContestAsync(int pageNumber, int pageSize, Guid? idSearch, string? nameSearch, int? yearSearch, DateTime? startDate, DateTime? endDate, bool isMyParticipatedContest)
         {
             try
             {
@@ -116,6 +119,40 @@ namespace BusinessLogic.Services.Contests
 
                 // Get all available contests
                 IQueryable<Contest> query = contestRepo.Entities.Where(c => !c.DeletedAt.HasValue);
+
+                // Get contests where the current user is a participant
+                if (isMyParticipatedContest)
+                {
+                    // Get current user ID from HttpContext
+                    string? userId = _httpContextAccessor.HttpContext?.User?
+                        .FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    // If user ID is available, get the corresponding student ID
+                    if (!string.IsNullOrEmpty(userId))
+                    {
+                        // Get student repository
+                        IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+
+                        // Find the student ID associated with the user ID
+                        Guid? studentId = await studentRepo.Entities
+                            .Where(s => s.UserId.ToString() == userId && s.DeletedAt == null)
+                            .Select(s => s.StudentId)
+                            .FirstOrDefaultAsync();
+
+                        // If student ID is found, filter contests accordingly
+                        if (studentId.HasValue)
+                        {
+                            // Include Teams and TeamMembers for filtering
+                            query = query.Include(c => c.Teams)
+                                         .ThenInclude(t => t.TeamMembers);
+
+                            // Filter contests where student is in a team
+                            query = query.Where(c => c.Teams.Any(t =>
+                                t.TeamMembers.Any(tm => tm.StudentId == studentId.Value)
+                                && t.DeletedAt == null));
+                        }
+                    }
+                }
 
                 // Apply filters if provided
                 if (idSearch.HasValue)
@@ -361,7 +398,7 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.CommitTransaction();
 
                 // Return the updated contest DTO
-                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null);
+                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, false);
 
                 return result.Items.First();
             }
@@ -519,6 +556,7 @@ namespace BusinessLogic.Services.Contests
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
             IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+            IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
             // Fetch the contest with its rounds
@@ -547,7 +585,15 @@ namespace BusinessLogic.Services.Contests
             {
                 // Count problems associated with the contest's rounds
                 int problemCount = await problemRepo.Entities.CountAsync(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null);
-                if (problemCount < roundIds.Count)
+
+                // Count MCQ tests associated with the contest's rounds
+                int mcqCount = await mcqTestRepo.Entities.CountAsync(t => roundIds.Contains(t.RoundId) && t.DeletedAt == null);
+
+                // Total problems
+                int totalProblemCount = problemCount + mcqCount;
+
+                // Validate that each round has at least one problem
+                if (totalProblemCount < roundIds.Count)
                     result.Missing.Add("One or more rounds missing a problem.");
             }
 
