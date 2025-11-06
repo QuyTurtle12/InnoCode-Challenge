@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ProblemDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
-using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {

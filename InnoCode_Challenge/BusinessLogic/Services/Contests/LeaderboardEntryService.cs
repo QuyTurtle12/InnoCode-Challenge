@@ -25,75 +25,169 @@ namespace BusinessLogic.Services.Contests
             _realtimeService = realtimeService;
         }
 
-        public async Task CreateLeaderboardAsync(CreateLeaderboardEntryDTO leaderboardDTO)
+        //public async Task CreateLeaderboardAsync(CreateLeaderboardEntryDTO leaderboardDTO)
+        //{
+        //    try
+        //    {
+        //        // Start a new transaction
+        //        _unitOfWork.BeginTransaction();
+
+        //        // Generate a shared info for all entries
+        //        Guid sharedGuid = Guid.NewGuid();
+        //        DateTime sharedSnapshot = DateTime.UtcNow;
+
+        //        // Initialize count based on the number of teams for ranking assignment
+        //        int count = leaderboardDTO.teamIdList.Count;
+
+        //        // Get the repository for LeaderboardEntry
+        //        IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+        //        List<TeamInfo> teamInfoList = new List<TeamInfo>();
+
+        //        foreach (Guid item in leaderboardDTO.teamIdList)
+        //        {
+        //            // Map DTO to entity
+        //            LeaderboardEntry leaderboardEntry = _mapper.Map<LeaderboardEntry>(leaderboardDTO);
+
+        //            // Assign the shared GUID
+        //            leaderboardEntry.EntryId = sharedGuid;
+
+        //            // Assign the TeamId from the list
+        //            leaderboardEntry.TeamId = item;
+
+        //            // Assign Rank based on the current count
+        //            leaderboardEntry.Rank = count;
+
+        //            // Initialize Score to 0
+        //            leaderboardEntry.Score = 0;
+
+        //            // Set the SnapshotAt to current time
+        //            leaderboardEntry.SnapshotAt = sharedSnapshot;
+
+        //            // Insert the new Leaderboard Entry
+        //            await leaderboardRepo.InsertAsync(leaderboardEntry);
+
+        //            // Collect team info for broadcasting
+        //            teamInfoList.Add(new TeamInfo
+        //            {
+        //                TeamId = item,
+        //                TeamName = string.Empty, // Will be populated from database
+        //                Rank = count,
+        //                Score = 0
+        //            });
+
+        //            // Decrement the count for the next rank
+        //            count--;
+        //        }
+
+        //        // Save changes to the database
+        //        await _unitOfWork.SaveAsync();
+
+        //        // Commit the transaction if all operations succeed
+        //        _unitOfWork.CommitTransaction();
+
+        //        // Broadcast real-time update
+        //        await _realtimeService.BroadcastLeaderboardUpdateAsync(leaderboardDTO.ContestId, teamInfoList);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        // If something fails, roll back the transaction
+        //        _unitOfWork.RollBack();
+
+        //        if (ex is ErrorException)
+        //        {
+        //            throw;
+        //        }
+
+        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
+        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+        //            $"Error creating Leaderboard: {ex.Message}");
+        //    }
+        //}
+
+        public async Task AddTeamToLeaderboardAsync(Guid contestId, Guid teamId)
         {
             try
             {
-                // Start a new transaction
-                _unitOfWork.BeginTransaction();
-
-                // Generate a shared info for all entries
-                Guid sharedGuid = Guid.NewGuid();
-                DateTime sharedSnapshot = DateTime.UtcNow;
-
-                // Initialize count based on the number of teams for ranking assignment
-                int count = leaderboardDTO.teamIdList.Count;
-
-                // Get the repository for LeaderboardEntry
-                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
-
-                List<TeamInfo> teamInfoList = new List<TeamInfo>();
-
-                foreach (Guid item in leaderboardDTO.teamIdList)
+                // Validate inputs
+                if (contestId == Guid.Empty)
                 {
-                    // Map DTO to entity
-                    LeaderboardEntry leaderboardEntry = _mapper.Map<LeaderboardEntry>(leaderboardDTO);
-
-                    // Assign the shared GUID
-                    leaderboardEntry.EntryId = sharedGuid;
-
-                    // Assign the TeamId from the list
-                    leaderboardEntry.TeamId = item;
-
-                    // Assign Rank based on the current count
-                    leaderboardEntry.Rank = count;
-
-                    // Initialize Score to 0
-                    leaderboardEntry.Score = 0;
-
-                    // Set the SnapshotAt to current time
-                    leaderboardEntry.SnapshotAt = sharedSnapshot;
-
-                    // Insert the new Leaderboard Entry
-                    await leaderboardRepo.InsertAsync(leaderboardEntry);
-
-                    // Collect team info for broadcasting
-                    teamInfoList.Add(new TeamInfo
-                    {
-                        TeamId = item,
-                        TeamName = string.Empty, // Will be populated from database
-                        Rank = count,
-                        Score = 0
-                    });
-
-                    // Decrement the count for the next rank
-                    count--;
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Contest ID cannot be empty.");
                 }
 
-                // Save changes to the database
+                if (teamId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Team ID cannot be empty.");
+                }
+
+                // Get repositories
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+                // Verify contest exists
+                Contest? contest = await contestRepo.GetByIdAsync(contestId);
+
+                if (contest == null || contest.DeletedAt.HasValue)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Contest not found.");
+                }
+
+                // Verify team exists and belongs to the contest
+                Team? team = await teamRepo.Entities
+                    .FirstOrDefaultAsync(t => t.TeamId == teamId && t.ContestId == contestId && t.DeletedAt == null);
+
+                if (team == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Team not found or does not belong to this contest.");
+                }
+
+                // Check if team already exists in leaderboard
+                bool exists = await leaderboardRepo.Entities
+                    .AnyAsync(l => l.ContestId == contestId && l.TeamId == teamId);
+
+                if (exists)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Team {teamId} already exists in leaderboard for contest {contestId}");
+                }
+
+                // Get current last rank to determine new team's rank
+                int? lastRank = await leaderboardRepo.Entities
+                    .Where(l => l.ContestId == contestId)
+                    .MaxAsync(l => l.Rank);
+
+                int newRank = (lastRank ?? 0) + 1;
+
+                // Create new leaderboard entry
+                LeaderboardEntry newEntry = new LeaderboardEntry
+                {
+                    EntryId = Guid.NewGuid(),
+                    ContestId = contestId,
+                    TeamId = teamId,
+                    Score = 0,
+                    Rank = newRank,
+                    SnapshotAt = DateTime.UtcNow
+                };
+
+                // Insert the entry
+                await leaderboardRepo.InsertAsync(newEntry);
+
+                // Save changes
                 await _unitOfWork.SaveAsync();
 
-                // Commit the transaction if all operations succeed
-                _unitOfWork.CommitTransaction();
-
-                // Broadcast real-time update
-                await _realtimeService.BroadcastLeaderboardUpdateAsync(leaderboardDTO.ContestId, teamInfoList);
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-
                 if (ex is ErrorException)
                 {
                     throw;
@@ -101,7 +195,7 @@ namespace BusinessLogic.Services.Contests
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Leaderboard: {ex.Message}");
+                    $"Error adding team to leaderboard: {ex.Message}");
             }
         }
 
@@ -324,9 +418,6 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Start a new transaction
-                _unitOfWork.BeginTransaction();
-
                 // Get the repository for LeaderboardEntry
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
@@ -350,17 +441,11 @@ namespace BusinessLogic.Services.Contests
                 leaderboardRepo.Update(entry);
                 await _unitOfWork.SaveAsync();
 
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-
                 // Recalculate ranks and broadcast
                 await RecalculateRanksAsync(contestId);
             }
             catch (Exception ex)
             {
-                // Roll back the transaction in case of error
-                _unitOfWork.RollBack();
-
                 if (ex is ErrorException)
                 {
                     throw;
@@ -376,8 +461,6 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                _unitOfWork.BeginTransaction();
-
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
                 // Get all leaderboard entries for the contest ordered by score
@@ -420,15 +503,12 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 await _unitOfWork.SaveAsync();
-                _unitOfWork.CommitTransaction();
 
                 // Broadcast the updated leaderboard in real-time
                 await _realtimeService.BroadcastLeaderboardUpdateAsync(contestId, teamInfoList);
             }
             catch (Exception ex)
             {
-                _unitOfWork.RollBack();
-
                 if (ex is ErrorException)
                 {
                     throw;

@@ -538,7 +538,11 @@ namespace BusinessLogic.Services.Contests
                 result.Missing.Add("No rounds created.");
 
             // Check for problems in each round
-            List<Guid>? roundIds = contest.Rounds!.Select(r => r.RoundId).ToList();
+            List<Guid>? roundIds = contest.Rounds!
+                .Where(r => !r.DeletedAt.HasValue)
+                .Select(r => r.RoundId)
+                .ToList();
+
             if (roundIds.Any())
             {
                 // Count problems associated with the contest's rounds

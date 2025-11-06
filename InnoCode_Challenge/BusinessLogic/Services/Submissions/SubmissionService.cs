@@ -345,6 +345,9 @@ namespace BusinessLogic.Services.Submissions
                 // Auto evaluate submission using Judge0 service
                 JudgeSubmissionResultDTO result = await _judge0Service.AutoEvaluateSubmissionAsync(judge0Request);
 
+                // Set submission ID in result
+                result.SubmissionId = submission.SubmissionId.ToString();
+
                 // Save results with penalty applied
                 await SaveSubmissionResultAsync(submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
 
@@ -791,6 +794,49 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating file submission score: {ex.Message}");
+            }
+        }
+
+        public async Task AddScoreToTeamInLeaderboardAsync(Guid submissionId)
+        {
+            try
+            {
+                // Get the submission repository
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Find the latest submission for the problem of the logged-in student
+                Submission? submission = await submissionRepo.Entities
+                    .Where(s => s.SubmissionId == submissionId)
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                // Validate submission existence
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No submission found for this problem");
+                }
+
+                // Get contest ID and score
+                Guid contestId = submission.Problem.Round.ContestId;
+                double score = submission.Score;
+
+                // Update team score in leaderboard
+                await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, score);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error add score to leaderboard: {ex.Message}");
             }
         }
     }

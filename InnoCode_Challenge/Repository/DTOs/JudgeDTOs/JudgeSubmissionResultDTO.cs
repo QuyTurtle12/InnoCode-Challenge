@@ -2,6 +2,7 @@
 {
     public class JudgeSubmissionResultDTO
     {
+        public string SubmissionId { get; set; } = string.Empty;
         public string ProblemId { get; set; } = string.Empty;
         public string Language { get; set; } = string.Empty;
         public JudgeSummaryDTO Summary { get; set; } = new();

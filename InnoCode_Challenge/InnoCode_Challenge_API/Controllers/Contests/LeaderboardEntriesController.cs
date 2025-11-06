@@ -53,20 +53,20 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
-        /// <summary>
-        /// Create initial leaderboard
-        /// </summary>
-        [HttpPost]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
-        public async Task<IActionResult> CreateLeaderboard(CreateLeaderboardEntryDTO dto)
-        {
-            await _leaderboardService.CreateLeaderboardAsync(dto);
-            return Ok(new BaseResponseModel(
-                statusCode: StatusCodes.Status201Created,
-                code: ResponseCodeConstants.SUCCESS,
-                message: "Leaderboard created successfully."
-            ));
-        }
+        ///// <summary>
+        ///// Create initial leaderboard
+        ///// </summary>
+        //[HttpPost]
+        //[Authorize(Policy = "RequireStaffOrAdmin")]
+        //public async Task<IActionResult> CreateLeaderboard(CreateLeaderboardEntryDTO dto)
+        //{
+        //    await _leaderboardService.CreateLeaderboardAsync(dto);
+        //    return Ok(new BaseResponseModel(
+        //        statusCode: StatusCodes.Status201Created,
+        //        code: ResponseCodeConstants.SUCCESS,
+        //        message: "Leaderboard created successfully."
+        //    ));
+        //}
 
         ///// <summary>
         ///// Update leaderboard rankings

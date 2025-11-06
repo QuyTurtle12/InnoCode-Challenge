@@ -186,7 +186,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// <param name="scoreDTO">Score and feedback</param>
         /// <returns>Success message</returns>
         [HttpPut("{submissionId}/score")]
-        [Authorize(Roles = RoleConstants.Judge)]
+        [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> UpdateFileSubmissionScore(
             Guid submissionId,
             FileSubmissionScoreDTO scoreDTO)
@@ -200,6 +200,23 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 message: "File submission score updated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Accepts the result of a submission and adds the score to the team's leaderboard
+        /// </summary>
+        /// <param name="submissionId"></param>
+        /// <returns></returns>
+        [HttpPut("{submissionId}/acceptance")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> AcceptResult([Required] Guid submissionId)
+        {
+            await _submissionService.AddScoreToTeamInLeaderboardAsync(submissionId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Score added to team in leaderboard successfully."
             ));
         }
     }

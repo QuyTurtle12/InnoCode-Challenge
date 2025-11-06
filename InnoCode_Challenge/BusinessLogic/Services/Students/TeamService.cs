@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Students;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -14,11 +15,13 @@ namespace BusinessLogic.Services.Students
     {
         private readonly IUOW _unitOfWork;
         private readonly IMapper _mapper;
+        private readonly ILeaderboardEntryService _leaderboardEntryService;
 
-        public TeamService(IUOW unitOfWork, IMapper mapper)
+        public TeamService(IUOW unitOfWork, IMapper mapper, ILeaderboardEntryService leaderboardEntryService)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
+            _leaderboardEntryService = leaderboardEntryService;
         }
 
         public async Task<PaginatedList<TeamDTO>> GetAsync(TeamQueryParams queryParams)
@@ -130,6 +133,9 @@ namespace BusinessLogic.Services.Students
 
             await teamRepository.InsertAsync(team);
             await _unitOfWork.SaveAsync();
+
+            // Add team to leaderboard
+            await _leaderboardEntryService.AddTeamToLeaderboardAsync(dto.ContestId, team.TeamId);
 
             var created = await teamRepository.Entities
                 .Include(t => t.Contest)

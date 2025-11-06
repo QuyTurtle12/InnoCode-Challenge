@@ -130,7 +130,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
 
         [HttpPost("advanced")]
         [Authorize(Policy = "RequireOrganizerRole")]
-        public async Task<IActionResult> CreateAdvanced([FromBody] CreateContestAdvancedDTO dto)
+        public async Task<IActionResult> CreateAdvanced(CreateContestAdvancedDTO dto)
         {
             var created = await _contestService.CreateContestWithPolicyAsync(dto);
             return CreatedAtAction(nameof(CheckPublishReadiness), new { id = created.ContestId },

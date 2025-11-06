@@ -16,5 +16,6 @@ namespace BusinessLogic.IServices.Submissions
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);
         Task<bool> UpdateFileSubmissionScoreAsync(Guid submissionId, double score, string feedback);
         Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid problemId);
+        Task AddScoreToTeamInLeaderboardAsync(Guid submissionId);
     }
 }
