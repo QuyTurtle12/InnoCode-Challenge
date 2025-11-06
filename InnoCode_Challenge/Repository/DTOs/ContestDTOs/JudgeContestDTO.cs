@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace Repository.DTOs.ContestDTOs
 {
-    public class JudgeParticipateContestDTO
+    public class JudgeContestDTO
     {
         [Required]
         public Guid ContestId { get; set; }

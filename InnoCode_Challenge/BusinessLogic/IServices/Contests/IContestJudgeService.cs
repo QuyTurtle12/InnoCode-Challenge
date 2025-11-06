@@ -4,7 +4,12 @@ namespace BusinessLogic.IServices.Contests
 {
     public interface IContestJudgeService
     {
-        Task ParticipateAsync(JudgeParticipateContestDTO dto);
-        Task LeaveAsync(JudgeParticipateContestDTO dto);
+        Task ParticipateAsync(JudgeContestDTO dto);
+        Task LeaveAsync(JudgeContestDTO dto);
+
+        Task<IList<JudgeInContestDTO>> GetJudgesByContestAsync(Guid contestId);
+        Task<IList<JudgeContestDTO>> GetContestsOfCurrentJudgeAsync();
+        Task<IList<JudgeContestDTO>> GetContestsOfJudgeAsync(Guid judgeUserId);
+
     }
 }

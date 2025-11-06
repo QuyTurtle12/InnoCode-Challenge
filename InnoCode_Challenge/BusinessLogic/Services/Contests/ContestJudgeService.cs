@@ -24,7 +24,7 @@ namespace BusinessLogic.Services.Contests
             _httpContextAccessor = httpContextAccessor;
         }
 
-        public async Task ParticipateAsync(JudgeParticipateContestDTO dto)
+        public async Task ParticipateAsync(JudgeContestDTO dto)
         {
             var judge = await GetCurrentJudgeAsync();
 
@@ -61,7 +61,7 @@ namespace BusinessLogic.Services.Contests
             await _unitOfWork.SaveAsync();
         }
 
-        public async Task LeaveAsync(JudgeParticipateContestDTO dto)
+        public async Task LeaveAsync(JudgeContestDTO dto)
         {
             var judge = await GetCurrentJudgeAsync();
 
@@ -109,5 +109,103 @@ namespace BusinessLogic.Services.Contests
 
             return user;
         }
+
+        public async Task<IList<JudgeInContestDTO>> GetJudgesByContestAsync(Guid contestId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var userRepo = _unitOfWork.GetRepository<User>();
+
+            var prefix = ConfigKeys.ContestJudge(contestId, Guid.Empty);
+            var basePrefix = prefix[..prefix.LastIndexOf(':')];
+
+            var configs = await configRepo.Entities
+                .Where(c =>
+                    c.Scope == "contest" &&
+                    c.DeletedAt == null &&
+                    c.Key.StartsWith(basePrefix))
+                .ToListAsync();
+
+            var judgeIds = configs
+                .Select(c => ExtractJudgeIdFromKey(c.Key))
+                .Where(id => id != Guid.Empty)
+                .Distinct()
+                .ToList();
+
+            if (!judgeIds.Any())
+                return new List<JudgeInContestDTO>();
+
+            var judges = await userRepo.Entities
+                .Where(u => judgeIds.Contains(u.UserId) && u.DeletedAt == null)
+                .ToListAsync();
+
+            return judges
+                .Select(u => new JudgeInContestDTO
+                {
+                    UserId = u.UserId,
+                    FullName = u.Fullname,
+                    Email = u.Email,
+                    Status = u.Status
+                })
+                .ToList();
+        }
+
+        public async Task<IList<JudgeContestDTO>> GetContestsOfCurrentJudgeAsync()
+        {
+            var judge = await GetCurrentJudgeAsync();
+            return await GetContestsOfJudgeAsync(judge.UserId);
+        }
+
+        public async Task<IList<JudgeContestDTO>> GetContestsOfJudgeAsync(Guid judgeUserId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            var suffix = $":judge:{judgeUserId}";
+
+            var configs = await configRepo.Entities
+                .Where(c =>
+                    c.Scope == "contest" &&
+                    c.DeletedAt == null &&
+                    c.Key.StartsWith("contest:") &&
+                    c.Key.EndsWith(suffix))
+                .ToListAsync();
+
+            var result = new List<JudgeContestDTO>();
+
+            foreach (var c in configs)
+            {
+                var contestId = ExtractContestIdFromKey(c.Key, judgeUserId);
+                if (contestId != Guid.Empty)
+                {
+                    result.Add(new JudgeContestDTO { ContestId = contestId });
+                }
+            }
+
+            return result;
+        }
+
+        private static Guid ExtractJudgeIdFromKey(string key)
+        {
+            var lastColon = key.LastIndexOf(':');
+            if (lastColon < 0 || lastColon == key.Length - 1) return Guid.Empty;
+
+            var part = key[(lastColon + 1)..];
+            return Guid.TryParse(part, out var id) ? id : Guid.Empty;
+        }
+
+        private static Guid ExtractContestIdFromKey(string key, Guid judgeUserId)
+        {
+            var suffix = $":judge:{judgeUserId}";
+            if (!key.StartsWith("contest:") || !key.EndsWith(suffix))
+                return Guid.Empty;
+
+            // remove "contest:" prefix and ":judge:{judgeUserId}" suffix
+            var withoutPrefix = key["contest:".Length..];
+            var index = withoutPrefix.IndexOf(":judge:", StringComparison.Ordinal);
+            if (index <= 0) return Guid.Empty;
+
+            var contestIdStr = withoutPrefix[..index];
+            return Guid.TryParse(contestIdStr, out var id) ? id : Guid.Empty;
+        }
+
     }
 }
