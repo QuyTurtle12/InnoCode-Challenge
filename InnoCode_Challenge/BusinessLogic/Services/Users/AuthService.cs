@@ -222,6 +222,70 @@ namespace BusinessLogic.Services.Users
         }
 
 
+        public Task<ProfileDTO> RegisterJudgeAsync(RegisterUserDTO dto)
+        {
+            return RegisterSystemUserAsync(dto, RoleConstants.Judge);
+        }
+
+        public Task<ProfileDTO> RegisterAdminAsync(RegisterUserDTO dto)
+        {
+            return RegisterSystemUserAsync(dto, RoleConstants.Admin);
+        }
+
+        public Task<ProfileDTO> RegisterStaffAsync(RegisterUserDTO dto)
+        {
+            return RegisterSystemUserAsync(dto, RoleConstants.Staff);
+        }
+
+        public Task<ProfileDTO> RegisterOrganizerAsync(RegisterUserDTO dto)
+        {
+            return RegisterSystemUserAsync(dto, RoleConstants.ContestOrganizer);
+        }
+
+        private async Task<ProfileDTO> RegisterSystemUserAsync(RegisterUserDTO dto, string role)
+        {
+            var email = NormalizeEmail(dto.Email);
+            var userRepo = _unitOfWork.GetRepository<User>();
+
+            var emailExists = await userRepo.Entities
+                .AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+
+            if (emailExists)
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    "EMAIL_EXISTS",
+                    "Email is already registered."
+                );
+
+            var now = DateTime.UtcNow;
+
+            var user = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = dto.FullName.Trim(),
+                Email = email,
+                PasswordHash = PasswordHasher.Hash(dto.Password),
+                Role = role,
+                Status = "Active", 
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            await userRepo.InsertAsync(user);
+            await _unitOfWork.SaveAsync();
+
+            return new ProfileDTO
+            {
+                UserId = user.UserId.ToString(),
+                Email = user.Email,
+                FullName = user.Fullname,
+                Role = user.Role,
+                Status = user.Status,
+                CreatedAt = user.CreatedAt
+            };
+        }
+
+
         private string GenerateJwtToken(User user)
         {
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
