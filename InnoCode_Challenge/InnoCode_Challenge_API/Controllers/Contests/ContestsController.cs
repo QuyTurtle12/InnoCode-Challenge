@@ -134,8 +134,12 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         {
             var created = await _contestService.CreateContestWithPolicyAsync(dto);
             return CreatedAtAction(nameof(CheckPublishReadiness), new { id = created.ContestId },
-                new BaseResponseModel<object>(StatusCodes.Status201Created, ResponseCodeConstants.SUCCESS, created,
-                    message: "Contest created (draft) and policies bootstrapped."));
+                new BaseResponseModel<object>(
+                    statusCode: StatusCodes.Status201Created,
+                    code: ResponseCodeConstants.SUCCESS,
+                    data: created,
+                    message: "Contest created (draft) and policies bootstrapped."
+                    ));
         }
 
         [HttpGet("{id}/check")]
@@ -143,16 +147,36 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         public async Task<IActionResult> CheckPublishReadiness(Guid id)
         {
             var check = await _contestService.CheckPublishReadinessAsync(id);
-            return Ok(new BaseResponseModel<object>(StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, check,
-                message: check.IsReady ? "Contest is ready to publish." : "Contest is NOT ready to publish."));
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: check,
+                        message: check.IsReady ? "Contest is ready to publish." : "Contest is NOT ready to publish."
+                    ));
         }
          
-        [HttpPost("{id}/publish")]
+        [HttpPut("{id}/publish")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> PublishIfReady(Guid id)
         {
             await _contestService.PublishIfReadyAsync(id);
-            return Ok(new BaseResponseModel(StatusCodes.Status200OK, ResponseCodeConstants.SUCCESS, "Contest published."));
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Contest published."
+                    ));
+        }
+
+        [HttpPut("{id}/cancel")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> CancelContest(Guid id)
+        {
+            await _contestService.CancelledContest(id);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Cancel contest successfully."
+                    ));
         }
 
     }

@@ -4,7 +4,10 @@
     {
         Draft = 0,
         Published = 1,
-        Cancelled = 2,
-        Closed = 3
+        RegistrationOpen = 2,
+        RegistrationClosed = 3,
+        Ongoing = 4,
+        Cancelled = 5,
+        Completed = 6
     }
 }

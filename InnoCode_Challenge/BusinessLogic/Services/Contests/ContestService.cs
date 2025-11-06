@@ -1,10 +1,8 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
-using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -26,67 +24,6 @@ namespace BusinessLogic.Services.Contests
             _mapper = mapper;
             _unitOfWork = uow;
         }
-
-        //public async Task CreateContestAsync(CreateContestDTO contestDTO)
-        //{
-        //    try
-        //    {
-        //        // Start a transaction
-        //        _unitOfWork.BeginTransaction();
-
-        //        // Validate input data
-        //        if (contestDTO == null)
-        //        {
-        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest data cannot be null.");
-        //        }
-
-        //        // Validate name
-        //        if (string.IsNullOrWhiteSpace(contestDTO.Name))
-        //        {
-        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest name is required.");
-        //        }
-
-        //        // Validate year
-        //        int currentYear = DateTime.UtcNow.Year;
-        //        if (contestDTO.Year < currentYear)
-        //        {
-        //            throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Contest year must be greater than {currentYear}.");
-        //        }
-
-        //        // Map DTO to entity
-        //        Contest newContest = _mapper.Map<Contest>(contestDTO);
-
-        //        // Set initial status to Draft
-        //        newContest.Status = ContestStatusEnum.Draft.ToString();
-
-        //        // Set creation timestamp
-        //        newContest.CreatedAt = DateTime.UtcNow;
-
-        //        // Get repository and insert new contest
-        //        IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-        //        await contestRepo.InsertAsync(newContest);
-
-        //        // Save changes to database
-        //        await _unitOfWork.SaveAsync();
-
-        //        // Commit the transaction
-        //        _unitOfWork.CommitTransaction();
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        // If something fails, roll back the transaction
-        //        _unitOfWork.RollBack();
-
-        //        if (ex is ErrorException)
-        //        {
-        //            throw;
-        //        }
-
-        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
-        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-        //            $"Error creating Contests: {ex.Message}");
-        //    }
-        //}
 
         public async Task DeleteContestAsync(Guid id)
         {
@@ -746,6 +683,54 @@ namespace BusinessLogic.Services.Contests
             string? value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
                                            .Select(c => c.Value).FirstOrDefaultAsync();
             return int.TryParse(value, out int n) ? n : null;
+        }
+
+        public async Task CancelledContest(Guid contestId)
+        {
+            try
+            {
+                // Start a transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get contest repository
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                // Fetch the contest
+                Contest? existingContest = await contestRepo
+                    .Entities
+                    .Where(c => c.ContestId == contestId && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                // Validate contest existence
+                if (existingContest == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+                }
+
+                // Update contest status to Cancelled
+                existingContest.Status = ContestStatusEnum.Cancelled.ToString();
+
+                // Save to database
+                await contestRepo.UpdateAsync(existingContest);
+                await _unitOfWork.SaveAsync();
+
+                // Commit the transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // If something fails, roll back the transaction
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating Contests: {ex.Message}");
+            }
         }
     }
 }

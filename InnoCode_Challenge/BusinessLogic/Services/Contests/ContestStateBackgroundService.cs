@@ -1,0 +1,173 @@
+﻿using DataAccess.Entities;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Repository.IRepositories;
+using Utility.Constant;
+using Utility.Enums;
+
+namespace BusinessLogic.Services.Contests
+{
+    public class ContestStateBackgroundService : BackgroundService
+    {
+        private readonly ILogger<ContestStateBackgroundService> _logger;
+        private readonly IServiceProvider _serviceProvider;
+        private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(5); // Check every 5 minutes
+
+        public ContestStateBackgroundService(
+            ILogger<ContestStateBackgroundService> logger,
+            IServiceProvider serviceProvider)
+        {
+            _logger = logger;
+            _serviceProvider = serviceProvider;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            _logger.LogInformation("Contest State Background Service is starting.");
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await UpdateContestStatesAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error occurred while updating contest states.");
+                }
+
+                // Wait for the next check interval
+                await Task.Delay(_checkInterval, stoppingToken);
+            }
+
+            _logger.LogInformation("Contest State Background Service is stopping.");
+        }
+
+        private async Task UpdateContestStatesAsync()
+        {
+            using IServiceScope scope = _serviceProvider.CreateScope();
+            IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
+
+            try
+            {
+                IGenericRepository<Contest> contestRepo = unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Config> configRepo = unitOfWork.GetRepository<Config>();
+                DateTime now = DateTime.UtcNow;
+
+                // Get all active contests that might need state updates
+                List<Contest> contests = await contestRepo.Entities
+                    .Where(c => c.DeletedAt == null
+                        && c.Status != ContestStatusEnum.Completed.ToString()
+                        && c.Status != ContestStatusEnum.Cancelled.ToString())
+                    .ToListAsync();
+
+                // Extract contest IDs for batch config loading
+                List<Guid> contestIds = contests.Select(c => c.ContestId).ToList();
+
+                // Load all registration configs in one query
+                List<Config> configs = await configRepo.Entities
+                    .Where(c => contestIds.Any(id => c.Key.Contains(id.ToString()))
+                        && (c.Key.Contains("registration_start") || c.Key.Contains("registration_end"))
+                        && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Create lookup for faster access
+                ILookup<string, Config> configLookup = configs.ToLookup(c => c.Key);
+
+                int updatedCount = 0;
+
+                // Iterate through contests and determine if status needs to be updated
+                foreach (Contest contest in contests)
+                {
+                    string? newStatus = await DetermineContestStatusAsync(contest, now, configLookup);
+
+                    if (newStatus != null && newStatus != contest.Status)
+                    {
+                        string oldStatus = contest.Status;
+                        contest.Status = newStatus;
+                        await contestRepo.UpdateAsync(contest);
+                        updatedCount++;
+
+                        _logger.LogInformation(
+                            "Contest {ContestId} ({ContestName}) status changed from {OldStatus} to {NewStatus}",
+                            contest.ContestId, contest.Name, oldStatus, newStatus);
+                    }
+                }
+
+                if (updatedCount > 0)
+                {
+                    await unitOfWork.SaveAsync();
+                    _logger.LogInformation("Updated {Count} contest(s) status.", updatedCount);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in UpdateContestStatesAsync");
+            }
+        }
+
+        private static Task<string?> DetermineContestStatusAsync(
+            Contest contest,
+            DateTime now,
+            ILookup<string, Config> configLookup)
+        {
+            // Skip if already in terminal state
+            if (contest.Status == ContestStatusEnum.Completed.ToString()
+                || contest.Status == ContestStatusEnum.Cancelled.ToString())
+                return Task.FromResult<string?>(null);
+
+            // Get registration dates from config
+            string regStartKey = ConfigKeys.ContestRegStart(contest.ContestId);
+            string regEndKey = ConfigKeys.ContestRegEnd(contest.ContestId);
+
+            Config? regStartConfig = configLookup[regStartKey].FirstOrDefault();
+            Config? regEndConfig = configLookup[regEndKey].FirstOrDefault();
+
+            DateTime? registrationStart = null;
+            DateTime? registrationEnd = null;
+
+            if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
+            {
+                registrationStart = regStart;
+            }
+
+            if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
+            {
+                registrationEnd = regEnd;
+            }
+
+            // Priority 1: Check if contest has ended (terminal state)
+            if (contest.End.HasValue && now >= contest.End.Value)
+            {
+                return Task.FromResult<string?>(ContestStatusEnum.Completed.ToString());
+            }
+
+            // Priority 2: Check if contest is ongoing
+            if (contest.Start.HasValue && now >= contest.Start.Value && now < contest.End)
+            {
+                return Task.FromResult<string?>(ContestStatusEnum.Ongoing.ToString());
+            }
+
+            // Priority 3: Check if registration has closed but contest hasn't started
+            if (registrationEnd.HasValue && now >= registrationEnd.Value
+                && contest.Start.HasValue && now < contest.Start.Value
+                && contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+            {
+                return Task.FromResult<string?>(ContestStatusEnum.RegistrationClosed.ToString());
+            }
+
+            // Priority 4: Check if registration is open
+            if (registrationStart.HasValue && registrationEnd.HasValue
+                && now >= registrationStart.Value && now < registrationEnd.Value
+                && contest.Status == ContestStatusEnum.Published.ToString())
+            {
+                return Task.FromResult<string?>(ContestStatusEnum.RegistrationOpen.ToString());
+            }
+
+            // No state change needed
+            return Task.FromResult<string?>(null);
+        }
+    }
+}

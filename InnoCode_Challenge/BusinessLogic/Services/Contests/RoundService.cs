@@ -64,6 +64,9 @@ namespace BusinessLogic.Services.Contests
                 // Map DTO to Entity
                 Round round = _mapper.Map<Round>(roundDTO);
 
+                // Assign contest ID
+                round.ContestId = contestId;
+
                 // Insert new round
                 await roundRepo.InsertAsync(round);
 

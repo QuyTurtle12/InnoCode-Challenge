@@ -51,6 +51,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddCloudinary(configuration);
             services.AddSignalR();
             services.AddServices();
+            services.AddBackgroundServices();
         }
         /// <summary>
         /// 
@@ -228,6 +229,12 @@ namespace InnoCode_Challenge_API.DI
                 options.KeepAliveInterval = TimeSpan.FromSeconds(10);
                 options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
             });
+        }
+
+        public static void AddBackgroundServices(this IServiceCollection services)
+        {
+            // Register all background services here
+            services.AddHostedService<ContestStateBackgroundService>();
         }
 
         public static void AddServices(this IServiceCollection services)

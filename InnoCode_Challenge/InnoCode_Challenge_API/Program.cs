@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using BusinessLogic.Hubs;
+using BusinessLogic.Services.Contests;
 using InnoCode_Challenge_API.DI;
 using InnoCode_Challenge_API.Middleware;
 using Microsoft.EntityFrameworkCore;
