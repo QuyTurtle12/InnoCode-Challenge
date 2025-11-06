@@ -270,6 +270,8 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ITeamInviteService, TeamInviteService>();
             services.AddScoped<ILeaderboardEntryService, LeaderboardEntryService>();
             services.AddScoped<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
+            services.AddScoped<IContestJudgeService, ContestJudgeService>();
+
         }
     }
 }
