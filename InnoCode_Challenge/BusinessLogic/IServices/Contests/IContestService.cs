@@ -14,5 +14,9 @@ namespace BusinessLogic.IServices.Contests
         Task<PublishReadinessDTO> CheckPublishReadinessAsync(Guid contestId);
         Task PublishIfReadyAsync(Guid contestId);
 
+        Task<IReadOnlyList<ContestPolicyDTO>> GetContestPoliciesAsync(Guid contestId);
+        Task SetContestPoliciesAsync(Guid contestId, IList<ContestPolicyDTO> policies);
+        Task DeleteContestPolicyAsync(Guid contestId, string policyKey);
+
     }
 }

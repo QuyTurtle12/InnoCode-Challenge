@@ -7,6 +7,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -18,13 +20,15 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly IHttpContextAccessor _httpContextAccessor;
         private const int MIN_YEAR = 10;
 
         // Constructor
-        public ContestService(IMapper mapper, IUOW uow)
+        public ContestService(IMapper mapper, IUOW uow, IHttpContextAccessor httpContextAccessor)
         {
             _mapper = mapper;
             _unitOfWork = uow;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         //public async Task CreateContestAsync(CreateContestDTO contestDTO)
@@ -453,10 +457,8 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Start a transaction
                 _unitOfWork.BeginTransaction();
 
-                // Validate input data
                 if (dto == null)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Payload cannot be null.");
 
@@ -479,7 +481,8 @@ namespace BusinessLogic.Services.Contests
                 if (dto.RegistrationEnd.HasValue && dto.Start.HasValue && dto.RegistrationEnd.Value >= dto.Start.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration end must be before contest start.");
 
-                // Get repositories
+                string currentUserId = GetCurrentUserIdOrThrow();
+
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
@@ -510,6 +513,7 @@ namespace BusinessLogic.Services.Contests
                 entity.Name = nameTrim;
                 entity.Status = ContestStatusEnum.Draft.ToString();
                 entity.CreatedAt = DateTime.UtcNow;
+                entity.CreatedBy = currentUserId;
 
                 // Insert the new contest
                 await contestRepo.InsertAsync(entity);
@@ -691,6 +695,122 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        public async Task<IReadOnlyList<ContestPolicyDTO>> GetContestPoliciesAsync(Guid contestId)
+        {
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            string prefix = ConfigKeys.ContestPolicyPrefix(contestId);
+
+            List<Config> configs = await configRepo.Entities
+                .Where(c => c.Scope == "contest"
+                            && c.DeletedAt == null
+                            && c.Key.StartsWith(prefix))
+                .ToListAsync();
+
+            var result = configs.Select(c => new ContestPolicyDTO
+            {
+                Key = ExtractPolicyKeyFromKey(contestId, c.Key),
+                Value = c.Value
+            }).ToList();
+
+            return result;
+        }
+
+        public async Task SetContestPoliciesAsync(Guid contestId, IList<ContestPolicyDTO> policies)
+        {
+            if (policies == null)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policies cannot be null.");
+
+            Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            foreach (var policy in policies)
+            {
+                if (string.IsNullOrWhiteSpace(policy.Key))
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policy key is required.");
+
+                string normalizedKey = policy.Key.Trim().ToLowerInvariant();
+                string configKey = ConfigKeys.ContestPolicy(contest.ContestId, normalizedKey);
+                string value = policy.Value?.Trim() ?? string.Empty;
+
+                await UpsertConfigAsync(configRepo, configKey, value);
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task DeleteContestPolicyAsync(Guid contestId, string policyKey)
+        {
+            if (string.IsNullOrWhiteSpace(policyKey))
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policy key is required.");
+
+            Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            string normalizedKey = policyKey.Trim().ToLowerInvariant();
+            string configKey = ConfigKeys.ContestPolicy(contest.ContestId, normalizedKey);
+
+            Config? existing = await configRepo.Entities
+                .FirstOrDefaultAsync(c => c.Key == configKey && c.Scope == "contest");
+
+            if (existing == null || existing.DeletedAt != null)
+                return;
+
+            existing.DeletedAt = DateTime.UtcNow;
+            existing.UpdatedAt = DateTime.UtcNow;
+            await configRepo.UpdateAsync(existing);
+            await _unitOfWork.SaveAsync();
+        }
+
+        private async Task<Contest> GetContestOwnedByCurrentOrganizer(Guid contestId)
+        {
+            string currentUserId = GetCurrentUserIdOrThrow();
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            if (!string.Equals(contest.CreatedBy, currentUserId, StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "Only the organizer who created this contest can modify policies.");
+
+            return contest;
+        }
+
+        private string GetCurrentUserIdOrThrow()
+        {
+            var user = _httpContextAccessor.HttpContext?.User;
+            if (user == null || !user.Identity?.IsAuthenticated == true)
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Sign in required.");
+
+            var id = user.FindFirstValue(ClaimTypes.NameIdentifier)
+                     ?? user.FindFirstValue(JwtRegisteredClaimNames.Sub);
+
+            if (string.IsNullOrWhiteSpace(id))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Invalid user context.");
+
+            return id;
+        }
+
+        // parse key "contest:{contestId}:policy:{policyKey}" → policyKey
+        private static string ExtractPolicyKeyFromKey(Guid contestId, string key)
+        {
+            string prefix = ConfigKeys.ContestPolicyPrefix(contestId);
+            return key.StartsWith(prefix, StringComparison.Ordinal)
+                ? key.Substring(prefix.Length)
+                : key;
+        }
 
         private static async Task UpsertConfigAsync(IGenericRepository<Config> repo, string key, string value)
         {

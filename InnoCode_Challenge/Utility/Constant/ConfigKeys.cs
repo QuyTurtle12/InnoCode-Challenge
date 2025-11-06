@@ -13,6 +13,8 @@
         public static string ContestRegEnd(Guid contestId) => $"contest:{contestId}:registration_end";
         public static string ContestRewards(Guid contestId) => $"contest:{contestId}:rewards_text";
         public static string ContestJudge(Guid contestId, Guid judgeUserId) => $"contest:{contestId}:judge:{judgeUserId}";
+        public static string ContestPolicy(Guid contestId, string policyKey) => $"contest:{contestId}:policy:{policyKey}";
+        public static string ContestPolicyPrefix(Guid contestId) => $"contest:{contestId}:policy:";
 
     }
 }
