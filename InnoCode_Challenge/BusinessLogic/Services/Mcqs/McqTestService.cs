@@ -4,6 +4,7 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.McqTestDTOs;
+using Repository.DTOs.McqTestQuestionDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.ExceptionCustom;
@@ -256,6 +257,79 @@ namespace BusinessLogic.Services.Mcqs
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating MCQ Test: {ex.Message}");
+            }
+        }
+
+        public async Task BulkUpdateQuestionWeightsAsync(Guid testId, BulkUpdateQuestionWeightsDTO dto)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate input
+                if (dto == null || dto.Questions == null || !dto.Questions.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Question weights list cannot be empty.");
+                }
+
+                // Get McqTestQuestion repository
+                IGenericRepository<McqTestQuestion> mcqTestQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+
+                // Get all question IDs from the request
+                List<Guid> questionIds = dto.Questions.Select(q => q.QuestionId).ToList();
+
+                // Fetch all existing test questions for this test and the specified questions
+                List<McqTestQuestion> existingTestQuestions = await mcqTestQuestionRepo.Entities
+                    .Where(tq => tq.TestId == testId && questionIds.Contains(tq.QuestionId))
+                    .ToListAsync();
+
+                // Check if all questions exist in the test
+                if (existingTestQuestions.Count != dto.Questions.Count)
+                {
+                    // Find which questions are missing
+                    List<Guid> foundQuestionIds = existingTestQuestions.Select(tq => tq.QuestionId).ToList();
+                    List<Guid> missingQuestionIds = questionIds.Except(foundQuestionIds).ToList();
+
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"The following question(s) not found in test {testId}: {string.Join(", ", missingQuestionIds)}");
+                }
+
+                // Create a dictionary for quick lookup of new weights
+                Dictionary<Guid, double> weightUpdates = dto.Questions.ToDictionary(q => q.QuestionId, q => q.Weight);
+
+                // Update each test question's weight
+                foreach (McqTestQuestion testQuestion in existingTestQuestions)
+                {
+                    if (weightUpdates.TryGetValue(testQuestion.QuestionId, out double newWeight))
+                    {
+                        testQuestion.Weight = newWeight;
+                        await mcqTestQuestionRepo.UpdateAsync(testQuestion);
+                    }
+                }
+
+                // Save all changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // If something fails, roll back the transaction
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error bulk updating question weights: {ex.Message}");
             }
         }
     }

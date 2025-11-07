@@ -1,4 +1,5 @@
 ﻿using Repository.DTOs.McqTestDTOs;
+using Repository.DTOs.McqTestQuestionDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Mcqs
@@ -10,5 +11,7 @@ namespace BusinessLogic.IServices.Mcqs
         Task UpdateMcqTestAsync(Guid id, UpdateMcqTestDTO mcqTestDTO);
         Task DeleteMcqTestAsync(Guid id);
         Task AddQuestionsToTest(Guid testId, Guid bankId);
+        Task BulkUpdateQuestionWeightsAsync(Guid testId, BulkUpdateQuestionWeightsDTO dto);
+
     }
 }

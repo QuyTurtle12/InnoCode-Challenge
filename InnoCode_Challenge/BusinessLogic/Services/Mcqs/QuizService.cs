@@ -282,7 +282,7 @@ namespace BusinessLogic.Services.Mcqs
         }
 
         public async Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(
-             int pageNumber = 1, int pageSize = 10, Guid? studentId = null, Guid? testId = null, bool IsForCurrentLoggedInStudent = false)
+             int pageNumber, int pageSize, Guid? studentId, Guid? testId, Guid roundId, bool IsForCurrentLoggedInStudent)
         {
             try
             {
@@ -290,6 +290,7 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Start with base query
                 IQueryable<McqAttempt> query = attemptRepo.Entities
+                    .Where(a => a.RoundId == roundId)
                     .Include(a => a.Student)
                         .ThenInclude(s => s.User)
                     .Include(a => a.Test);

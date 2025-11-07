@@ -1,4 +1,5 @@
-﻿using BusinessLogic.IServices.Mcqs;
+﻿using System.ComponentModel.DataAnnotations;
+using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.QuizDTOs;
@@ -93,20 +94,23 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <summary>
         /// Get paginated list of all quiz attempts
         /// </summary>
+        /// <param name="roundId">Required Round Id filter</param>
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
         /// <param name="studentId">Optional student ID filter</param>
         /// <param name="testId">Optional test ID filter</param>
         /// <returns>Paginated list of quiz attempt summaries</returns>
-        [HttpGet("attempts")]
+        [HttpGet("{roundId}/attempts")]
         public async Task<IActionResult> GetQuizAttempts(
+            [Required] Guid roundId,
             int pageNumber = 1,
             int pageSize = 10,
             Guid? studentId = null,
-            Guid? testId = null)
+            Guid? testId = null
+            )
         {
                 PaginatedList<QuizAttemptSummaryDTO> result = await _quizService.GetStudentQuizAttemptsAsync(
-                    pageNumber, pageSize, studentId, testId, false);
+                    pageNumber, pageSize, studentId, testId, roundId, false);
 
                 var paging = new
                 {
@@ -130,19 +134,21 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <summary>
         /// Get all quiz attempts for the current student
         /// </summary>
+        /// <param name="roundId">Required Round Id filter</param>
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
         /// <param name="testId">Optional test ID filter</param>
         /// <returns>Paginated list of quiz attempt summaries</returns>
-        [HttpGet("attempts/me")]
-        [Authorize(Roles = RoleConstants.Student)]
+        [HttpGet("{roundId}/attempts/me")]
+        [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> GetMyQuizAttempts(
+            [Required] Guid roundId,
             int pageNumber = 1,
             int pageSize = 10,
             Guid? testId = null)
         {
             PaginatedList<QuizAttemptSummaryDTO> result = await _quizService.GetStudentQuizAttemptsAsync(
-                pageNumber, pageSize, null, testId, true);
+                pageNumber, pageSize, null, testId, roundId, true);
 
             var paging = new
             {

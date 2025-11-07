@@ -3,6 +3,7 @@ using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.McqTestDTOs;
+using Repository.DTOs.McqTestQuestionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.PaginatedList;
@@ -71,6 +72,12 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         //            ));
         //}
 
+        /// <summary>
+        /// Add questions from question bank to Mcq Test
+        /// </summary>
+        /// <param name="testId"></param>
+        /// <param name="bankId"></param>
+        /// <returns></returns>
         [HttpPost("{testId}")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> AddQuestionToTest(Guid testId,[Required] Guid bankId)
@@ -80,6 +87,25 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
                         message: "Add questions to test successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Bulk update the weights of multiple questions in a test
+        /// </summary>
+        /// <param name="testId">The ID of the test</param>
+        /// <param name="dto">List of question IDs and their new weights</param>
+        [HttpPut("{testId}/questions/weights")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> BulkUpdateQuestionWeights(
+            Guid testId,
+            BulkUpdateQuestionWeightsDTO dto)
+        {
+            await _mcqTestService.BulkUpdateQuestionWeightsAsync(testId, dto);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: $"{dto.Questions.Count} question weight(s) updated successfully."
                     ));
         }
 

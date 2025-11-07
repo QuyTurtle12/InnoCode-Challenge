@@ -8,6 +8,6 @@ namespace BusinessLogic.IServices.Mcqs
         Task<PaginatedList<GetQuizDTO>> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId);
         Task<QuizResultDTO> ProcessQuizSubmissionAsync(CreateQuizSubmissionDTO quizSubmissionDTO);
         Task<QuizResultDTO> GetQuizAttemptResultAsync(Guid attemptId);
-        Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(int pageNumber, int pageSize, Guid? studentId, Guid? testId, bool IsForCurrentLoggedInStudent);
+        Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(int pageNumber, int pageSize, Guid? studentId, Guid? testId, Guid roundId, bool IsForCurrentLoggedInStudent = false);
     }
 }

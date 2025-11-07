@@ -573,36 +573,76 @@ namespace BusinessLogic.Services.Contests
 
             // Check for rounds
             if (contest.Rounds == null || !contest.Rounds.Any())
+            {
                 result.Missing.Add("No rounds created.");
+                result.IsReady = false;
+                return result;
+            }
 
-            // Check for problems in each round
-            List<Guid>? roundIds = contest.Rounds!
+            // Get rounds
+            List<Round> rounds = contest.Rounds
                 .Where(r => !r.DeletedAt.HasValue)
-                .Select(r => r.RoundId)
                 .ToList();
 
-            if (roundIds.Any())
+            // Check if there are any rounds
+            if (!rounds.Any())
             {
-                // Count problems associated with the contest's rounds
-                int problemCount = await problemRepo.Entities.CountAsync(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null);
+                result.Missing.Add("No rounds found.");
+                result.IsReady = false;
+                return result;
+            }
 
-                // Count MCQ tests associated with the contest's rounds
-                int mcqCount = await mcqTestRepo.Entities.CountAsync(t => roundIds.Contains(t.RoundId) && t.DeletedAt == null);
+            // Extract round IDs
+            List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
 
-                // Total problems
-                int totalProblemCount = problemCount + mcqCount;
+            // Check for problems and MCQ tests in each round
+            List<Problem> problems = await problemRepo.Entities
+                .Where(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null)
+                .ToListAsync();
 
-                // Validate that each round has at least one problem
-                if (totalProblemCount < roundIds.Count)
-                    result.Missing.Add("One or more rounds missing a problem.");
+            List<McqTest> mcqTests = await mcqTestRepo.Entities
+                .Where(t => roundIds.Contains(t.RoundId) && t.DeletedAt == null)
+                .Include(t => t.Round)
+                .Include(t => t.McqTestQuestions)
+                .ToListAsync();
+
+            // Create a lookup for rounds that have problems or MCQ tests
+            HashSet<Guid> roundsWithProblems = problems.Select(p => p.RoundId).ToHashSet();
+            HashSet<Guid> roundsWithMcqTests = mcqTests.Select(t => t.RoundId).ToHashSet();
+
+            // Combine both sets to find rounds with any content
+            HashSet<Guid> roundsWithContent = roundsWithProblems.Union(roundsWithMcqTests).ToHashSet();
+
+            // Find rounds without any problems or MCQ tests
+            List<Round> roundsWithoutContent = rounds
+                .Where(r => !roundsWithContent.Contains(r.RoundId))
+                .ToList();
+
+            // Report rounds missing content
+            if (roundsWithoutContent.Any())
+            {
+                string roundNames = string.Join(", ", roundsWithoutContent.Select(r => $"'{r.Name}'"));
+                result.Missing.Add($"Round(s) {roundNames} missing a problem or MCQ test.");
+            }
+
+            // Check if MCQ tests contain questions
+            List<McqTest> mcqTestsWithoutQuestions = mcqTests
+                .Where(t => !t.McqTestQuestions.Any())
+                .ToList();
+
+            if (mcqTestsWithoutQuestions.Any())
+            {
+                string testInfo = string.Join(", ", mcqTestsWithoutQuestions.Select(t =>
+                    $"'{t.Name ?? "Unnamed"}' in round '{t.Round.Name}'"));
+                result.Missing.Add($"MCQ test(s) {testInfo} have no questions.");
             }
 
             // Check registration window configuration
             string? regStart = await configRepo.Entities
-                .Where(c => c.Key == $"contest:{contestId}:registration_start" && c.DeletedAt == null)
+                .Where(c => c.Key == ConfigKeys.ContestRegStart(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
             string? regEnd = await configRepo.Entities
-                .Where(c => c.Key == $"contest:{contestId}:registration_end" && c.DeletedAt == null)
+                .Where(c => c.Key == ConfigKeys.ContestRegEnd(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
             // Validate registration window presence
