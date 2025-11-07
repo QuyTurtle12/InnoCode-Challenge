@@ -24,43 +24,9 @@ namespace BusinessLogic.Services.Mcqs
             _mapper = mapper;
         }
 
-        public async Task CreateTestQuestionAsync(CreateMcqTestQuestionDTO createTestQuestionDTO)
+        public Task CreateTestQuestionAsync(Guid testId, Guid bankId)
         {
-            try
-            {
-                // Begin a new transaction
-                _unitOfWork.BeginTransaction();
-
-                // Map DTO to entity
-                McqTestQuestion testQuestion = _mapper.Map<McqTestQuestion>(createTestQuestionDTO);
-
-                // Get Mcq Test Question repository
-                IGenericRepository<McqTestQuestion> McqTestRepo = _unitOfWork.GetRepository<McqTestQuestion>();
-
-                // Insert new test question
-                await McqTestRepo.InsertAsync(testQuestion);
-
-                // Save changes
-                await _unitOfWork.SaveAsync();
-
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-                
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-                
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                     $"Error creating Rounds: {ex.Message}"
-                );
-            }
+            throw new NotImplementedException();
         }
 
         public async Task DeleteTestQuestionAsync(Guid id)

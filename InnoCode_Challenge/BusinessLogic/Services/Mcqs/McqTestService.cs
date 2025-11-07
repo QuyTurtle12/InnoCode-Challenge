@@ -2,6 +2,7 @@
 using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.McqTestDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -14,12 +15,77 @@ namespace BusinessLogic.Services.Mcqs
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private const double DEFAULT_WEIGHT = 1.0;
 
         // Constructor
         public McqTestService(IMapper mapper, IUOW uow)
         {
             _mapper = mapper;
             _unitOfWork = uow;
+        }
+
+        public async Task AddQuestionsToTest(Guid testId, Guid bankId)
+        {
+            try
+            {
+                // Get Bank repository
+                IGenericRepository<Bank> bankRepo = _unitOfWork.GetRepository<Bank>();
+
+                // Get Mcq Test Question repository
+                IGenericRepository<McqTestQuestion> mcqTestQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+
+                // Retrieve all questions from the specified bank
+                Bank? bank = await bankRepo.Entities
+                    .Where(b => b.BankId == bankId)
+                    .Include(b => b.McqQuestions)
+                    .FirstOrDefaultAsync();
+
+                // Validate bank exists
+                if (bank == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Bank with ID {bankId} not found.");
+                }
+
+                // Validate bank has questions
+                if (bank.McqQuestions == null || !bank.McqQuestions.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Bank {bankId} has no questions to add to the test.");
+                }
+
+                // Create McqTestQuestion entries for each question in the bank with sequential ordering
+                List<McqTestQuestion> testQuestions = bank.McqQuestions
+                    .Select((question, index) => new McqTestQuestion
+                    {
+                        TestId = testId,
+                        QuestionId = question.QuestionId,
+                        Weight = DEFAULT_WEIGHT,
+                        OrderIndex = index + 1
+                    })
+                    .ToList();
+
+                // Insert all test questions
+                await mcqTestQuestionRepo.InsertRangeAsync(testQuestions);
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+            }
+            catch (Exception ex)
+            {
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                     $"Error creating test questions: {ex.Message}"
+                );
+            }
         }
 
         public async Task CreateMcqTestAsync(Guid roundId, CreateMcqTestDTO mcqTestDTO)

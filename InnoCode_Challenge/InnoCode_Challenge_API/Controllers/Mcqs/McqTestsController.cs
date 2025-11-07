@@ -1,4 +1,6 @@
-﻿using BusinessLogic.IServices.Mcqs;
+﻿using System.ComponentModel.DataAnnotations;
+using BusinessLogic.IServices.Mcqs;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.McqTestDTOs;
 using Repository.ResponseModel;
@@ -13,11 +15,11 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
     {
         private readonly IMcqTestService _mcqTestService;
 
-        //// Constructor
-        //public McqTestsController(IMcqTestService mcqTestService)
-        //{
-        //    _mcqTestService = mcqTestService;
-        //}
+        // Constructor
+        public McqTestsController(IMcqTestService mcqTestService)
+        {
+            _mcqTestService = mcqTestService;
+        }
 
         ///// <summary>
         ///// Get paginated list of Mcq Tests with optional filtering by id and roundId
@@ -52,20 +54,32 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         //            ));
         //}
 
-        /// <summary>
-        /// Create a new Mcq Test for a specific round
-        /// </summary>
-        /// <param name="roundId"></param>
-        /// <param name="mcqTestDTO"></param>
-        /// <returns></returns>
-        [HttpPost("{roundId}")]
-        public async Task<IActionResult> CreateMcqTest(Guid roundId, CreateMcqTestDTO mcqTestDTO)
+        ///// <summary>
+        ///// Create a new Mcq Test for a specific round
+        ///// </summary>
+        ///// <param name="roundId"></param>
+        ///// <param name="mcqTestDTO"></param>
+        ///// <returns></returns>
+        //[HttpPost("{roundId}")]
+        //public async Task<IActionResult> CreateMcqTest(Guid roundId, CreateMcqTestDTO mcqTestDTO)
+        //{
+        //    await _mcqTestService.CreateMcqTestAsync(roundId, mcqTestDTO);
+        //    return Ok(new BaseResponseModel(
+        //                statusCode: StatusCodes.Status201Created,
+        //                code: ResponseCodeConstants.SUCCESS,
+        //                message: "Create Mcq Test successfully."
+        //            ));
+        //}
+
+        [HttpPost("{testId}")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> AddQuestionToTest(Guid testId,[Required] Guid bankId)
         {
-            await _mcqTestService.CreateMcqTestAsync(roundId, mcqTestDTO);
+            await _mcqTestService.AddQuestionsToTest(testId, bankId);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
-                        message: "Create Mcq Test successfully."
+                        message: "Add questions to test successfully."
                     ));
         }
 
