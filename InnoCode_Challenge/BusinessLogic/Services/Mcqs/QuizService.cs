@@ -4,6 +4,7 @@ using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
@@ -169,6 +170,10 @@ namespace BusinessLogic.Services.Mcqs
                 // Get test name
                 string testName = mcqTest.Name ?? "Unknown Test";
 
+                // Get user full name
+                string? userFullName = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
+                    ?? "Unknown User";
+
                 // Create result DTO
                 QuizResultDTO result = new QuizResultDTO
                 {
@@ -176,6 +181,7 @@ namespace BusinessLogic.Services.Mcqs
                     TestId = quizSubmissionDTO.TestId,
                     TestName = testName,
                     StudentId = studentId,
+                    StudentName = userFullName,
                     SubmittedAt = DateTime.UtcNow,
                     TotalQuestions = totalQuestions,
                     CorrectAnswers = correctAnswers,
@@ -210,7 +216,12 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // Get the MCQ attempt
                 IGenericRepository<McqAttempt> attemptRepo = _unitOfWork.GetRepository<McqAttempt>();
-                McqAttempt? attempt = await attemptRepo.GetByIdAsync(attemptId);
+                McqAttempt? attempt = await attemptRepo
+                    .Entities
+                    .Where(a => a.AttemptId == attemptId)
+                    .Include(a => a.Student)
+                        .ThenInclude(a => a.User)
+                    .FirstOrDefaultAsync();
 
                 if (attempt == null)
                 {
@@ -258,6 +269,7 @@ namespace BusinessLogic.Services.Mcqs
                     AttemptId = attemptId,
                     TestId = attempt.TestId,
                     StudentId = attempt.StudentId,
+                    StudentName = attempt.Student?.User?.Fullname ?? "Unknown Student",
                     SubmittedAt = attempt.End ?? attempt.Start,
                     TotalQuestions = totalQuestions,
                     CorrectAnswers = correctAnswers,
@@ -426,6 +438,89 @@ namespace BusinessLogic.Services.Mcqs
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving quiz attempts: {ex.Message}");
+            }
+        }
+
+        public async Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(
+            int pageNumber, int pageSize, Guid? bankId, string? nameSearch)
+        {
+            try
+            {
+                // Validate pageNumber and pageSize
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Get repository for Bank entities
+                IGenericRepository<Bank> bankRepo = _unitOfWork.GetRepository<Bank>();
+
+                // Build query
+                IQueryable<Bank> query = bankRepo.Entities
+                    .Where(b => b.DeletedAt == null)
+                    .Include(b => b.McqQuestions.Where(q => q.DeletedAt == null))
+                        .ThenInclude(q => q.McqOptions);
+
+                // Apply filters
+                if (bankId.HasValue)
+                {
+                    query = query.Where(b => b.BankId == bankId.Value);
+                }
+
+                if (!string.IsNullOrEmpty(nameSearch))
+                {
+                    query = query.Where(b => b.Name.Contains(nameSearch));
+                }
+
+                // Order by creation date
+                query = query.OrderByDescending(b => b.CreatedAt);
+
+                // Get paginated results
+                PaginatedList<Bank> resultQuery = await bankRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+                // Map to DTOs
+                IReadOnlyCollection<GetBankWithQuestionsDTO> result = resultQuery.Items.Select(bank => new GetBankWithQuestionsDTO
+                {
+                    BankId = bank.BankId,
+                    Name = bank.Name,
+                    CreatedAt = bank.CreatedAt,
+                    TotalQuestions = bank.McqQuestions.Count,
+                    Questions = bank.McqQuestions
+                        .Select(q => new BankQuestionDTO
+                        {
+                            QuestionId = q.QuestionId,
+                            Text = q.Text,
+                            CreatedAt = q.CreatedAt,
+                            Options = q.McqOptions
+                                .Select(o => new BankOptionDTO
+                                {
+                                    OptionId = o.OptionId,
+                                    Text = o.Text,
+                                    IsCorrect = o.IsCorrect
+                                })
+                                .ToList()
+                        })
+                        .ToList()
+                }).ToList();
+
+                return new PaginatedList<GetBankWithQuestionsDTO>(
+                    result,
+                    resultQuery.TotalCount,
+                    resultQuery.PageNumber,
+                    resultQuery.PageSize);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving banks: {ex.Message}");
             }
         }
     }

@@ -6,6 +6,7 @@
         public Guid TestId { get; set; }
         public string TestName { get; set; } = string.Empty;
         public Guid StudentId { get; set; }
+        public string StudentName { get; set; } = string.Empty;
         public DateTime SubmittedAt { get; set; }
         public int TotalQuestions { get; set; }
         public int CorrectAnswers { get; set; }

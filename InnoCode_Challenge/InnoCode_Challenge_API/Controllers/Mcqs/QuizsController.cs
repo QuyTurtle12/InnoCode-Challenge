@@ -168,5 +168,41 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                 message: "Quiz attempts retrieved successfully."
             ));
         }
+
+        /// <summary>
+        /// Gets paginated list of banks with their questions and options
+        /// </summary>
+        /// <param name="pageNumber">Page number (default: 1)</param>
+        /// <param name="pageSize">Page size (default: 10)</param>
+        /// <param name="bankId">Optional bank ID filter</param>
+        /// <param name="nameSearch">Optional name search filter</param>
+        /// <returns>Paginated list of banks</returns>
+        [HttpGet("banks")]
+        public async Task<IActionResult> GetPaginatedBanks(
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? bankId = null,
+            string? nameSearch = null)
+        {
+            var result = await _quizService.GetPaginatedBanksAsync(pageNumber, pageSize, bankId, nameSearch);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result.Items,
+                additionalData: paging,
+                message: "Banks retrieved successfully."
+            ));
+        }
     }
 }

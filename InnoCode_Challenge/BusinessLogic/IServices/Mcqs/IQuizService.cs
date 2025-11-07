@@ -1,4 +1,5 @@
-﻿using Repository.DTOs.QuizDTOs;
+﻿using Repository.DTOs.BankDTOs;
+using Repository.DTOs.QuizDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Mcqs
@@ -9,5 +10,6 @@ namespace BusinessLogic.IServices.Mcqs
         Task<QuizResultDTO> ProcessQuizSubmissionAsync(CreateQuizSubmissionDTO quizSubmissionDTO);
         Task<QuizResultDTO> GetQuizAttemptResultAsync(Guid attemptId);
         Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(int pageNumber, int pageSize, Guid? studentId, Guid? testId, Guid roundId, bool IsForCurrentLoggedInStudent = false);
+        Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(int pageNumber, int pageSize, Guid? bankId, string? nameSearch);
     }
 }
