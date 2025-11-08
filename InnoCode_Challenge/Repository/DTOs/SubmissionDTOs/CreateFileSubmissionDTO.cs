@@ -1,7 +1,7 @@
 ﻿namespace Repository.DTOs.SubmissionDTOs
 {
-    public class CreateFileSubmissionDTO : BaseSubmissionDTO
+    public class CreateFileSubmissionDTO
     {
-
+        
     }
 }

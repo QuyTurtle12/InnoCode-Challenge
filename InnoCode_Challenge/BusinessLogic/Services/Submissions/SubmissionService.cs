@@ -253,6 +253,9 @@ namespace BusinessLogic.Services.Submissions
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
+                // Check round deadline before allowing submission
+                await ValidateRoundDeadlineAsync(roundId, "submit code");
+
                 // Get problem info
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
 
@@ -267,7 +270,7 @@ namespace BusinessLogic.Services.Submissions
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
-                        $"The round \"{roundId}\" does not have problem");
+                        $"The round {roundId} does not have problem");
                 }
 
                 // Get test cases for the problem
@@ -494,10 +497,32 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<Guid> CreateFileSubmissionAsync(CreateFileSubmissionDTO submissionDTO, IFormFile file)
+        public async Task<Guid> CreateFileSubmissionAsync(Guid roundId, IFormFile file)
         {
             try
             {
+
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get the round ID from the problem
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                string? roundName = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId)
+                    .Select(r => r.Name)
+                    .FirstOrDefaultAsync();
+
+                // Validate problem existence
+                if (string.IsNullOrWhiteSpace(roundName))
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Round with ID {roundId} not found");
+                }
+
+                // Check round deadline before allowing submission
+                await ValidateRoundDeadlineAsync(roundId, "submit file");
+
                 // Validate file
                 if (file == null || file.Length == 0)
                 {
@@ -516,9 +541,6 @@ namespace BusinessLogic.Services.Submissions
                         $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
                 }
 
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
-
                 // Get user ID from JWT token
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
                     ?? throw new ErrorException(StatusCodes.Status400BadRequest,
@@ -531,14 +553,23 @@ namespace BusinessLogic.Services.Submissions
                     .Select(s => s.StudentId)
                     .FirstOrDefault();
 
+                // Get team ID for the student in this round's contest
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                Guid teamId = await teamRepo.Entities
+                    .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId) &&
+                                !t.DeletedAt.HasValue &&
+                                t.Contest.Rounds.Any(r => r.RoundId == roundId))
+                    .Select(t => t.TeamId)
+                    .FirstOrDefaultAsync();
+
                 // Get the submission repository
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
                 // Get previous submissions for this problem by this student's team
                 List<Submission>? previousSubmissions = await _unitOfWork.GetRepository<Submission>()
                     .Entities
-                    .Where(s => s.ProblemId == submissionDTO.ProblemId &&
-                                s.TeamId == submissionDTO.TeamId &&
+                    .Where(s => s.Problem.Round.RoundId == roundId &&
+                                s.TeamId == teamId &&
                                 !s.DeletedAt.HasValue)
                     .ToListAsync();
 
@@ -558,12 +589,18 @@ namespace BusinessLogic.Services.Submissions
                 // Upload file to Cloudinary
                 string fileUrl = await _cloudinaryService.UploadFileAsync(file, "submissions");
 
+                // Get problem ID of the round
+                Guid problemId = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId)
+                    .Select(r => r.Problem!.ProblemId)
+                    .FirstOrDefaultAsync();
+
                 // Create a submission record
                 Submission submission = new Submission
                 {
                     SubmissionId = Guid.NewGuid(),
-                    TeamId = submissionDTO.TeamId,
-                    ProblemId = submissionDTO.ProblemId,
+                    TeamId = teamId,
+                    ProblemId = problemId,
                     SubmittedByStudentId = studentId,
                     JudgedBy = "pending",
                     Status = SubmissionStatusEnum.Pending.ToString(),
@@ -867,6 +904,41 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error add score to leaderboard: {ex.Message}");
+            }
+        }
+
+        private async Task ValidateRoundDeadlineAsync(Guid roundId, string operationName)
+        {
+            // Get the round with start and end times
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                .FirstOrDefaultAsync();
+
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Round with ID {roundId} not found");
+            }
+
+            // Get current UTC time
+            DateTime now = DateTime.UtcNow;
+
+            // Check if round has started
+            if (now < round.Start)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot {operationName}. Round \"{round.Name}\" has not started yet. Start time: {round.Start:yyyy-MM-dd HH:mm:ss} UTC");
+            }
+
+            // Check if round has ended
+            if (now > round.End)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot {operationName}. Round \"{round.Name}\" has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
             }
         }
     }

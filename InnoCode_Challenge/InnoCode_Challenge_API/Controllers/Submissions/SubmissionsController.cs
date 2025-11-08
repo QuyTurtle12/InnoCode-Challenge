@@ -118,7 +118,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// <param name="submissionDTO"></param>
         /// <returns></returns>
         [HttpPost("{roundId}/evaluations")]
-        [Authorize(Roles = RoleConstants.Student)]
+        [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
         {
             JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
@@ -135,24 +135,18 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// Upload a file submission (.zip or .rar)
         /// </summary>
         /// <param name="file">The file to upload (.zip or .rar)</param>
-        /// <param name="teamId">Team ID</param>
-        /// <param name="problemId">Problem ID</param>
+        /// <param name="roundId">Round ID</param>
         /// <returns>Submission ID</returns>
         [HttpPost]
-        [Route("files")]
+        [Route("{roundId}/files")]
         [Consumes("multipart/form-data")]
+        [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> UploadFileSubmission(
-            IFormFile file,
-            [FromForm] Guid teamId,
-            [FromForm] Guid problemId)
+            [FromRoute] Guid roundId,
+            IFormFile file
+            )
         {
-            var submissionDTO = new CreateFileSubmissionDTO
-            {
-                TeamId = teamId,
-                ProblemId = problemId
-            };
-
-            Guid submissionId = await _submissionService.CreateFileSubmissionAsync(submissionDTO, file);
+            Guid submissionId = await _submissionService.CreateFileSubmissionAsync(roundId, file);
 
             return Ok(new BaseResponseModel<Guid>(
                 statusCode: StatusCodes.Status201Created,

@@ -26,12 +26,15 @@ namespace BusinessLogic.Services.Mcqs
             _leaderboardService = leaderboardService;
         }
 
-        public async Task<QuizResultDTO> ProcessQuizSubmissionAsync(CreateQuizSubmissionDTO quizSubmissionDTO)
+        public async Task<QuizResultDTO> ProcessQuizSubmissionAsync(Guid roundId, CreateQuizSubmissionDTO quizSubmissionDTO)
         {
             try
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
+
+                // Check round deadline before allowing quiz submission
+                await ValidateRoundDeadlineAsync(roundId, "submit quiz");
 
                 // Get user ID from JWT token
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -47,13 +50,16 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Verify the MCQ test exists
                 IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
-                McqTest? mcqTest = await mcqTestRepo.GetByIdAsync(quizSubmissionDTO.TestId);
+                McqTest? mcqTest = await mcqTestRepo
+                    .Entities
+                    .Where(t => t.RoundId == roundId)
+                    .FirstOrDefaultAsync();
 
                 if (mcqTest == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
-                        $"MCQ Test with ID {quizSubmissionDTO.TestId} not found");
+                        $"MCQ Test in Round ID {roundId} not found");
                 }
 
                 // Create MCQ attempt record
@@ -61,7 +67,7 @@ namespace BusinessLogic.Services.Mcqs
                 McqAttempt attempt = new McqAttempt
                 {
                     AttemptId = Guid.NewGuid(),
-                    TestId = quizSubmissionDTO.TestId,
+                    TestId = mcqTest.TestId,
                     RoundId = mcqTest.RoundId,
                     StudentId = studentId,
                     Start = DateTime.UtcNow,
@@ -108,7 +114,7 @@ namespace BusinessLogic.Services.Mcqs
                     {
                         ItemId = Guid.NewGuid(),
                         AttemptId = attempt.AttemptId,
-                        TestId = quizSubmissionDTO.TestId,
+                        TestId = mcqTest.TestId,
                         QuestionId = answer.QuestionId,
                         SelectedOptionId = answer.SelectedOptionId,
                         Correct = isCorrect
@@ -178,7 +184,7 @@ namespace BusinessLogic.Services.Mcqs
                 QuizResultDTO result = new QuizResultDTO
                 {
                     AttemptId = attempt.AttemptId,
-                    TestId = quizSubmissionDTO.TestId,
+                    TestId = mcqTest.TestId,
                     TestName = testName,
                     StudentId = studentId,
                     StudentName = userFullName,
@@ -541,6 +547,40 @@ namespace BusinessLogic.Services.Mcqs
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving banks: {ex.Message}");
+            }
+        }
+
+        private async Task ValidateRoundDeadlineAsync(Guid roundId, string operationName)
+        {
+            // Get the round details
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                .FirstOrDefaultAsync();
+
+            // Validate round existence
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Round with ID {roundId} not found");
+            }
+
+            // Check if current time is within the round's start and end time
+            DateTime now = DateTime.UtcNow;
+
+            if (now < round.Start)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot {operationName}. Round \"{round.Name}\" has not started yet. Start time: {round.Start:yyyy-MM-dd HH:mm:ss} UTC");
+            }
+
+            if (now > round.End)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot {operationName}. Round \"{round.Name}\" has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
             }
         }
     }

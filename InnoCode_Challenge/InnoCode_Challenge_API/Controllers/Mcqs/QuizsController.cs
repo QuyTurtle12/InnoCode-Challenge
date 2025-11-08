@@ -57,13 +57,14 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <summary>
         /// Submit answers for a quiz
         /// </summary>
+        /// <param name="roundId">Round Id</param>
         /// <param name="submissionDTO">Quiz submission data</param>
         /// <returns>Quiz results</returns>
-        [HttpPost("submit")]
-        [Authorize(Roles = RoleConstants.Student)]
-        public async Task<IActionResult> SubmitQuiz(CreateQuizSubmissionDTO submissionDTO)
+        [HttpPost("{roundId}/submit")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> SubmitQuiz(Guid roundId, CreateQuizSubmissionDTO submissionDTO)
         {
-            QuizResultDTO result = await _quizService.ProcessQuizSubmissionAsync(submissionDTO);
+            QuizResultDTO result = await _quizService.ProcessQuizSubmissionAsync(roundId, submissionDTO);
 
             return Ok(new BaseResponseModel<QuizResultDTO>(
                 statusCode: StatusCodes.Status200OK,

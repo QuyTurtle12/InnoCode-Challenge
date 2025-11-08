@@ -12,7 +12,7 @@ namespace BusinessLogic.IServices.Submissions
         Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO SubmissionDTO);
         Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO);
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
-        Task<Guid> CreateFileSubmissionAsync(CreateFileSubmissionDTO submissionDTO, IFormFile file);
+        Task<Guid> CreateFileSubmissionAsync(Guid roundId, IFormFile file);
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);
         Task<bool> UpdateFileSubmissionScoreAsync(Guid submissionId, double score, string feedback);
         Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid roundId);
