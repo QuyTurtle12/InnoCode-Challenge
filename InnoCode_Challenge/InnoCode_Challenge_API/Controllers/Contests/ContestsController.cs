@@ -221,6 +221,44 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         message: "Cancel contest successfully."
                     ));
         }
+        [HttpGet("{id}/policies")]
+        public async Task<IActionResult> GetPolicies(Guid id)
+        {
+            var policies = await _contestService.GetContestPoliciesAsync(id);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: policies,
+                message: "Policies retrieved successfully."
+            ));
+        }
+
+        [HttpPut("{id}/policies")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> SetPolicies(Guid id, [FromBody] IList<ContestPolicyDTO> policies)
+        {
+            await _contestService.SetContestPoliciesAsync(id, policies);
+
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Policies updated successfully."
+            ));
+        }
+
+        [HttpDelete("{id}/policies/{policyKey}")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> DeletePolicy(Guid id, string policyKey)
+        {
+            await _contestService.DeleteContestPolicyAsync(id, policyKey);
+
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Policy deleted successfully."
+            ));
+        }
 
     }
 }

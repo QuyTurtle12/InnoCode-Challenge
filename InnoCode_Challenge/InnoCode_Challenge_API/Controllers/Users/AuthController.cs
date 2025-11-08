@@ -33,6 +33,67 @@ namespace InnoCode_Challenge_API.Controllers.Users
             return Ok(response);
         }
 
+        [HttpPost("register-judge")]
+        public async Task<IActionResult> RegisterJudge([FromBody] RegisterUserDTO dto)
+        {
+            var result = await _authService.RegisterJudgeAsync(dto);
+
+            var response = new BaseResponseModel<ProfileDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Judge registered successfully."
+            );
+
+            return Ok(response);
+        }
+
+        [HttpPost("register-admin")]
+        public async Task<IActionResult> RegisterAdmin([FromBody] RegisterUserDTO dto)
+        {
+            var result = await _authService.RegisterAdminAsync(dto);
+
+            var response = new BaseResponseModel<ProfileDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Admin registered successfully."
+            );
+
+            return Ok(response);
+        }
+
+        [HttpPost("register-staff")]
+        public async Task<IActionResult> RegisterStaff([FromBody] RegisterUserDTO dto)
+        {
+            var result = await _authService.RegisterStaffAsync(dto);
+
+            var response = new BaseResponseModel<ProfileDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Staff registered successfully."
+            );
+
+            return Ok(response);
+        }
+
+        [HttpPost("register-organizer")]
+        public async Task<IActionResult> RegisterOrganizer([FromBody] RegisterUserDTO dto)
+        {
+            var result = await _authService.RegisterOrganizerAsync(dto);
+
+            var response = new BaseResponseModel<ProfileDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Organizer registered successfully."
+            );
+
+            return Ok(response);
+        }
+
+
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDTO dto)
         {

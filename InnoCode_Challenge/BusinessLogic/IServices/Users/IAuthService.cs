@@ -17,5 +17,10 @@ namespace BusinessLogic.IServices.Users
         Task<string?> GenerateResetPasswordTokenAsync(string email);
         Task ResetPasswordAsync(ResetPasswordDTO dto);
 
+        Task<ProfileDTO> RegisterJudgeAsync(RegisterUserDTO dto);
+        Task<ProfileDTO> RegisterAdminAsync(RegisterUserDTO dto);
+        Task<ProfileDTO> RegisterStaffAsync(RegisterUserDTO dto);
+        Task<ProfileDTO> RegisterOrganizerAsync(RegisterUserDTO dto);
+
     }
 }
