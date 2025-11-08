@@ -6,7 +6,7 @@
 
         public Guid TestcaseId { get; set; }
 
-        public int? Weight { get; set; }
+        public double? Weight { get; set; }
 
         public string? Note { get; set; }
 

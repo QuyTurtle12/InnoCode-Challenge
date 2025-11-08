@@ -7,6 +7,7 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.SubmissionArtifactDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
@@ -85,7 +86,8 @@ namespace BusinessLogic.Services.Submissions
         //    }
         //}
 
-        public async Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? problemIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName)
+        public async Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(
+            int pageNumber, int pageSize, Guid? idSearch, Guid? roundIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName)
         {
             try
             {
@@ -108,9 +110,9 @@ namespace BusinessLogic.Services.Submissions
                     query = query.Where(s => s.SubmissionId == idSearch.Value);
                 }
                 
-                if (problemIdSearch.HasValue)
+                if (roundIdSearch.HasValue)
                 {
-                    query = query.Where(s => s.ProblemId == problemIdSearch.Value);
+                    query = query.Where(s => s.Problem.RoundId == roundIdSearch.Value);
                 }
 
                 if (SubmittedByStudentId.HasValue)
@@ -133,45 +135,46 @@ namespace BusinessLogic.Services.Submissions
 
                 // Get paginated data
                 PaginatedList<Submission> resultQuery = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
-                
+
+                // Fetch all relevant submissions for attempt number calculation
+                List<Guid> problemIds = resultQuery.Items.Select(x => x.ProblemId).Distinct().ToList();
+
+                var allRelevantSubmissions = await submissionRepo.Entities
+                    .Where(s => problemIds.Contains(s.ProblemId))
+                    .Select(s => new { s.SubmissionId, s.ProblemId, s.SubmittedByStudentId, s.CreatedAt })
+                    .ToListAsync();
+
+                // Calculate attempt numbers
+                var attemptLookup = allRelevantSubmissions
+                    .GroupBy(s => new { s.ProblemId, s.SubmittedByStudentId })
+                    .SelectMany(g => g.OrderBy(x => x.CreatedAt)
+                                      .Select((sub, index) => new { sub.SubmissionId, AttemptNumber = index + 1 }))
+                    .ToDictionary(x => x.SubmissionId, x => x.AttemptNumber);
+
                 // Map to DTOs
                 IReadOnlyCollection<GetSubmissionDTO> result = resultQuery.Items.Select(item =>
                 {
+                    // Map basic submission info
                     GetSubmissionDTO? dto = _mapper.Map<GetSubmissionDTO>(item);
 
                     dto.TeamName = item.Team?.Name ?? string.Empty;
 
                     dto.SubmittedByStudentName = item.SubmittedByStudent?.User.Fullname!;
 
-                    dto.submissionAttemptNumber = submissionRepo.Entities
-                        .Where(s => s.ProblemId == item.ProblemId &&
-                                    s.SubmittedByStudentId == item.SubmittedByStudentId &&
-                                    s.CreatedAt <= item.CreatedAt)
-                        .Count();
+                    dto.submissionAttemptNumber = attemptLookup.TryGetValue(item.SubmissionId, out int attemptNum)
+                        ? attemptNum
+                        : 1;
 
                     // Map Testcase details to DTOs
-                    if (item.SubmissionDetails != null)
-                    {
-                        dto.Details = item.SubmissionDetails
-                            .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
-                            .ToList();
-                    }
-                    else
-                    {
-                        dto.Details = null;
-                    }
+                    dto.Details = item.SubmissionDetails?
+                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .ToList();
 
                     // Map Artifacts to DTOs
-                    if (item.SubmissionArtifacts != null)
-                    {
-                        dto.Artifacts = item.SubmissionArtifacts
-                            .Select(artifact => _mapper.Map<Repository.DTOs.SubmissionArtifactDTOs.GetSubmissionArtifactDTO>(artifact))
-                            .ToList();
-                    }
-                    else
-                    {
-                        dto.Artifacts = null;
-                    }
+                    dto.Artifacts = item.SubmissionArtifacts?
+                        .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
+                        .ToList();
+
                     return dto; 
                 }).ToList();
                 
@@ -243,7 +246,7 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(CreateSubmissionDTO submissionDTO)
+        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO)
         {
             try
             {
@@ -252,26 +255,32 @@ namespace BusinessLogic.Services.Submissions
 
                 // Get problem info
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                Problem? problem = await problemRepo.GetByIdAsync(submissionDTO.ProblemId);
 
+                // Find the problem by RoundId
+                Problem? problem = await problemRepo
+                    .Entities
+                    .Where(p => p.RoundId == roundId)
+                    .FirstOrDefaultAsync();
+
+                // If no problem found, throw error
                 if (problem == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
-                        $"Problem with ID {submissionDTO.ProblemId} not found");
+                        $"The round \"{roundId}\" does not have problem");
                 }
 
                 // Get test cases for the problem
                 IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
                 IList<TestCase> testCases = testCaseRepo.Entities
-                    .Where(tc => tc.ProblemId == submissionDTO.ProblemId)
+                    .Where(tc => tc.ProblemId == problem.ProblemId)
                     .ToList();
 
                 if (!testCases.Any())
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
-                        $"No test cases found for problem {submissionDTO.ProblemId}");
+                        $"No test cases found for problem {problem.ProblemId}");
                 }
 
                 // Get user ID from JWT token
@@ -286,19 +295,33 @@ namespace BusinessLogic.Services.Submissions
                     .Select(s => s.StudentId)
                     .FirstOrDefault();
 
+                // Get contest ID from round ID
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                Guid contestId = contestRepo.Entities
+                    .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
+                    .Select(c => c.ContestId)
+                    .FirstOrDefault();
+
+                // Get team ID for the student in this contest
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                Guid teamId = teamRepo.Entities
+                    .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId) && !t.DeletedAt.HasValue && t.ContestId == contestId)
+                    .Select(t => t.TeamId)
+                    .FirstOrDefault();
+
                 // Count previous submissions for this problem by this student's team
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 int previousSubmissionsCount = await submissionRepo.Entities
-                    .Where(s => s.ProblemId == submissionDTO.ProblemId &&
-                           s.TeamId == submissionDTO.TeamId)
+                    .Where(s => s.ProblemId == problem.ProblemId &&
+                           s.TeamId == teamId)
                     .CountAsync();
 
                 // Create a submission record
                 Submission submission = new Submission
                 {
                     SubmissionId = Guid.NewGuid(),
-                    TeamId = submissionDTO.TeamId,
-                    ProblemId = submissionDTO.ProblemId,
+                    TeamId = teamId,
+                    ProblemId = problem.ProblemId,
                     SubmittedByStudentId = studentId,
                     JudgedBy = "system",
                     Status = SubmissionStatusEnum.Pending.ToString(),
@@ -420,7 +443,7 @@ namespace BusinessLogic.Services.Submissions
                         DetailsId = Guid.NewGuid(),
                         SubmissionId = submissionId,
                         TestcaseId = testCaseGuid,
-                        Weight = (int)testCase.Weight,
+                        Weight = testCase.Weight,
                         Note = caseResult.Status,
                         RuntimeMs = SubmissionHelpers.ParseRuntime(caseResult.Time),
                         MemoryKb = caseResult.MemoryKb,
@@ -431,7 +454,7 @@ namespace BusinessLogic.Services.Submissions
                 }
 
                 // Calculate raw score (before penalty)
-                double rawScore = totalWeight > 0 ? (passedWeight / totalWeight) * 100 : 0;
+                double rawScore = totalWeight > 0 ? passedWeight : 0;
 
                 // Apply penalty if applicable
                 double finalScore = rawScore;
@@ -446,11 +469,11 @@ namespace BusinessLogic.Services.Submissions
 
                 // Update submission
                 submission.Status = SubmissionStatusEnum.Finished.ToString();
-                submission.Score = finalScore;
+                submission.Score = Math.Round(finalScore, 2);
 
                 // Update result summary
-                result.Summary.rawScore = rawScore;
-                result.Summary.penaltyScore = finalScore;
+                result.Summary.rawScore = Math.Round(rawScore, 2);
+                result.Summary.penaltyScore = Math.Round(finalScore, 2);
 
                 // Update the submission record
                 await submissionRepo.UpdateAsync(submission);
@@ -667,7 +690,7 @@ namespace BusinessLogic.Services.Submissions
                     DetailsId = Guid.NewGuid(),
                     SubmissionId = submissionId,
                     TestcaseId = null, // No test case for file submissions
-                    Weight = (int)score,
+                    Weight = score,
                     Note = feedback,
                     RuntimeMs = 0, // Not applicable
                     MemoryKb = 0, // Not applicable
@@ -711,7 +734,7 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid problemId)
+        public async Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid roundId)
         {
             try
             {
@@ -732,7 +755,7 @@ namespace BusinessLogic.Services.Submissions
 
                 // Find the latest submission for the problem by the logged-in student
                 Submission? submission = await submissionRepo.Entities
-                   .Where(s => s.ProblemId == problemId &&
+                   .Where(s => s.Problem.RoundId == roundId &&
                                 s.SubmittedByStudentId == studentId)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
@@ -742,11 +765,18 @@ namespace BusinessLogic.Services.Submissions
                     .OrderByDescending(s => s.CreatedAt)
                     .FirstOrDefaultAsync();
 
+                // Get round name for error message
+                string roundName = await _unitOfWork.GetRepository<Round>()
+                    .Entities
+                    .Where(r => r.RoundId == roundId)
+                    .Select(r => r.Name)
+                    .FirstOrDefaultAsync() ?? "Unknown";
+
                 // Validate submission existence
                 if (submission == null) {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
-                        $"No submission found for problem {problemId} by the logged-in student");
+                        $"No submission found for round \"{roundName}\" by the logged-in student");
                 }
 
                 // Map to DTO
@@ -754,7 +784,7 @@ namespace BusinessLogic.Services.Submissions
                 dto.TeamName = submission.Team?.Name ?? string.Empty;
                 dto.SubmittedByStudentName = submission.SubmittedByStudent?.User.Fullname ?? string.Empty;
                 dto.submissionAttemptNumber = await submissionRepo.Entities
-                    .Where(s => s.ProblemId == problemId &&
+                    .Where(s => s.Problem.RoundId == roundId &&
                                 s.SubmittedByStudentId == submission.SubmittedByStudentId &&
                                 s.CreatedAt <= submission.CreatedAt)
                     .CountAsync();

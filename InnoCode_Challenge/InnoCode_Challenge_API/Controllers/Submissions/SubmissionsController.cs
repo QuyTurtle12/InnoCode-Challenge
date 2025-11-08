@@ -28,23 +28,23 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
-        /// <param name="problemIdSearch"></param>
+        /// <param name="roundId"></param>
         /// <param name="studentId"></param>
         /// <param name="teamName"></param>
         /// <param name="studentName"></param>
         /// <returns></returns>
-        [HttpGet]
+        [HttpGet("{roundId}")]
         public async Task<IActionResult> GetSubmissions(
+            Guid roundId,
             int pageNumber = 1, 
             int pageSize = 10,
             Guid? idSearch = null,
-            Guid? problemIdSearch = null,
             Guid? studentId = null,
             string? teamName = null,
             string? studentName = null)
         {
             PaginatedList<GetSubmissionDTO> result = await _submissionService.GetPaginatedSubmissionAsync(
-                pageNumber, pageSize, idSearch, problemIdSearch, studentId, teamName, studentName);
+                pageNumber, pageSize, idSearch, roundId, studentId, teamName, studentName);
 
             var paging = new
             {
@@ -65,11 +65,11 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                     ));
         }
 
-        [HttpGet("{problemId}/result/me")]
+        [HttpGet("{roundId}/result/me")]
         [Authorize(Roles = RoleConstants.Student)]
-        public async Task<IActionResult> GetSubmissionResultOfLoggedInStudent([Required] Guid problemId)
+        public async Task<IActionResult> GetSubmissionResultOfLoggedInStudent([Required] Guid roundId)
         {
-            GetSubmissionDTO result = await _submissionService.GetSubmissionResultOfLoggedInStudentAsync(problemId);
+            GetSubmissionDTO result = await _submissionService.GetSubmissionResultOfLoggedInStudentAsync(roundId);
             return Ok(new BaseResponseModel<GetSubmissionDTO>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
@@ -114,13 +114,14 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         /// <summary>
         /// Evaluates a submission using the Judge0 service
         /// </summary>
+        /// <param name="roundId"></param>
         /// <param name="submissionDTO"></param>
         /// <returns></returns>
-        [HttpPost("evaluations")]
+        [HttpPost("{roundId}/evaluations")]
         [Authorize(Roles = RoleConstants.Student)]
-        public async Task<IActionResult> EvaluateSubmission(CreateSubmissionDTO submissionDTO)
+        public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
         {
-            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(submissionDTO);
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
 
             return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
                 statusCode: StatusCodes.Status200OK,
