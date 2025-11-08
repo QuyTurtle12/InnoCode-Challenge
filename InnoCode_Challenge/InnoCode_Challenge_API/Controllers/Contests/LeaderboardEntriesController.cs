@@ -84,6 +84,26 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         //}
 
         /// <summary>
+        /// Toggle leaderboard freeze status (Ongoing -> Paused or Paused -> Ongoing)
+        /// </summary>
+        /// <param name="contestId">Contest ID</param>
+        /// <returns></returns>
+        [HttpPut("contests/{contestId}/toggle-freeze")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> ToggleLeaderboardFreeze(
+            Guid contestId)
+        {
+            string newStatus = await _leaderboardService.ToggleLeaderboardFreezeAsync(contestId);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: newStatus,
+                message: $"Contest status changed to {newStatus} successfully."
+            ));
+        }
+
+        /// <summary>
         /// Update team score (staff/admin only)
         /// </summary>
         [HttpPut("contests/{contestId}/teams/{teamId}/score")]

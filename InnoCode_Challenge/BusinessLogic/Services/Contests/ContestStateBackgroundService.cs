@@ -54,6 +54,7 @@ namespace BusinessLogic.Services.Contests
             {
                 IGenericRepository<Contest> contestRepo = unitOfWork.GetRepository<Contest>();
                 IGenericRepository<Config> configRepo = unitOfWork.GetRepository<Config>();
+                IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
                 DateTime now = DateTime.UtcNow;
 
                 // Get all active contests that might need state updates
@@ -61,6 +62,7 @@ namespace BusinessLogic.Services.Contests
                     .Where(c => c.DeletedAt == null
                         && c.Status != ContestStatusEnum.Completed.ToString()
                         && c.Status != ContestStatusEnum.Cancelled.ToString())
+                    .Include(c => c.Rounds) // Include rounds to check their status
                     .ToListAsync();
 
                 // Extract contest IDs for batch config loading
@@ -113,9 +115,10 @@ namespace BusinessLogic.Services.Contests
             DateTime now,
             ILookup<string, Config> configLookup)
         {
-            // Skip if already in terminal state
+            // Skip if already in terminal state OR manually paused
             if (contest.Status == ContestStatusEnum.Completed.ToString()
-                || contest.Status == ContestStatusEnum.Cancelled.ToString())
+                || contest.Status == ContestStatusEnum.Cancelled.ToString()
+                || contest.Status == ContestStatusEnum.Paused.ToString())
                 return Task.FromResult<string?>(null);
 
             // Get registration dates from config
@@ -138,19 +141,31 @@ namespace BusinessLogic.Services.Contests
                 registrationEnd = regEnd;
             }
 
-            // Priority 1: Check if contest has ended (terminal state)
+            // Check if all rounds have ended (for leaderboard freeze)
+            bool allRoundsEnded = contest.Rounds != null
+                && contest.Rounds.Any()
+                && contest.Rounds.Where(r => !r.DeletedAt.HasValue).All(r => now >= r.End);
+
+            // Priority 1: Check if all rounds have ended (leaderboard should be frozen)
+            if (allRoundsEnded && contest.Status == ContestStatusEnum.Ongoing.ToString())
+            {
+                // Mark as completed when all rounds are finished
+                return Task.FromResult<string?>(ContestStatusEnum.Completed.ToString());
+            }
+
+            // Priority 2: Check if contest has ended (terminal state)
             if (contest.End.HasValue && now >= contest.End.Value)
             {
                 return Task.FromResult<string?>(ContestStatusEnum.Completed.ToString());
             }
 
-            // Priority 2: Check if contest is ongoing
+            // Priority 3: Check if contest is ongoing
             if (contest.Start.HasValue && now >= contest.Start.Value && now < contest.End)
             {
                 return Task.FromResult<string?>(ContestStatusEnum.Ongoing.ToString());
             }
 
-            // Priority 3: Check if registration has closed but contest hasn't started
+            // Priority 4: Check if registration has closed but contest hasn't started
             if (registrationEnd.HasValue && now >= registrationEnd.Value
                 && contest.Start.HasValue && now < contest.Start.Value
                 && contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
@@ -158,7 +173,7 @@ namespace BusinessLogic.Services.Contests
                 return Task.FromResult<string?>(ContestStatusEnum.RegistrationClosed.ToString());
             }
 
-            // Priority 4: Check if registration is open
+            // Priority 5: Check if registration is open
             if (registrationStart.HasValue && registrationEnd.HasValue
                 && now >= registrationStart.Value && now < registrationEnd.Value
                 && contest.Status == ContestStatusEnum.Published.ToString())

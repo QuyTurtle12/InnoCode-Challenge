@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.LeaderboardEntryDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -25,85 +26,137 @@ namespace BusinessLogic.Services.Contests
             _realtimeService = realtimeService;
         }
 
-        //public async Task CreateLeaderboardAsync(CreateLeaderboardEntryDTO leaderboardDTO)
-        //{
-        //    try
-        //    {
-        //        // Start a new transaction
-        //        _unitOfWork.BeginTransaction();
+        public async Task<string> ToggleLeaderboardFreezeAsync(Guid contestId)
+        {
+            try
+            {
+                // Start a new transaction
+                _unitOfWork.BeginTransaction();
 
-        //        // Generate a shared info for all entries
-        //        Guid sharedGuid = Guid.NewGuid();
-        //        DateTime sharedSnapshot = DateTime.UtcNow;
+                // Get the repository for Contest
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
-        //        // Initialize count based on the number of teams for ranking assignment
-        //        int count = leaderboardDTO.teamIdList.Count;
+                // Retrieve the contest
+                Contest? contest = await contestRepo.Entities
+                    .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
 
-        //        // Get the repository for LeaderboardEntry
-        //        IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                // Validate contest existence
+                if (contest == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Contest with ID {contestId} not found");
+                }
 
-        //        List<TeamInfo> teamInfoList = new List<TeamInfo>();
+                string newStatus;
 
-        //        foreach (Guid item in leaderboardDTO.teamIdList)
-        //        {
-        //            // Map DTO to entity
-        //            LeaderboardEntry leaderboardEntry = _mapper.Map<LeaderboardEntry>(leaderboardDTO);
+                // Toggle between Ongoing and Paused
+                if (contest.Status == ContestStatusEnum.Ongoing.ToString())
+                {
+                    // Freeze: Ongoing -> Paused
+                    newStatus = ContestStatusEnum.Paused.ToString();
+                }
+                else if (contest.Status == ContestStatusEnum.Paused.ToString())
+                {
+                    DateTime now = DateTime.UtcNow;
 
-        //            // Assign the shared GUID
-        //            leaderboardEntry.EntryId = sharedGuid;
+                    // Verify contest time is still valid
+                    if (contest.End.HasValue && now >= contest.End.Value)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Cannot unfreeze. Contest has already ended.");
+                    }
 
-        //            // Assign the TeamId from the list
-        //            leaderboardEntry.TeamId = item;
+                    if (contest.Start.HasValue && now < contest.Start.Value)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Cannot unfreeze. Contest has not started yet.");
+                    }
 
-        //            // Assign Rank based on the current count
-        //            leaderboardEntry.Rank = count;
+                    // Unfreeze: Paused -> Ongoing
+                    newStatus = ContestStatusEnum.Ongoing.ToString();
+                }
+                else
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Cannot toggle freeze status. Contest must be Ongoing or Paused. Current status: {contest.Status}");
+                }
 
-        //            // Initialize Score to 0
-        //            leaderboardEntry.Score = 0;
+                // Update contest status
+                contest.Status = newStatus;
+                await contestRepo.UpdateAsync(contest);
+                await _unitOfWork.SaveAsync();
 
-        //            // Set the SnapshotAt to current time
-        //            leaderboardEntry.SnapshotAt = sharedSnapshot;
+                // Commit the transaction
+                _unitOfWork.CommitTransaction();
 
-        //            // Insert the new Leaderboard Entry
-        //            await leaderboardRepo.InsertAsync(leaderboardEntry);
+                return newStatus;
+            }
+            catch (Exception ex)
+            {
+                // If something fails, roll back the transaction
+                _unitOfWork.RollBack();
 
-        //            // Collect team info for broadcasting
-        //            teamInfoList.Add(new TeamInfo
-        //            {
-        //                TeamId = item,
-        //                TeamName = string.Empty, // Will be populated from database
-        //                Rank = count,
-        //                Score = 0
-        //            });
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
 
-        //            // Decrement the count for the next rank
-        //            count--;
-        //        }
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error toggling leaderboard freeze status: {ex.Message}");
+            }
+        }
 
-        //        // Save changes to the database
-        //        await _unitOfWork.SaveAsync();
+        private async Task ValidateLeaderboardNotFrozenAsync(Guid contestId)
+        {
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
-        //        // Commit the transaction if all operations succeed
-        //        _unitOfWork.CommitTransaction();
+            // Get contest
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
 
-        //        // Broadcast real-time update
-        //        await _realtimeService.BroadcastLeaderboardUpdateAsync(leaderboardDTO.ContestId, teamInfoList);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        // If something fails, roll back the transaction
-        //        _unitOfWork.RollBack();
+            // Validate contest existence
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Contest with ID {contestId} not found");
+            }
 
-        //        if (ex is ErrorException)
-        //        {
-        //            throw;
-        //        }
+            // Check if contest is completed
+            if (contest.Status == ContestStatusEnum.Completed.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot update leaderboard. Contest {contest.Name} has been completed and the leaderboard is frozen.");
+            }
 
-        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
-        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-        //            $"Error creating Leaderboard: {ex.Message}");
-        //    }
-        //}
+            // Check if contest is paused
+            if (contest.Status == ContestStatusEnum.Paused.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot update leaderboard. Contest {contest.Name} is paused and the leaderboard is temporarily frozen.");
+            }
+
+            // Verify all rounds have ended
+            DateTime now = DateTime.UtcNow;
+            List<Round> rounds = await roundRepo.Entities
+                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
+                .ToListAsync();
+
+            if (rounds.Any() && rounds.All(r => now >= r.End))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot update leaderboard. All rounds in contest {contest.Name} have ended and the leaderboard is frozen.");
+            }
+        }
 
         public async Task AddTeamToLeaderboardAsync(Guid contestId, Guid teamId)
         {
@@ -372,6 +425,9 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                // Validate that the leaderboard is not frozen
+                await ValidateLeaderboardNotFrozenAsync(contestId);
+
                 _unitOfWork.BeginTransaction();
 
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
@@ -418,6 +474,9 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                // Validate that the leaderboard is not frozen
+                await ValidateLeaderboardNotFrozenAsync(contestId);
+
                 // Get the repository for LeaderboardEntry
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
