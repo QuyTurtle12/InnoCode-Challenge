@@ -382,6 +382,21 @@ namespace BusinessLogic.Services.Mcqs
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
                 }
 
+                // Create a deterministic seed based on student ID + round ID
+                int shuffleSeed = 0;
+
+                // Get the logged-in student's user ID
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (userId != null)
+                {
+                    // Combine userId and roundId to create a unique seed
+                    shuffleSeed = userId.GetHashCode() ^ roundId.GetHashCode();
+                }
+
+                // Create Random with the seed
+                Random random = new Random(shuffleSeed);
+
                 // Get repository for Round entities
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
@@ -404,19 +419,24 @@ namespace BusinessLogic.Services.Mcqs
                         McqTests = item.McqTests.Select(t => new McqTestDTO
                         {
                             TestId = t.TestId,
-                            Questions = t.McqTestQuestions.Select(q => new QuestionDTO
-                            {
-                                QuestionId = q.QuestionId,
-                                Weight = q.Weight,
-                                OrderIndex = q.OrderIndex,
-                                Text = q.Question?.Text ?? string.Empty,
-                                Options = q.Question?.McqOptions.Select(o => new OptionDTO
-                                {
-                                    OptionId = o.OptionId,
-                                    Text = o.Text,
-                                    IsCorrect = o.IsCorrect
-                                }).ToList() ?? new List<OptionDTO>()
-                            }).ToList()
+                            Questions = t.McqTestQuestions
+                                    .OrderBy(x => random.Next()) // shuffle question per student
+                                    .Select((q, index) => new QuestionDTO
+                                    {
+                                        QuestionId = q.QuestionId,
+                                        Weight = q.Weight,
+                                        OrderIndex = index + 1,
+                                        Text = q.Question?.Text ?? string.Empty,
+                                        Options = q.Question?.McqOptions
+                                            .OrderBy(x => random.Next()) // shuffle options
+                                            .Select(o => new OptionDTO
+                                            {
+                                                OptionId = o.OptionId,
+                                                Text = o.Text,
+                                                IsCorrect = o.IsCorrect
+                                            })
+                                            .ToList() ?? new List<OptionDTO>()
+                                    }).ToList()
                         }).ToList()
                     };
                     return quizDTO;
