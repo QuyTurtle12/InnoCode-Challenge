@@ -2,5 +2,6 @@
 {
     public class UpdateRoundDTO : BaseRoundDTO
     {
+        public int? TimeLimitSeconds { get; set; }
     }
 }

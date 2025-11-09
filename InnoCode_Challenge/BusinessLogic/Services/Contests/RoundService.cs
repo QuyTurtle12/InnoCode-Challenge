@@ -60,7 +60,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
-
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
                 // Map DTO to Entity
                 Round round = _mapper.Map<Round>(roundDTO);
 
@@ -75,6 +75,16 @@ namespace BusinessLogic.Services.Contests
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
+
+                //store time limit in config if provided
+                if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
+                {
+                    await UpsertConfigAsync(
+                        configRepo,
+                        ConfigKeys.RoundTimeLimitSeconds(round.RoundId),
+                        roundDTO.TimeLimitSeconds.Value.ToString()
+                    );
+                }
 
                 // Handle problem type specific logic
                 switch (roundDTO.ProblemType)
@@ -257,6 +267,20 @@ namespace BusinessLogic.Services.Contests
                 // Change to paginated list to facilitate mapping process
                 PaginatedList<Round> resultQuery = await roundRepo.GetPagingAsync(query, pageNumber, pageSize);
 
+                //load time limit configs for these rounds
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                List<Guid> roundIds = resultQuery.Items.Select(r => r.RoundId).ToList();
+
+                List<string> tlKeys = roundIds
+                    .Select(ConfigKeys.RoundTimeLimitSeconds)
+                    .ToList();
+
+                List<Config> tlConfigs = await configRepo.Entities
+                    .Where(c => tlKeys.Contains(c.Key) && c.Scope == "contest" && c.DeletedAt == null)
+                    .ToListAsync();
+
+                var tlLookup = tlConfigs.ToLookup(c => c.Key);
+
                 // Map entities to DTOs
                 IReadOnlyCollection<GetRoundDTO> result = resultQuery.Items.Select(item =>
                 {
@@ -264,6 +288,14 @@ namespace BusinessLogic.Services.Contests
 
                     roundDTO.ContestName = item.Contest?.Name ?? "N/A";
                     roundDTO.RoundName = item.Name;
+
+                    // map time limit from config
+                    string tlKey = ConfigKeys.RoundTimeLimitSeconds(item.RoundId);
+                    Config? tlConfig = tlLookup[tlKey].FirstOrDefault();
+                    if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
+                    {
+                        roundDTO.TimeLimitSeconds = secs;
+                    }
 
                     // Map problem information if exists
                     if (item.Problem != null && item.Problem.DeletedAt == null)
@@ -333,7 +365,7 @@ namespace BusinessLogic.Services.Contests
                 }
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
-
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
                 // Find round by id
                 Round? round = await roundRepo.GetByIdAsync(id);
 
@@ -351,6 +383,16 @@ namespace BusinessLogic.Services.Contests
 
                 // Update the round
                 await roundRepo.UpdateAsync(round);
+
+                // update time limit config (if need)
+                if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
+                {
+                    await UpsertConfigAsync(
+                        configRepo,
+                        ConfigKeys.RoundTimeLimitSeconds(round.RoundId),
+                        roundDTO.TimeLimitSeconds.Value.ToString()
+                    );
+                }
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
@@ -426,5 +468,57 @@ namespace BusinessLogic.Services.Contests
                 }
             }
         }
+        public async Task<int?> GetRoundTimeLimitSecondsAsync(Guid roundId)
+        {
+            if (roundId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round ID cannot be empty.");
+
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            Round? round = await roundRepo.Entities
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            string key = ConfigKeys.RoundTimeLimitSeconds(roundId);
+
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.Scope == "contest" && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            return int.TryParse(value, out int secs) ? secs : (int?)null;
+        }
+
+        private static async Task UpsertConfigAsync(IGenericRepository<Config> repo, string key, string value)
+        {
+            Config? existing = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+
+            if (existing == null)
+            {
+                await repo.InsertAsync(new Config
+                {
+                    Key = key,
+                    Value = value,
+                    Scope = "contest",
+                    UpdatedAt = DateTime.UtcNow,
+                    DeletedAt = null
+                });
+            }
+            else
+            {
+                existing.Value = value;
+                existing.UpdatedAt = DateTime.UtcNow;
+                existing.DeletedAt = null;
+                await repo.UpdateAsync(existing);
+            }
+        }
+
+
     }
 }

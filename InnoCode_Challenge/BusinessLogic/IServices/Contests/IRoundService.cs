@@ -9,5 +9,7 @@ namespace BusinessLogic.IServices.Contests
         Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO);
         Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO);
         Task DeleteRoundAsync(Guid id);
+        Task<int?> GetRoundTimeLimitSecondsAsync(Guid roundId);
+
     }
 }
