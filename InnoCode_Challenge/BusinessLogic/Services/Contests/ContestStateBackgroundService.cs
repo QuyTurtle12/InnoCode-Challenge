@@ -32,6 +32,7 @@ namespace BusinessLogic.Services.Contests
                 try
                 {
                     await UpdateContestStatesAsync();
+                    await UpdateRoundStatesAsync();
                 }
                 catch (Exception ex)
                 {
@@ -47,11 +48,11 @@ namespace BusinessLogic.Services.Contests
 
         private async Task UpdateContestStatesAsync()
         {
-            using IServiceScope scope = _serviceProvider.CreateScope();
-            IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
-
             try
             {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
+
                 IGenericRepository<Contest> contestRepo = unitOfWork.GetRepository<Contest>();
                 IGenericRepository<Config> configRepo = unitOfWork.GetRepository<Config>();
                 IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
@@ -183,6 +184,72 @@ namespace BusinessLogic.Services.Contests
 
             // No state change needed
             return Task.FromResult<string?>(null);
+        }
+
+        private async Task UpdateRoundStatesAsync()
+        {
+            try
+            {
+                // Create a new scope to get scoped services
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
+                IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
+
+                DateTime now = DateTime.UtcNow;
+
+                // Get all active rounds (not deleted)
+                List<Round> rounds = await roundRepo.Entities
+                    .Where(r => r.DeletedAt == null)
+                    .ToListAsync();
+
+                int updatedCount = 0;
+
+                // Iterate through rounds and determine if status needs to be updated
+                foreach (Round round in rounds)
+                {
+                    string? newStatus = DetermineRoundStatus(round, now);
+
+                    if (newStatus != null && newStatus != round.Status)
+                    {
+                        string oldStatus = round.Status ?? "null";
+                        round.Status = newStatus;
+                        await roundRepo.UpdateAsync(round);
+                        updatedCount++;
+
+                        _logger.LogInformation(
+                            "Round {RoundId} ({RoundName}) status changed from {OldStatus} to {NewStatus}",
+                            round.RoundId, round.Name, oldStatus, newStatus);
+                    }
+                }
+
+                if (updatedCount > 0)
+                {
+                    await unitOfWork.SaveAsync();
+                    _logger.LogInformation("Updated {Count} round(s) status.", updatedCount);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in UpdateRoundStatesAsync");
+            }
+        }
+
+        private static string? DetermineRoundStatus(Round round, DateTime now)
+        {
+            // If round hasn't started yet or has already ended, return Closed
+            if (now < round.Start || now >= round.End)
+            {
+                return RoundStatusEnum.Closed.ToString();
+            }
+
+            // If current time is within the round's start and end time, return Opened
+            if (now >= round.Start && now < round.End)
+            {
+                return RoundStatusEnum.Opened.ToString();
+            }
+
+            // No status change needed
+            return null;
         }
     }
 }

@@ -8,6 +8,7 @@ using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -97,9 +98,10 @@ namespace BusinessLogic.Services.Mcqs
                         .Include(o => o.Question)
                         .FirstOrDefaultAsync();
 
+                    // Skip invalid options
                     if (option == null)
                     {
-                        continue; // Skip invalid options
+                        continue; 
                     }
 
                     // Check if the answer is correct
@@ -229,6 +231,7 @@ namespace BusinessLogic.Services.Mcqs
                         .ThenInclude(a => a.User)
                     .FirstOrDefaultAsync();
 
+                // Validate attempt existence
                 if (attempt == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
@@ -378,14 +381,16 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<PaginatedList<GetQuizDTO>> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId)
+        public async Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId)
         {
             try
             {
                 // Validate pageNumber and pageSize
                 if (pageNumber < 1 || pageSize < 1)
                 {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Page number and page size must be greater than or equal to 1.");
                 }
 
                 // Create a deterministic seed based on student ID + round ID
@@ -406,53 +411,85 @@ namespace BusinessLogic.Services.Mcqs
                 // Get repository for Round entities
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
-                IQueryable<Round> query = roundRepo.Entities
+                // Get the round with its MCQ test
+                Round? round = await roundRepo.Entities
                     .Where(r => r.RoundId == roundId)
-                    .Include(r => r.McqTests)
-                        .ThenInclude(t => t.McqTestQuestions)
+                    .Include(r => r.McqTest)
+                        .ThenInclude(t => t!.McqTestQuestions)
                             .ThenInclude(tq => tq.Question)
                                 .ThenInclude(q => q.McqOptions)
-                    .OrderByDescending(t => t.Name);
+                    .FirstOrDefaultAsync();
 
-                // Get paginated results
-                PaginatedList<Round> resultQuery = await roundRepo.GetPagingAsync(query, pageNumber, pageSize);
-
-                IReadOnlyCollection<GetQuizDTO> result = resultQuery.Items.Select(item =>
+                // Validate round existence
+                if (round == null)
                 {
-                    GetQuizDTO quizDTO = new GetQuizDTO
-                    {
-                        RoundId = item.RoundId,
-                        McqTests = item.McqTests.Select(t => new McqTestDTO
-                        {
-                            TestId = t.TestId,
-                            Questions = t.McqTestQuestions
-                                    .OrderBy(x => random.Next()) // shuffle question per student
-                                    .Select((q, index) => new QuestionDTO
-                                    {
-                                        QuestionId = q.QuestionId,
-                                        Weight = q.Weight,
-                                        OrderIndex = index + 1,
-                                        Text = q.Question?.Text ?? string.Empty,
-                                        Options = q.Question?.McqOptions
-                                            .OrderBy(x => random.Next()) // shuffle options
-                                            .Select(o => new OptionDTO
-                                            {
-                                                OptionId = o.OptionId,
-                                                Text = o.Text,
-                                                IsCorrect = o.IsCorrect
-                                            })
-                                            .ToList() ?? new List<OptionDTO>()
-                                    }).ToList()
-                        }).ToList()
-                    };
-                    return quizDTO;
-                }).ToList();
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Round with ID {roundId} not found");
+                }
 
-                return new PaginatedList<GetQuizDTO>(
-                    result,
-                    resultQuery.TotalCount,
-                    resultQuery.PageNumber,
-                    resultQuery.PageSize);
+                // Validate MCQ test existence
+                if (round.McqTest == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"MCQ Test not found for round {roundId}");
+                }
+
+                // Get all questions and shuffle them consistently
+                List<McqTestQuestion> allQuestions = round.McqTest.McqTestQuestions
+                    .ToList()
+                    .OrderBy(x => random.Next())
+                    .ToList();
+
+                // Get total count before pagination
+                int totalQuestions = allQuestions.Count;
+
+                // Apply pagination to shuffled questions
+                List<McqTestQuestion> paginatedQuestions = allQuestions
+                    .Skip((pageNumber - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                // Map to DTOs
+                List<QuestionDTO> questionDTOs = paginatedQuestions
+                    .Select((q, index) => new QuestionDTO
+                    {
+                        QuestionId = q.QuestionId,
+                        Weight = q.Weight,
+                        OrderIndex = ((pageNumber - 1) * pageSize) + index + 1, // Global order index
+                        Text = q.Question?.Text ?? string.Empty,
+                        Options = q.Question?.McqOptions
+                            .ToList()
+                            .OrderBy(x => random.Next()) // Shuffle options
+                            .Select(o => new OptionDTO
+                            {
+                                OptionId = o.OptionId,
+                                Text = o.Text,
+                                IsCorrect = o.IsCorrect
+                            })
+                            .ToList() ?? new List<OptionDTO>()
+                    })
+                    .ToList();
+
+                // Create the quiz DTO
+                GetQuizDTO quizDTO = new GetQuizDTO
+                {
+                    RoundId = round.RoundId,
+                    RoundName = round.Name,
+                    RoundStatus = round.Status ?? RoundStatusEnum.Closed.ToString(),
+                    McqTest = new McqTestDTO
+                    {
+                        TestId = round.McqTest.TestId,
+                        Questions = questionDTOs,
+                        TotalQuestions = totalQuestions,
+                        CurrentPage = pageNumber,
+                        PageSize = pageSize,
+                        TotalPages = (int)Math.Ceiling(totalQuestions / (double)pageSize)
+                    }
+                };
+
+                return quizDTO;
             }
             catch (Exception ex)
             {
@@ -463,7 +500,7 @@ namespace BusinessLogic.Services.Mcqs
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error retrieving quiz attempts: {ex.Message}");
+                    $"Error retrieving quiz: {ex.Message}");
             }
         }
 
@@ -573,14 +610,14 @@ namespace BusinessLogic.Services.Mcqs
             {
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
-                    $"Cannot {operationName}. Round \"{round.Name}\" has not started yet. Start time: {round.Start:yyyy-MM-dd HH:mm:ss} UTC");
+                    $"Cannot {operationName}. Round {round.Name} has not started yet. Start time: {round.Start:yyyy-MM-dd HH:mm:ss} UTC");
             }
 
             if (now > round.End)
             {
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
-                    $"Cannot {operationName}. Round \"{round.Name}\" has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
+                    $"Cannot {operationName}. Round {round.Name} has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
             }
         }
     }

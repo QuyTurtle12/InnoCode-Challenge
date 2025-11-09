@@ -19,6 +19,8 @@ public partial class Team
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? Status { get; set; }
+
     public virtual ICollection<Appeal> Appeals { get; set; } = new List<Appeal>();
 
     public virtual ICollection<Certificate> Certificates { get; set; } = new List<Certificate>();

@@ -21,36 +21,25 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get paginated quizzes by round ID
+        /// Get quiz (MCQ Test) by round ID with pagination
         /// </summary>
         /// <param name="roundId"></param>
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <returns></returns>
-        [HttpGet("{roundId}")]
-        public async Task<IActionResult> GetQuizzesByRoundId(
+        [HttpGet("rounds/{roundId}/quiz")]
+        public async Task<IActionResult> GetQuiz(
             Guid roundId,
             int pageNumber = 1,
             int pageSize = 10)
         {
-            PaginatedList<GetQuizDTO> result = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId);
-            
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
+            GetQuizDTO quiz = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId);
 
-            return Ok(new BaseResponseModel<object>(
+            return Ok(new BaseResponseModel<GetQuizDTO>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                data: result.Items,
-                additionalData: paging,
-                message: "Quizzes retrieved successfully."
+                data: quiz,
+                message: "Quiz retrieved successfully."
             ));
         }
 

@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
 using Repository.IRepositories;
 using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;

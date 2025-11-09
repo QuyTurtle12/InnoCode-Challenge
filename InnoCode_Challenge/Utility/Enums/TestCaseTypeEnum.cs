@@ -2,7 +2,7 @@
 {
     public enum TestCaseTypeEnum
     {
-        Private,
-        Public
+        TestCase = 0,
+        Manual = 1
     }
 }

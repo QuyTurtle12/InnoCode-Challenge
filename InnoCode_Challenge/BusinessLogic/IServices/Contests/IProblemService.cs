@@ -1,4 +1,5 @@
 ﻿using Repository.DTOs.ProblemDTOs;
+using Repository.DTOs.RubricDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests
@@ -9,5 +10,9 @@ namespace BusinessLogic.IServices.Contests
         Task CreateProblemAsync(Guid roundId, CreateProblemDTO problemDTO);
         Task UpdateProblemAsync(Guid id, UpdateProblemDTO problemDTO);
         Task DeleteProblemAsync(Guid id);
+
+        Task<RubricTemplateDTO> GetRubricTemplateAsync(Guid roundId);
+        Task<RubricTemplateDTO> CreateRubricAsync(Guid roundId, CreateRubricDTO createRubricDTO);
+        Task<RubricTemplateDTO> UpdateRubricAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
     }
 }

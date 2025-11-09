@@ -3,6 +3,7 @@ using BusinessLogic.IServices.Submissions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
@@ -174,29 +175,29 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
             ));
         }
 
-        /// <summary>
-        /// Update the score for a file submission (Judge only)
-        /// </summary>
-        /// <param name="submissionId">ID of the submission</param>
-        /// <param name="scoreDTO">Score and feedback</param>
-        /// <returns>Success message</returns>
-        [HttpPut("{submissionId}/score")]
-        [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> UpdateFileSubmissionScore(
-            Guid submissionId,
-            FileSubmissionScoreDTO scoreDTO)
-        {
-            bool result = await _submissionService.UpdateFileSubmissionScoreAsync(
-                submissionId,
-                scoreDTO.Score,
-                scoreDTO.Feedback);
+        ///// <summary>
+        ///// Update the score for a file submission (Judge only)
+        ///// </summary>
+        ///// <param name="submissionId">ID of the submission</param>
+        ///// <param name="scoreDTO">Score and feedback</param>
+        ///// <returns>Success message</returns>
+        //[HttpPut("{submissionId}/score")]
+        //[Authorize(Policy = "RequireJudgeRole")]
+        //public async Task<IActionResult> UpdateFileSubmissionScore(
+        //    Guid submissionId,
+        //    FileSubmissionScoreDTO scoreDTO)
+        //{
+        //    bool result = await _submissionService.UpdateFileSubmissionScoreAsync(
+        //        submissionId,
+        //        scoreDTO.Score,
+        //        scoreDTO.Feedback);
 
-            return Ok(new BaseResponseModel(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                message: "File submission score updated successfully."
-            ));
-        }
+        //    return Ok(new BaseResponseModel(
+        //        statusCode: StatusCodes.Status200OK,
+        //        code: ResponseCodeConstants.SUCCESS,
+        //        message: "File submission score updated successfully."
+        //    ));
+        //}
 
         /// <summary>
         /// Accepts the result of a submission and adds the score to the team's leaderboard
@@ -212,6 +213,89 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 message: "Score added to team in leaderboard successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Submit rubric-based evaluation for a manual submission
+        /// </summary>
+        /// <param name="submissionId"></param>
+        /// <param name="rubricScoreDTO">Rubric scores and feedback</param>
+        /// <returns>Evaluation result with total score</returns>
+        [HttpPost("{submissionId}/rubric-evaluation")]
+        [Authorize(Policy = "RequireJudgeRole")]
+        public async Task<IActionResult> SubmitRubricEvaluation(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO)
+        {
+            RubricEvaluationResultDTO result = await _submissionService.SubmitRubricEvaluationAsync(submissionId, rubricScoreDTO);
+
+            return Ok(new BaseResponseModel<RubricEvaluationResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Rubric evaluation submitted successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get my manual test submission result (Student only)
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Manual test evaluation result for the logged-in student</returns>
+        [HttpGet("rounds/{roundId}/manual-test/my-result")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> GetMyManualTestResult(Guid roundId)
+        {
+            RubricEvaluationResultDTO result = await _submissionService.GetMyManualTestResultAsync(roundId);
+
+            return Ok(new BaseResponseModel<RubricEvaluationResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Manual test result retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get all manual test results for a round with pagination and optional filters (Organizer only)
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="studentIdSearch"></param>
+        /// <param name="teamIdSearch"></param>
+        /// <param name="studentNameSearch"></param>
+        /// <param name="teamNameSearch"></param>
+        /// <returns></returns>
+        [HttpGet("rounds/{roundId}/manual-test/results")]
+        //[Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetAllManualTestResults(
+            Guid roundId,
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? studentIdSearch = null,
+            Guid? teamIdSearch = null,
+            string? studentNameSearch = null,
+            string? teamNameSearch = null)
+        {
+            PaginatedList<RubricEvaluationResultDTO> results = await _submissionService
+                .GetAllManualTestResultsByRoundAsync(roundId, pageNumber, pageSize, studentIdSearch, teamIdSearch, studentNameSearch, teamNameSearch);
+
+            var paging = new
+            {
+                results.PageNumber,
+                results.PageSize,
+                results.TotalPages,
+                results.TotalCount,
+                results.HasPreviousPage,
+                results.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: results.Items,
+                additionalData: paging,
+                message: "Manual test results retrieved successfully."
             ));
         }
     }

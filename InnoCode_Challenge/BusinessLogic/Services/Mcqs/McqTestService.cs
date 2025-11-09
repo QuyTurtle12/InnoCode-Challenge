@@ -29,11 +29,48 @@ namespace BusinessLogic.Services.Mcqs
         {
             try
             {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get Mcq Test repository
+                IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
+
                 // Get Bank repository
                 IGenericRepository<Bank> bankRepo = _unitOfWork.GetRepository<Bank>();
 
                 // Get Mcq Test Question repository
                 IGenericRepository<McqTestQuestion> mcqTestQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+
+
+                // Get the Mcq Test
+                McqTest? existingMcqTest = await mcqTestRepo
+                    .Entities
+                    .Where(t => t.TestId == testId)
+                        .Include(t => t.McqTestQuestions)
+                    .FirstOrDefaultAsync();
+
+                // Validate test exists
+                if (existingMcqTest == null) { 
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"MCQ Test with ID {testId} not found.");
+                }
+
+                // Clear existing questions from the test
+                if (existingMcqTest.McqTestQuestions != null && existingMcqTest.McqTestQuestions.Any())
+                {
+                    // Get all existing questions for the test
+                    List<McqTestQuestion> questionsToDelete = existingMcqTest.McqTestQuestions.ToList();
+
+                    // Delete existing questions
+                    foreach (McqTestQuestion question in questionsToDelete)
+                    {
+                        mcqTestQuestionRepo.Delete(question);
+                    }
+
+                    // Save changes after deletions
+                    await _unitOfWork.SaveAsync();
+                }
 
                 // Retrieve all questions from the specified bank
                 Bank? bank = await bankRepo.Entities
@@ -73,6 +110,9 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {

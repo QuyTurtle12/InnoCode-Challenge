@@ -7,6 +7,7 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionArtifactDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
@@ -44,47 +45,6 @@ namespace BusinessLogic.Services.Submissions
             _cloudinaryService = cloudinaryService;
             _leaderboardService = leaderboardService;
         }
-
-        //public async Task CreateSubmissionAsync(CreateSubmissionDTO submissionDTO)
-        //{
-        //    try
-        //    {
-        //        // Begin transaction
-        //        _unitOfWork.BeginTransaction();
-                
-        //        // Map DTO to entity
-        //        Submission submission = _mapper.Map<Submission>(submissionDTO);
-                
-        //        // Get the submission repository
-        //        IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-
-        //        // Set creation timestamp
-        //        submission.CreatedAt = DateTime.UtcNow;
-
-        //        // Insert the new submission
-        //        await submissionRepo.InsertAsync(submission);
-                
-        //        // Save changes to the database
-        //        await _unitOfWork.SaveAsync();
-                
-        //        // Commit the transaction
-        //        _unitOfWork.CommitTransaction();
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        // If something fails, roll back the transaction
-        //        _unitOfWork.RollBack();
-
-        //        if (ex is ErrorException)
-        //        {
-        //            throw;
-        //        }
-
-        //        throw new ErrorException(StatusCodes.Status500InternalServerError,
-        //            ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-        //            $"Error creating Submission: {ex.Message}");
-        //    }
-        //}
 
         public async Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(
             int pageNumber, int pageSize, Guid? idSearch, Guid? roundIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName)
@@ -276,7 +236,8 @@ namespace BusinessLogic.Services.Submissions
                 // Get test cases for the problem
                 IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
                 IList<TestCase> testCases = testCaseRepo.Entities
-                    .Where(tc => tc.ProblemId == problem.ProblemId)
+                    .Where(tc => tc.ProblemId == problem.ProblemId
+                        && tc.Type == TestCaseTypeEnum.TestCase.ToString())
                     .ToList();
 
                 if (!testCases.Any())
@@ -939,6 +900,429 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
                     $"Cannot {operationName}. Round \"{round.Name}\" has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
+            }
+        }
+
+        public async Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+                IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
+
+                // Get submission and verify it exists
+                Submission? submission = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                    .Where(s => s.SubmissionId == submissionId)
+                    .FirstOrDefaultAsync();
+
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Submission with ID {submissionId} not found");
+                }
+
+                // Verify this is a manual problem
+                if (submission.Problem.Type != ProblemTypeEnum.Manual.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Rubric evaluation is only available for manual problem types");
+                }
+
+                // Get all rubric criteria for validation
+                List<TestCase> rubricCriteria = await rubricRepo.Entities
+                    .Where(tc => tc.ProblemId == submission.ProblemId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString())
+                    .ToListAsync();
+
+                if (!rubricCriteria.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No rubric criteria found for this problem");
+                }
+
+                Dictionary<Guid, TestCase> rubricsDict = rubricCriteria.ToDictionary(tc => tc.TestCaseId);
+
+                // Get submitted criteria IDs
+                HashSet<Guid> submittedCriteriaIds = rubricScoreDTO.CriterionScores
+                    .Select(cs => cs.RubricId)
+                    .ToHashSet();
+
+                // Get all required criteria IDs
+                HashSet<Guid> allRequiredCriteriaIds = rubricCriteria
+                    .Select(rc => rc.TestCaseId)
+                    .ToHashSet();
+
+                // Find missing criteria
+                List<Guid> missingCriteriaIds = allRequiredCriteriaIds
+                    .Except(submittedCriteriaIds)
+                    .ToList();
+
+                // Check if all criteria have been scored
+                if (missingCriteriaIds.Any())
+                {
+                    // Get missing criteria descriptions for better error message
+                    List<string> missingDescriptions = rubricCriteria
+                        .Where(rc => missingCriteriaIds.Contains(rc.TestCaseId))
+                        .Select(rc => rc.Description ?? "Unnamed criterion")
+                        .ToList();
+
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"All criteria must be scored. Missing scores for {missingCriteriaIds.Count} criterion/criteria: {string.Join(", ", missingDescriptions)}");
+                }
+
+                // Check for duplicate criteria in submission
+                if (rubricScoreDTO.CriterionScores.Count != submittedCriteriaIds.Count)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Duplicate criteria found in submission. Each criterion should be scored only once.");
+                }
+
+                // Validate all criterion scores
+                double totalScore = 0;
+                List<RubricCriterionResultDTO> results = new List<RubricCriterionResultDTO>();
+
+                foreach (RubricCriterionScoreDTO criterionScore in rubricScoreDTO.CriterionScores)
+                {
+                    // Validate rubric exists
+                    if (!rubricsDict.TryGetValue(criterionScore.RubricId, out TestCase? criterion))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            $"Rubric {criterionScore.RubricId} not found or does not belong to this problem");
+                    }
+
+                    // Validate score doesn't exceed max score
+                    if (criterionScore.Score > criterion.Weight)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            $"Score {criterionScore.Score} exceeds max score {criterion.Weight} for criterion: {criterion.Description}");
+                    }
+
+                    if (criterionScore.Score < 0)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            $"Score cannot be negative for criterion: {criterion.Description}");
+                    }
+
+                    // Check if submission detail already exists for this criterion
+                    SubmissionDetail? existingDetail = await detailRepo.Entities
+                        .FirstOrDefaultAsync(sd => sd.SubmissionId == submissionId
+                            && sd.TestcaseId == criterionScore.RubricId);
+
+                    if (existingDetail != null)
+                    {
+                        // Update existing detail
+                        existingDetail.Weight = criterionScore.Score;
+                        existingDetail.Note = criterionScore.Note;
+                        await detailRepo.UpdateAsync(existingDetail);
+                    }
+                    else
+                    {
+                        // Create new submission detail
+                        SubmissionDetail detail = new SubmissionDetail
+                        {
+                            DetailsId = Guid.NewGuid(),
+                            SubmissionId = submissionId,
+                            TestcaseId = criterionScore.RubricId,
+                            Weight = criterionScore.Score,
+                            Note = criterionScore.Note,
+                            RuntimeMs = 0,
+                            MemoryKb = 0,
+                            CreatedAt = DateTime.UtcNow
+                        };
+
+                        await detailRepo.InsertAsync(detail);
+                    }
+
+                    totalScore += criterionScore.Score;
+
+                    results.Add(new RubricCriterionResultDTO
+                    {
+                        RubricId = criterionScore.RubricId,
+                        Description = criterion.Description ?? criterion.Input,
+                        MaxScore = criterion.Weight,
+                        Score = criterionScore.Score,
+                        Note = criterionScore.Note
+                    });
+                }
+
+                // Get user ID from JWT token (the judge)
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "User ID not found");
+
+                // Get judge email
+                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
+                string judgeEmail = user?.Email ?? "unknown";
+
+                // Update submission with total score and status
+                submission.Score = Math.Round(totalScore, 2);
+                submission.Status = SubmissionStatusEnum.Finished.ToString();
+                submission.JudgedBy = judgeEmail;
+
+                // Update submission record
+                await submissionRepo.UpdateAsync(submission);
+
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+
+                return new RubricEvaluationResultDTO
+                {
+                    SubmissionId = submissionId,
+                    JudgedBy = judgeEmail,
+                    TotalScore = Math.Round(totalScore, 2),
+                    MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                    CriterionResults = results
+                };
+            }
+            catch (Exception ex)
+            {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error submitting rubric evaluation: {ex.Message}");
+            }
+        }
+
+        public async Task<RubricEvaluationResultDTO> GetMyManualTestResultAsync(Guid roundId)
+        {
+            try
+            {
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "User ID not found");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = await studentRepo.Entities
+                    .Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefaultAsync();
+
+                if (studentId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Student not found");
+                }
+
+                // Get the submission for this student in the specified round
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                Submission? submission = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.SubmittedByStudentId == studentId
+                        && s.Problem.Type == ProblemTypeEnum.Manual.ToString()
+                        && !s.DeletedAt.HasValue)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No manual test submission found for this round");
+                }
+
+                // Get all rubric criteria for max scores
+                IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+                List<TestCase> rubricCriteria = await rubricRepo.Entities
+                    .Where(tc => tc.ProblemId == submission.ProblemId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString())
+                    .ToListAsync();
+
+                // Map submission details to criterion results
+                List<RubricCriterionResultDTO> results = submission.SubmissionDetails
+                    .Where(sd => sd.TestcaseId.HasValue)
+                    .Select(d => new RubricCriterionResultDTO
+                    {
+                        RubricId = d.TestcaseId!.Value,
+                        Description = d.Testcase?.Description ?? d.Testcase?.Input ?? "Criterion",
+                        MaxScore = d.Testcase?.Weight ?? 0,
+                        Score = d.Weight ?? 0,
+                        Note = d.Note
+                    })
+                    .ToList();
+
+                RubricEvaluationResultDTO result = new RubricEvaluationResultDTO
+                {
+                    SubmissionId = submission.SubmissionId,
+                    StudentName = submission.SubmittedByStudent?.User.Fullname ?? "Unknown",
+                    TeamName = submission.Team?.Name ?? "Unknown",
+                    SubmittedAt = submission.CreatedAt,
+                    JudgedBy = submission.JudgedBy,
+                    TotalScore = submission.Score,
+                    MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                    CriterionResults = results
+                };
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving manual test result: {ex.Message}");
+            }
+        }
+
+        public async Task<PaginatedList<RubricEvaluationResultDTO>> GetAllManualTestResultsByRoundAsync(
+            Guid roundId,
+            int pageNumber,
+            int pageSize,
+            Guid? studentIdSearch,
+            Guid? teamIdSearch,
+            string? studentNameSearch,
+            string? teamNameSearch)
+        {
+            try
+            {
+                // Validate pagination parameters
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Get repositories
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+
+                // Build query for manual test submissions in the specified round
+                IQueryable<Submission> query = submissionRepo.Entities
+                    .Include(s => s.Problem)
+                    .Include(s => s.Team)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.Problem.Type == ProblemTypeEnum.Manual.ToString()
+                        && !s.DeletedAt.HasValue);
+
+                // Apply filters
+                if (studentIdSearch.HasValue)
+                {
+                    query = query.Where(s => s.SubmittedByStudentId == studentIdSearch.Value);
+                }
+
+                if (teamIdSearch.HasValue)
+                {
+                    query = query.Where(s => s.TeamId == teamIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(studentNameSearch))
+                {
+                    query = query.Where(s => s.SubmittedByStudent!.User!.Fullname.Contains(studentNameSearch));
+                }
+
+                if (!string.IsNullOrWhiteSpace(teamNameSearch))
+                {
+                    query = query.Where(s => s.Team.Name.Contains(teamNameSearch));
+                }
+
+                // Order by most recent first
+                query = query.OrderByDescending(s => s.CreatedAt);
+
+                // Get paginated submissions
+                PaginatedList<Submission> paginatedSubmissions = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+                // Get problem IDs to fetch rubric criteria
+                List<Guid> problemIds = paginatedSubmissions.Items
+                    .Select(s => s.ProblemId)
+                    .Distinct()
+                    .ToList();
+
+                // Get all rubric criteria for these problems
+                Dictionary<Guid, List<TestCase>> rubricsByProblem = await rubricRepo.Entities
+                    .Where(tc => problemIds.Contains(tc.ProblemId)
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString())
+                    .GroupBy(tc => tc.ProblemId)
+                    .ToDictionaryAsync(
+                        g => g.Key,
+                        g => g.ToList());
+
+                // Map to DTOs
+                IReadOnlyCollection<RubricEvaluationResultDTO> results = paginatedSubmissions.Items.Select(submission =>
+                {
+                    // Get rubric criteria for this submission's problem
+                    List<TestCase> rubricCriteria = rubricsByProblem.GetValueOrDefault(submission.ProblemId) ?? new List<TestCase>();
+
+                    // Map submission details to criterion results
+                    List<RubricCriterionResultDTO> criterionResults = submission.SubmissionDetails
+                        .Where(sd => sd.TestcaseId.HasValue)
+                        .Select(d => new RubricCriterionResultDTO
+                        {
+                            RubricId = d.TestcaseId!.Value,
+                            Description = d.Testcase?.Description ?? d.Testcase?.Input ?? "Criterion",
+                            MaxScore = d.Testcase?.Weight ?? 0,
+                            Score = d.Weight ?? 0,
+                            Note = d.Note
+                        })
+                        .ToList();
+
+                    return new RubricEvaluationResultDTO
+                    {
+                        SubmissionId = submission.SubmissionId,
+                        JudgedBy = submission.JudgedBy,
+                        TotalScore = submission.Score,
+                        MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                        CriterionResults = criterionResults,
+                        StudentName = submission.SubmittedByStudent?.User?.Fullname ?? "Unknown",
+                        TeamName = submission.Team?.Name ?? "Unknown",
+                        SubmittedAt = submission.CreatedAt
+                    };
+                }).ToList();
+
+                return new PaginatedList<RubricEvaluationResultDTO>(
+                    results,
+                    paginatedSubmissions.TotalCount,
+                    paginatedSubmissions.PageNumber,
+                    paginatedSubmissions.PageSize);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving manual test results: {ex.Message}");
             }
         }
     }

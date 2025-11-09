@@ -55,23 +55,6 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         //            ));
         //}
 
-        ///// <summary>
-        ///// Create a new Mcq Test for a specific round
-        ///// </summary>
-        ///// <param name="roundId"></param>
-        ///// <param name="mcqTestDTO"></param>
-        ///// <returns></returns>
-        //[HttpPost("{roundId}")]
-        //public async Task<IActionResult> CreateMcqTest(Guid roundId, CreateMcqTestDTO mcqTestDTO)
-        //{
-        //    await _mcqTestService.CreateMcqTestAsync(roundId, mcqTestDTO);
-        //    return Ok(new BaseResponseModel(
-        //                statusCode: StatusCodes.Status201Created,
-        //                code: ResponseCodeConstants.SUCCESS,
-        //                message: "Create Mcq Test successfully."
-        //            ));
-        //}
-
         /// <summary>
         /// Add questions from question bank to Mcq Test
         /// </summary>

@@ -13,6 +13,8 @@ namespace Repository.DTOs.RoundDTOs
 
         public string ContestName { get; set; } = string.Empty;
 
+        public string Status { get; set; } = string.Empty;
+
         public string? ProblemType { get; set; }
 
         public GetProblemDTO? Problem { get; set; }

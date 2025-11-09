@@ -67,6 +67,9 @@ namespace BusinessLogic.Services.Contests
                 // Assign contest ID
                 round.ContestId = contestId;
 
+                // Set initial status
+                round.Status = RoundStatusEnum.Closed.ToString();
+
                 // Insert new round
                 await roundRepo.InsertAsync(round);
 
@@ -149,7 +152,7 @@ namespace BusinessLogic.Services.Contests
                 // Find round by id with related entities
                 Round? round = await roundRepo.Entities
                     .Include(r => r.Problem)
-                    .Include(r => r.McqTests)
+                    .Include(r => r.McqTest)
                     .FirstOrDefaultAsync(r => r.RoundId == id);
 
                 // Check if round exists
@@ -167,14 +170,11 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Delete related McqTests if exists
-                if (round.McqTests.Any())
+                if (round.McqTest != null)
                 {
                     IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
-                    foreach (var mcqTest in round.McqTests)
-                    {
-                        mcqTest.DeletedAt = DateTime.UtcNow;
-                        await mcqTestRepo.UpdateAsync(mcqTest);
-                    }
+                    round.McqTest.DeletedAt = DateTime.UtcNow;
+                    await mcqTestRepo.UpdateAsync(round.McqTest);
                 }
 
                 // Delete the round
@@ -221,7 +221,7 @@ namespace BusinessLogic.Services.Contests
                     .Where(r => !r.DeletedAt.HasValue)
                     .Include(r => r.Contest)
                     .Include(r => r.Problem)
-                    .Include(r => r.McqTests);
+                    .Include(r => r.McqTest);
 
                 // Apply filters if provided
                 if (idSearch.HasValue)
@@ -272,10 +272,10 @@ namespace BusinessLogic.Services.Contests
                         roundDTO.Problem = _mapper.Map<GetProblemDTO>(item.Problem);
                     }
                     // Map MCQ test information if exists
-                    else if (item.McqTests.Any())
+                    else if (item.McqTest != null)
                     {
                         roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
-                        roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(item.McqTests.First());
+                        roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(item.McqTest);
                     }
 
                     return roundDTO;
