@@ -21,7 +21,7 @@ public partial class Round
 
     public virtual ICollection<McqAttempt> McqAttempts { get; set; } = new List<McqAttempt>();
 
-    public virtual ICollection<McqTest> McqTests { get; set; } = new List<McqTest>();
+    public virtual McqTest? McqTest { get; set; }
 
     public virtual Problem? Problem { get; set; }
 }
