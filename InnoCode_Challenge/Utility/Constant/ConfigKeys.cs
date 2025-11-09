@@ -15,6 +15,7 @@
         public static string ContestJudge(Guid contestId, Guid judgeUserId) => $"contest:{contestId}:judge:{judgeUserId}";
         public static string ContestPolicy(Guid contestId, string policyKey) => $"contest:{contestId}:policy:{policyKey}";
         public static string ContestPolicyPrefix(Guid contestId) => $"contest:{contestId}:policy:";
+        public static string ContestTeamEliminated(Guid contestId, Guid teamId) => $"contest:{contestId}:team:{teamId}:eliminated";
 
     }
 }
