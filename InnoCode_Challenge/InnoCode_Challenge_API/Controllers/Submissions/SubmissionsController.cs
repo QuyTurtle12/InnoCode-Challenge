@@ -175,30 +175,6 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
             ));
         }
 
-        ///// <summary>
-        ///// Update the score for a file submission (Judge only)
-        ///// </summary>
-        ///// <param name="submissionId">ID of the submission</param>
-        ///// <param name="scoreDTO">Score and feedback</param>
-        ///// <returns>Success message</returns>
-        //[HttpPut("{submissionId}/score")]
-        //[Authorize(Policy = "RequireJudgeRole")]
-        //public async Task<IActionResult> UpdateFileSubmissionScore(
-        //    Guid submissionId,
-        //    FileSubmissionScoreDTO scoreDTO)
-        //{
-        //    bool result = await _submissionService.UpdateFileSubmissionScoreAsync(
-        //        submissionId,
-        //        scoreDTO.Score,
-        //        scoreDTO.Feedback);
-
-        //    return Ok(new BaseResponseModel(
-        //        statusCode: StatusCodes.Status200OK,
-        //        code: ResponseCodeConstants.SUCCESS,
-        //        message: "File submission score updated successfully."
-        //    ));
-        //}
-
         /// <summary>
         /// Accepts the result of a submission and adds the score to the team's leaderboard
         /// </summary>

@@ -563,7 +563,7 @@ namespace BusinessLogic.Services.Submissions
                     TeamId = teamId,
                     ProblemId = problemId,
                     SubmittedByStudentId = studentId,
-                    JudgedBy = "pending",
+                    JudgedBy = null,
                     Status = SubmissionStatusEnum.Pending.ToString(),
                     Score = 0,
                     CreatedAt = DateTime.UtcNow
@@ -638,97 +638,6 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving file download URL: {ex.Message}");
-            }
-        }
-
-        public async Task<bool> UpdateFileSubmissionScoreAsync(Guid submissionId, double score, string feedback)
-        {
-            try
-            {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
-
-                // Get submission
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                Submission? submission = await submissionRepo.Entities
-                    .Where(s => s.SubmissionId == submissionId)
-                    .Include(s => s.Problem)
-                        .ThenInclude(p => p.Round)
-                    .FirstOrDefaultAsync();
-
-                if (submission == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Submission with ID {submissionId} not found");
-                }
-
-                // Get user ID from JWT token (the judge)
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Null User Id");
-
-                // Get judge email
-                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
-                User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
-                string judgeEmail = user?.Email ?? "unknown";
-
-                // Update submission
-                submission.Score = score;
-                submission.Status = SubmissionStatusEnum.Finished.ToString();
-                submission.JudgedBy = judgeEmail;
-
-                await submissionRepo.UpdateAsync(submission);
-
-                // Add feedback as a submission detail
-                IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
-                var detail = new SubmissionDetail
-                {
-                    DetailsId = Guid.NewGuid(),
-                    SubmissionId = submissionId,
-                    TestcaseId = null, // No test case for file submissions
-                    Weight = score,
-                    Note = feedback,
-                    RuntimeMs = 0, // Not applicable
-                    MemoryKb = 0, // Not applicable
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                await detailRepo.InsertAsync(detail);
-                await _unitOfWork.SaveAsync();
-
-                // Update leaderboard
-                Guid contestId = submission.Problem.Round.ContestId;
-                try
-                {
-                    // Update team score in leaderboard
-                    await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, score);
-                }
-                catch (Exception ex)
-                {
-                    // Log the error but do not fail the entire operation
-                    Console.WriteLine($"Failed to update leaderboard: {ex.Message}");
-                }
-
-                // Commit transaction
-                _unitOfWork.CommitTransaction();
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                // Roll back transaction on error
-                _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error updating file submission score: {ex.Message}");
             }
         }
 
@@ -914,9 +823,10 @@ namespace BusinessLogic.Services.Submissions
                 IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
                 IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
 
-                // Get submission and verify it exists
+                // Get submission and verify it exists - Include Problem.Round for contest ID access
                 Submission? submission = await submissionRepo.Entities
                     .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
                     .Where(s => s.SubmissionId == submissionId)
                     .FirstOrDefaultAsync();
 
@@ -1067,17 +977,29 @@ namespace BusinessLogic.Services.Submissions
                 // Get judge email
                 IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
                 User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
-                string judgeEmail = user?.Email ?? "unknown";
 
                 // Update submission with total score and status
                 submission.Score = Math.Round(totalScore, 2);
                 submission.Status = SubmissionStatusEnum.Finished.ToString();
-                submission.JudgedBy = judgeEmail;
+                submission.JudgedBy = user?.UserId.ToString() ?? "Unknown Judge Id";
 
                 // Update submission record
                 await submissionRepo.UpdateAsync(submission);
 
                 await _unitOfWork.SaveAsync();
+
+                // Update leaderboard
+                Guid contestId = submission.Problem.Round.ContestId;
+                try
+                {
+                    // Update team score in leaderboard
+                    await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, submission.Score);
+                }
+                catch (Exception ex)
+                {
+                    // Log the error but do not fail the entire operation
+                    Console.WriteLine($"Failed to update leaderboard: {ex.Message}");
+                }
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
@@ -1085,7 +1007,7 @@ namespace BusinessLogic.Services.Submissions
                 return new RubricEvaluationResultDTO
                 {
                     SubmissionId = submissionId,
-                    JudgedBy = judgeEmail,
+                    JudgedBy = user?.Email ?? "Unknown",
                     TotalScore = Math.Round(totalScore, 2),
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
