@@ -16,5 +16,7 @@ namespace Repository.DTOs.RoundDTOs
         public CreateMcqTestDTO? McqTestConfig { get; set; }
 
         public CreateProblemDTO? ProblemConfig { get; set; }
+        public int? TimeLimitSeconds { get; set; }
+
     }
 }

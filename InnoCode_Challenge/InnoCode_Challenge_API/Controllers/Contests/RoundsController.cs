@@ -133,5 +133,20 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         message: "Manual type submissions retrieved successfully."
                     ));
         }
+
+            
+        [HttpGet("{id}/time-limit")]
+        public async Task<IActionResult> GetRoundTimeLimit(Guid id)
+        {
+            int? timeLimitSeconds = await _roundService.GetRoundTimeLimitSecondsAsync(id);
+
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: timeLimitSeconds,
+                        message: "Round time limit retrieved successfully."
+                    ));
+        }
+
     }
 }

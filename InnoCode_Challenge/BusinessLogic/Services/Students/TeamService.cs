@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.TeamDTOs;
 using Repository.IRepositories;
+using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -128,7 +129,9 @@ namespace BusinessLogic.Services.Students
                 SchoolId = dto.SchoolId,
                 MentorId = dto.MentorId,
                 CreatedAt = now,
-                DeletedAt = null
+                DeletedAt = null,
+                Status = TeamStatusConstants.Active
+
             };
 
             await teamRepository.InsertAsync(team);

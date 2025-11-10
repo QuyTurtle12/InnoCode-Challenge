@@ -14,5 +14,7 @@ namespace BusinessLogic.IServices.Contests
 
         Task DistributeSubmissionsToJudgesAsync(Guid roundId);
         Task<PaginatedList<SubmissionDistributionDTO>> GetManualTypeSubmissionsByRoundId(int pageNumber, int pageSize, Guid roundId, SubmissionStatusEnum? statusFilter = null);
+        Task<int?> GetRoundTimeLimitSecondsAsync(Guid roundId);
+
     }
 }

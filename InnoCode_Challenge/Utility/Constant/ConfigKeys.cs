@@ -18,6 +18,7 @@
         public static string JudgeSubmission(Guid judgeUserId, Guid submissionId) => $"judge:{judgeUserId}:submission:{submissionId}";
         public static string RoundSubmissionsDistributed(Guid roundId) => $"round:{roundId}:submissions_distributed";
 
+        public static string RoundTimeLimitSeconds(Guid roundId) => $"contest:round:{roundId}:time_limit_seconds";
 
     }
 }

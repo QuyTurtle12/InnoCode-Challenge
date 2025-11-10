@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.LeaderboardEntryDTOs;
 using Repository.IRepositories;
+using System.Text.Json;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -157,6 +158,125 @@ namespace BusinessLogic.Services.Contests
                     $"Cannot update leaderboard. All rounds in contest {contest.Name} have ended and the leaderboard is frozen.");
             }
         }
+
+        public async Task ApplyEliminationAsync(Guid contestId, Guid roundId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();   
+
+                // Validate contest
+                Contest? contest = await contestRepo.Entities
+                    .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+                if (contest == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Contest not found.");
+
+                // Validate round and ensure it belongs to this contest
+                Round? round = await roundRepo.Entities
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+                if (round == null || round.ContestId != contestId)
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found in this contest.");
+
+                // Determine round index (1-based) by Start time ordering
+                List<Round> rounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
+                    .OrderBy(r => r.Start)
+                    .ThenBy(r => r.RoundId)
+                    .ToListAsync();
+
+                int roundIndex = rounds.FindIndex(r => r.RoundId == roundId) + 1;
+                if (roundIndex <= 0)
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                        "Unable to determine round index for elimination.");
+
+                // Get elimination rule
+                Dictionary<int, int>? rules = await GetEliminationRuleAsync(contestId);
+                if (rules == null || !rules.TryGetValue(roundIndex, out int topN) || topN <= 0)
+                {
+                    // no elimination rule for this round => do nothing
+                    _unitOfWork.CommitTransaction();
+                    return;
+                }
+
+                // Get current leaderboard ordered by rank
+                List<LeaderboardEntry> entries = await leaderboardRepo.Entities
+                    .Where(e => e.ContestId == contestId)
+                    .OrderBy(e => e.Rank)
+                    .ThenByDescending(e => e.Score)
+                    .ToListAsync();
+
+                if (!entries.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "No leaderboard entries found for this contest.");
+                }
+
+                // Determine survivors vs eliminated
+                var survivors = entries
+                    .Take(topN)
+                    .Select(e => e.TeamId)
+                    .Distinct()
+                    .ToHashSet();
+
+                var toEliminateIds = entries
+                    .Skip(topN)
+                    .Select(e => e.TeamId)
+                    .Distinct()
+                    .ToList();
+
+
+                DateTime now = DateTime.UtcNow;
+
+                if (toEliminateIds.Any())
+                {
+                    var teamsToEliminate = await teamRepo.Entities
+                        .Where(t => t.ContestId == contestId
+                                    && toEliminateIds.Contains(t.TeamId)
+                                    && t.DeletedAt == null)
+                        .ToListAsync();
+
+                    foreach (var team in teamsToEliminate)
+                    {
+                        if (!string.Equals(team.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase))
+                        {
+                            team.Status = TeamStatusConstants.Eliminated;
+                            await teamRepo.UpdateAsync(team);
+                        }
+                    }
+                }
+
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error applying elimination: {ex.Message}");
+            }
+
+        }
+
 
         public async Task AddTeamToLeaderboardAsync(Guid contestId, Guid teamId)
         {
@@ -427,6 +547,7 @@ namespace BusinessLogic.Services.Contests
             {
                 // Validate that the leaderboard is not frozen
                 await ValidateLeaderboardNotFrozenAsync(contestId);
+                await ValidateTeamNotEliminatedAsync(contestId, teamId);
 
                 _unitOfWork.BeginTransaction();
 
@@ -476,6 +597,7 @@ namespace BusinessLogic.Services.Contests
             {
                 // Validate that the leaderboard is not frozen
                 await ValidateLeaderboardNotFrozenAsync(contestId);
+                await ValidateTeamNotEliminatedAsync(contestId, teamId);
 
                 // Get the repository for LeaderboardEntry
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
@@ -576,6 +698,68 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error recalculating ranks: {ex.Message}");
+            }
+        }
+        private async Task ValidateTeamNotEliminatedAsync(Guid contestId, Guid teamId)
+        {
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+
+            var team = await teamRepo.Entities
+                .FirstOrDefaultAsync(t => t.TeamId == teamId
+                                          && t.ContestId == contestId
+                                          && t.DeletedAt == null);
+
+            if (team == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Team {teamId} not found in contest {contestId}");
+            }
+
+            if (string.Equals(team.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "This team has been eliminated and cannot receive new scores.");
+            }
+        }
+
+        private async Task<Dictionary<int, int>?> GetEliminationRuleAsync(Guid contestId)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            string key = ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.EliminationRule);
+
+            string? raw = await configRepo.Entities
+                .Where(c => c.Key == key && c.Scope == "contest" && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+
+            try
+            {
+                var dictString = JsonSerializer.Deserialize<Dictionary<string, int>>(raw!);
+                if (dictString == null || dictString.Count == 0)
+                    return null;
+
+                var result = new Dictionary<int, int>();
+                foreach (var kv in dictString)
+                {
+                    if (int.TryParse(kv.Key, out int roundIndex) && kv.Value > 0)
+                    {
+                        result[roundIndex] = kv.Value;
+                    }
+                }
+
+                return result.Count > 0 ? result : null;
+            }
+            catch
+            {
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    "INVALID_ELIMINATION_RULE",
+                    "Elimination rule policy is not a valid JSON map of roundIndex -> topN.");
             }
         }
     }

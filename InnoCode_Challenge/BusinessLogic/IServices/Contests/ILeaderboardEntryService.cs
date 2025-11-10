@@ -12,5 +12,7 @@ namespace BusinessLogic.IServices.Contests
         Task AddScoreToTeamAsync(Guid contestId, Guid teamId, double scoreToAdd);
         Task RecalculateRanksAsync(Guid contestId);
         Task<string> ToggleLeaderboardFreezeAsync(Guid contestId);
+        Task ApplyEliminationAsync(Guid contestId, Guid roundId);
+
     }
 }
