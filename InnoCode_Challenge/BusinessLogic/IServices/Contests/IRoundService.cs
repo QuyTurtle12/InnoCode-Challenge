@@ -1,4 +1,6 @@
 ﻿using Repository.DTOs.RoundDTOs;
+using Repository.DTOs.SubmissionDTOs;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests
@@ -9,5 +11,8 @@ namespace BusinessLogic.IServices.Contests
         Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO);
         Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO);
         Task DeleteRoundAsync(Guid id);
+
+        Task DistributeSubmissionsToJudgesAsync(Guid roundId);
+        Task<PaginatedList<SubmissionDistributionDTO>> GetManualTypeSubmissionsByRoundId(int pageNumber, int pageSize, Guid roundId, SubmissionStatusEnum? statusFilter = null);
     }
 }

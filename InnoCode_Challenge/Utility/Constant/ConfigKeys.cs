@@ -15,6 +15,9 @@
         public static string ContestJudge(Guid contestId, Guid judgeUserId) => $"contest:{contestId}:judge:{judgeUserId}";
         public static string ContestPolicy(Guid contestId, string policyKey) => $"contest:{contestId}:policy:{policyKey}";
         public static string ContestPolicyPrefix(Guid contestId) => $"contest:{contestId}:policy:";
+        public static string JudgeSubmission(Guid judgeUserId, Guid submissionId) => $"judge:{judgeUserId}:submission:{submissionId}";
+        public static string RoundSubmissionsDistributed(Guid roundId) => $"round:{roundId}:submissions_distributed";
+
 
     }
 }

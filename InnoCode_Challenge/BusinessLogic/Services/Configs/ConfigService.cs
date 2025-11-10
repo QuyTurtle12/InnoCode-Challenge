@@ -201,5 +201,59 @@ namespace BusinessLogic.Services
                 repo.Update(item);
             }
         }
+
+        public async Task<bool> AreSubmissionsDistributedAsync(Guid roundId)
+        {
+            string key = ConfigKeys.RoundSubmissionsDistributed(roundId);
+
+            var config = await _uow.GetRepository<Config>()
+                .Entities
+                .FirstOrDefaultAsync(c => c.Key == key && !c.DeletedAt.HasValue);
+
+            return config != null && config.Value?.ToLower() == "true";
+        }
+
+        public async Task MarkSubmissionsAsDistributedAsync(Guid roundId)
+        {
+            string key = ConfigKeys.RoundSubmissionsDistributed(roundId);
+            await SetConfigValueAsync(key, "true", "round");
+        }
+
+        public async Task ResetDistributionStatusAsync(Guid roundId)
+        {
+            string key = ConfigKeys.RoundSubmissionsDistributed(roundId);
+            await SetConfigValueAsync(key, "false", "round");
+        }
+
+        private async Task SetConfigValueAsync(string key, string value, string? scope = null)
+        {
+            var configRepo = _uow.GetRepository<Config>();
+
+            var existingConfig = await configRepo.Entities
+                .FirstOrDefaultAsync(c => c.Key == key && !c.DeletedAt.HasValue);
+
+            if (existingConfig != null)
+            {
+                existingConfig.Value = value;
+                existingConfig.UpdatedAt = DateTime.UtcNow;
+                if (!string.IsNullOrEmpty(scope))
+                {
+                    existingConfig.Scope = scope;
+                }
+                await configRepo.UpdateAsync(existingConfig);
+            }
+            else
+            {
+                var newConfig = new Config
+                {
+                    Key = key,
+                    Value = value,
+                    Scope = scope,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                await configRepo.InsertAsync(newConfig);
+            }
+        }
+
     }
 }

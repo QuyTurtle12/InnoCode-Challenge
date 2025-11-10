@@ -1171,13 +1171,20 @@ namespace BusinessLogic.Services.Submissions
                     })
                     .ToList();
 
+                // Get judge email
+                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                string? judgeEmail = await userRepo.Entities
+                    .Where(u => u.UserId == Guid.Parse(submission.JudgedBy!))
+                    .Select(u => u.Email)
+                    .FirstOrDefaultAsync() ?? submission.JudgedBy;
+
                 RubricEvaluationResultDTO result = new RubricEvaluationResultDTO
                 {
                     SubmissionId = submission.SubmissionId,
                     StudentName = submission.SubmittedByStudent?.User.Fullname ?? "Unknown",
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
-                    JudgedBy = submission.JudgedBy,
+                    JudgedBy = judgeEmail,
                     TotalScore = submission.Score,
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
@@ -1275,6 +1282,28 @@ namespace BusinessLogic.Services.Submissions
                         g => g.Key,
                         g => g.ToList());
 
+                // Get unique judge IDs from paginated submissions
+                List<string> judgeIds = paginatedSubmissions.Items
+                    .Where(s => !string.IsNullOrEmpty(s.JudgedBy))
+                    .Select(s => s.JudgedBy!)
+                    .Distinct()
+                    .ToList();
+
+                // Convert to Guids for query
+                List<Guid> judgeGuids = judgeIds
+                    .Select(id => Guid.TryParse(id, out Guid guid) ? guid : Guid.Empty)
+                    .Where(g => g != Guid.Empty)
+                    .ToList();
+
+                // Get judge emails directly from User table
+                Dictionary<string, string> judgeEmailsLookup = await _unitOfWork.GetRepository<User>()
+                    .Entities
+                    .Where(u => judgeGuids.Contains(u.UserId))
+                    .ToDictionaryAsync(
+                        u => u.UserId.ToString(),
+                        u => u.Email
+                    );
+
                 // Map to DTOs
                 IReadOnlyCollection<RubricEvaluationResultDTO> results = paginatedSubmissions.Items.Select(submission =>
                 {
@@ -1294,10 +1323,15 @@ namespace BusinessLogic.Services.Submissions
                         })
                         .ToList();
 
+                    // Get judge email from lookup dictionary, fallback to JudgedBy value if not found
+                    string judgeEmail = submission.JudgedBy != null && judgeEmailsLookup.TryGetValue(submission.JudgedBy, out string? email)
+                        ? email
+                        : submission.JudgedBy ?? "Unknown";
+
                     return new RubricEvaluationResultDTO
                     {
                         SubmissionId = submission.SubmissionId,
-                        JudgedBy = submission.JudgedBy,
+                        JudgedBy = judgeEmail,
                         TotalScore = submission.Score,
                         MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                         CriterionResults = criterionResults,

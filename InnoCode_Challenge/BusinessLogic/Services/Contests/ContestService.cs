@@ -1,12 +1,15 @@
-﻿using System.Security.Claims;
+﻿using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
+using Repository.DTOs.McqTestDTOs;
+using Repository.DTOs.ProblemDTOs;
+using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
-using System.IdentityModel.Tokens.Jwt;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -89,7 +92,17 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<PaginatedList<GetContestDTO>> GetPaginatedContestAsync(int pageNumber, int pageSize, Guid? idSearch, string? nameSearch, int? yearSearch, DateTime? startDate, DateTime? endDate, bool isMyParticipatedContest)
+        public async Task<PaginatedList<GetContestDTO>> GetPaginatedContestAsync(
+            int pageNumber,
+            int pageSize,
+            Guid? idSearch,
+            Guid? creatorIdSearch,
+            string? nameSearch,
+            int? yearSearch,
+            DateTime? startDate,
+            DateTime? endDate,
+            bool isMyParticipatedContest,
+            bool isMyContest)
         {
             try
             {
@@ -119,9 +132,15 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
                 // Get all available contests
-                IQueryable<Contest> query = contestRepo.Entities.Where(c => !c.DeletedAt.HasValue);
+                IQueryable<Contest> query = contestRepo
+                    .Entities
+                    .Where(c => !c.DeletedAt.HasValue)
+                    .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
+                        .ThenInclude(r => r.Problem)
+                    .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
+                        .ThenInclude(r => r.McqTest); ;
 
-                // Get contests where the current user is a participant
+                // Get contests where the current logged-in student is a participant
                 if (isMyParticipatedContest)
                 {
                     // Get current user ID from HttpContext
@@ -155,10 +174,30 @@ namespace BusinessLogic.Services.Contests
                     }
                 }
 
+                // Get contests created by the current logged-in organizer
+                if (isMyContest)
+                {
+                    // Get current user ID from HttpContext
+                    string? userId = _httpContextAccessor.HttpContext?.User?
+                        .FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    // If user ID is available, filter contests created by this user
+                    if (!string.IsNullOrEmpty(userId))
+                    {
+                        query = query.Where(c => c.CreatedBy == userId);
+                    }
+                }
+
+
                 // Apply filters if provided
                 if (idSearch.HasValue)
                 {
                     query = query.Where(c => c.ContestId == idSearch.Value);
+                }
+
+                if (creatorIdSearch.HasValue)
+                {
+                    query = query.Where(c => Guid.Parse(c.CreatedBy!) == creatorIdSearch.Value);
                 }
 
                 if (!string.IsNullOrWhiteSpace(nameSearch))
@@ -200,11 +239,68 @@ namespace BusinessLogic.Services.Contests
                 // Create a lookup dictionary for faster access
                 ILookup<string, Config> configLookup = configs.ToLookup(c => c.Key);
 
+                // Extract distinct organizer IDs from the results
+                List<string?> organizerIds = resultQuery.Items
+                    .Select(c => c.CreatedBy)
+                    .Distinct()
+                    .ToList()!;
+
+                // Get user repository
+                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+
+                // Parse organizer IDs to Guids
+                List<Guid> organizerGuids = organizerIds
+                    .Select(id => Guid.TryParse(id, out Guid guid) ? guid : Guid.Empty)
+                    .Where(g => g != Guid.Empty)
+                    .ToList();
+
+                // Create a dictionary to map organizer IDs to names from User table
+                Dictionary<Guid, string> organizerNames = await userRepo
+                    .Entities
+                    .Where(u => organizerGuids.Contains(u.UserId) && !u.DeletedAt.HasValue)
+                    .ToDictionaryAsync(u => u.UserId, u => u.Fullname);
+
                 // Map the result to DTO
                 IReadOnlyCollection<GetContestDTO> result = resultQuery.Items.Select(item =>
                 {
                     // Map base properties
                     GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(item);
+
+                    // Assign non-deleted rounds
+                    contestDTO.rounds = item.Rounds
+                    .Where(r => !r.DeletedAt.HasValue)
+                    .Select(r =>
+                    {
+                        // Map base round properties
+                        GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(r);
+
+                        // Assign additional properties
+                        roundDTO.RoundName = r.Name;
+                        roundDTO.ContestName = item.Name;
+
+                        // Map problem information if exists
+                        if (r.Problem != null)
+                        {
+                            roundDTO.ProblemType = r.Problem.Type;
+                            roundDTO.Problem = _mapper.Map<GetProblemDTO>(r.Problem);
+                        }
+                        // Map MCQ test information if exists
+                        else if (r.McqTest != null)
+                        {
+                            roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
+                            roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(r.McqTest);
+                        }
+
+                        return roundDTO;
+                    }).ToList();
+
+                    // Map creator ID
+                    contestDTO.CreatedById = Guid.Parse(item.CreatedBy!);
+
+                    // Map creator name
+                    contestDTO.CreatedByName = item.CreatedBy != null && organizerNames.ContainsKey(contestDTO.CreatedById)
+                        ? organizerNames[contestDTO.CreatedById]
+                        : "Unknown Organizer";
 
                     // Convert start/end to ISO 8601 format
                     if (contestDTO.Start.HasValue)
@@ -399,7 +495,7 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.CommitTransaction();
 
                 // Return the updated contest DTO
-                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, false);
+                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, null, false, false);
 
                 return result.Items.First();
             }

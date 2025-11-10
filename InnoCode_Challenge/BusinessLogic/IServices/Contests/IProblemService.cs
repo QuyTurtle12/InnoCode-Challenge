@@ -14,5 +14,7 @@ namespace BusinessLogic.IServices.Contests
         Task<RubricTemplateDTO> GetRubricTemplateAsync(Guid roundId);
         Task<RubricTemplateDTO> CreateRubricAsync(Guid roundId, CreateRubricDTO createRubricDTO);
         Task<RubricTemplateDTO> UpdateRubricAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
+
+        
     }
 }

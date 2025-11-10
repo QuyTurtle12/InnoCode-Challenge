@@ -1,5 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using Utility.Enums;
+using Repository.DTOs.RoundDTOs;
 
 namespace Repository.DTOs.ContestDTOs
 {
@@ -7,7 +7,8 @@ namespace Repository.DTOs.ContestDTOs
     {
         public Guid ContestId { get; set; }
         public DateTime CreatedAt { get; set; }
-        public string CreatedBy { get; set; } = string.Empty;
+        public Guid CreatedById { get; set; }
+        public string CreatedByName { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
 
         // Registration timeline
@@ -24,5 +25,7 @@ namespace Repository.DTOs.ContestDTOs
         // Rewards information
         [MaxLength(4000)]
         public string? RewardsText { get; set; }
+
+        public List<GetRoundDTO>? rounds { get; set; } = null;
     }
 }

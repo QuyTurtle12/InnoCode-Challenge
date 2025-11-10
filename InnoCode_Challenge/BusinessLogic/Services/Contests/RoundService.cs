@@ -1,12 +1,16 @@
-﻿using AutoMapper;
+﻿using System.Security.Claims;
+using AutoMapper;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
+using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.Enums;
@@ -21,13 +25,19 @@ namespace BusinessLogic.Services.Contests
         private readonly IUOW _unitOfWork;
         private readonly IMcqTestService _mcqTestService;
         private readonly IProblemService _problemService;
+        private readonly IContestJudgeService _contestJudgeService;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IConfigService _configService;
 
-        public RoundService(IMapper mapper, IUOW unitOfWork, IMcqTestService mcqTestService, IProblemService problemService)
+        public RoundService(IMapper mapper, IUOW unitOfWork, IMcqTestService mcqTestService, IProblemService problemService, IContestJudgeService contestJudgeService, IHttpContextAccessor httpContextAccessor, IConfigService configService)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
             _mcqTestService = mcqTestService;
             _problemService = problemService;
+            _contestJudgeService = contestJudgeService;
+            _httpContextAccessor = httpContextAccessor;
+            _configService = configService;
         }
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
@@ -425,6 +435,202 @@ namespace BusinessLogic.Services.Contests
                         $"Round dates conflict with existing round '{existingRound.Name}' ({existingRound.Start:yyyy-MM-dd HH:mm:ss} - {existingRound.End:yyyy-MM-dd HH:mm:ss}).");
                 }
             }
+        }
+
+        public async Task DistributeSubmissionsToJudgesAsync(Guid roundId)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate round exists and get contest information
+                Round? round = await _unitOfWork.GetRepository<Round>()
+                    .Entities
+                    .Include(r => r.Contest)
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+                if (round == null)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found"
+                    );
+                }
+
+                // Check if submissions have already been distributed using config service
+                bool alreadyDistributed = await _configService.AreSubmissionsDistributedAsync(roundId);
+
+                if (alreadyDistributed)
+                {
+                    _unitOfWork.CommitTransaction();
+                    return;
+                }
+
+                // Check if round has a manual problem
+                if (round.Problem == null || round.Problem.Type != ProblemTypeEnum.Manual.ToString())
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "This round does not have a manual problem type"
+                    );
+                }
+
+                // Get all judges for this contest
+                IList<JudgeInContestDTO> judges = await _contestJudgeService.GetJudgesByContestAsync(round.ContestId);
+
+                if (judges == null || !judges.Any())
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "No judges available for this contest"
+                    );
+                }
+
+                // Filter only active judges
+                List<JudgeInContestDTO> activeJudges = judges.Where(j => j.Status.ToLower() == "active").ToList();
+
+                if (!activeJudges.Any())
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "No active judges available for submission distribution"
+                    );
+                }
+
+                // Get pending submissions for this round
+                List<Submission> pendingSubmissions = await _unitOfWork.GetRepository<Submission>()
+                    .Entities
+                    .Include(s => s.Team)
+                    .Where(s => s.Problem.RoundId == roundId
+                                && !s.DeletedAt.HasValue
+                                && s.Status == SubmissionStatusEnum.Pending.ToString()
+                                && (string.IsNullOrEmpty(s.JudgedBy) || s.JudgedBy == "pending"))
+                    .OrderBy(s => s.CreatedAt)
+                    .ToListAsync();
+
+                if (!pendingSubmissions.Any())
+                {
+                    // No pending submissions to distribute, but still mark as distributed
+                    _unitOfWork.CommitTransaction();
+                    return;
+                }
+
+                // Distribute submissions equally using round-robin algorithm
+                int judgeIndex = 0;
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Assign submissions to judges
+                foreach (Submission submission in pendingSubmissions)
+                {
+                    JudgeInContestDTO assignedJudge = activeJudges[judgeIndex];
+
+                    submission.JudgedBy = assignedJudge.UserId.ToString();
+
+                    submissionRepo.Update(submission);
+
+                    // Move to next judge
+                    judgeIndex = (judgeIndex + 1) % activeJudges.Count;
+                }
+
+                // Mark submissions as distributed in config service
+                await _configService.MarkSubmissionsAsDistributedAsync(roundId);
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // Rollback on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error distributing submissions: {ex.Message}"
+                );
+            }
+        }
+
+        public async Task<PaginatedList<SubmissionDistributionDTO>> GetManualTypeSubmissionsByRoundId(int pageNumber, int pageSize, Guid roundId, SubmissionStatusEnum? statusFilter)
+        {
+            // Get user ID from JWT token
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"Null User Id");
+
+            // Parse user ID to Guid
+            Guid judgeUserId = Guid.Parse(userId);
+
+            // Get judge user details
+            User? judgeUser = await _unitOfWork.GetRepository<User>()
+                .Entities
+                .FirstOrDefaultAsync(u => u.UserId == judgeUserId);
+
+            if (judgeUser == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Judge user not found");
+            }
+
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            // Query submissions for the specified round and judge
+            IQueryable<Submission> query = submissionRepo
+                .Entities
+                .Where(s => s.Problem.RoundId == roundId
+                            && s.DeletedAt == null
+                            && s.JudgedBy == judgeUserId.ToString())
+                .Include(s => s.Team)
+                .Include(s => s.Problem)
+                .Include(s => s.SubmittedByStudent)
+                    .ThenInclude(st => st.User);
+
+            // Apply status filter if provided
+            if (statusFilter.HasValue)
+            {
+                query = query.Where(s => s.Status == statusFilter.Value.ToString());
+            }
+
+            PaginatedList<Submission> resultQuery = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+            // Project to DTO and order results
+            IReadOnlyCollection<SubmissionDistributionDTO> submissions = resultQuery
+                .Items.Select(s => new SubmissionDistributionDTO
+                {
+                    SubmissionId = s.SubmissionId,
+                    TeamId = s.TeamId,
+                    TeamName = s.Team.Name,
+                    SubmittedByStudentId = s.SubmittedByStudentId ?? Guid.Empty,
+                    SubmitedByStudentName = s.SubmittedByStudent != null ? s.SubmittedByStudent.User.Fullname : "N/A",
+                    JudgeUserId = judgeUserId,
+                    JudgeEmail = judgeUser.Email,
+                    Status = s.Status ?? string.Empty
+                })
+                .OrderBy(s => s.Status)
+                .ToList();
+
+            return new PaginatedList<SubmissionDistributionDTO>(
+                submissions,
+                resultQuery.TotalCount,
+                resultQuery.PageNumber,
+                resultQuery.PageSize
+            );
         }
     }
 }

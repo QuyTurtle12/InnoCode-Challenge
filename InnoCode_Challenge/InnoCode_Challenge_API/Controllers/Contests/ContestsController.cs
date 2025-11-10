@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.Contests;
+using CloudinaryDotNet;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ContestDTOs;
@@ -26,6 +27,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
+        /// <param name="creatorIdSearch"></param>
         /// <param name="nameSearch"></param>
         /// <param name="yearSearch"></param>
         /// <param name="startDate"></param>
@@ -35,12 +37,13 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetContests(int pageNumber = 1,
                                                                                  int pageSize = 10,
                                                                                  Guid? idSearch = null,
+                                                                                 Guid? creatorIdSearch = null,
                                                                                  string? nameSearch = null,
                                                                                  int? yearSearch = null,
                                                                                  DateTime? startDate = null,
                                                                                  DateTime? endDate = null)
         {
-            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch,
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch,
                                                                   nameSearch, yearSearch, startDate, endDate);
 
             var paging = new
@@ -68,6 +71,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
+        /// <param name="creatorIdSearch"></param>
         /// <param name="nameSearch"></param>
         /// <param name="yearSearch"></param>
         /// <param name="startDate"></param>
@@ -75,16 +79,18 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <returns></returns>
         [HttpGet("mine")]
         [Authorize(Policy ="RequireStudentRole")]
-        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetParticipatedContests(int pageNumber = 1,
-                                                                                 int pageSize = 10,
-                                                                                 Guid? idSearch = null,
-                                                                                 string? nameSearch = null,
-                                                                                 int? yearSearch = null,
-                                                                                 DateTime? startDate = null,
-                                                                                 DateTime? endDate = null)
+        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetParticipatedContests(
+                                                                                int pageNumber = 1,
+                                                                                int pageSize = 10,
+                                                                                Guid? idSearch = null,
+                                                                                Guid? creatorIdSearch = null,
+                                                                                string? nameSearch = null,
+                                                                                int? yearSearch = null,
+                                                                                DateTime? startDate = null,
+                                                                                DateTime? endDate = null)
         {
-            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch,
-                                                                  nameSearch, yearSearch, startDate, endDate, true);
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch,
+                                                                  nameSearch, yearSearch, startDate, endDate, true, false);
 
             var paging = new
             {
@@ -105,21 +111,50 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
-        ///// <summary>
-        ///// Create a New Contest
-        ///// </summary>
-        ///// <param name="contestDTO"></param>
-        ///// <returns></returns>
-        //[HttpPost]
-        //public async Task<IActionResult> CreateContest(CreateContestDTO contestDTO)
-        //{
-        //    await _contestService.CreateContestAsync(contestDTO);
-        //    return Ok(new BaseResponseModel(
-        //                statusCode: StatusCodes.Status201Created,
-        //                code: ResponseCodeConstants.SUCCESS,
-        //                message: "Create contest successfully."
-        //            ));
-        //}
+        /// <summary>
+        /// Get Contests that this logged-in organizer created with Pagination and Optional Filters
+        /// </summary>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="idSearch"></param>
+        /// <param name="creatorIdSearch">organizer ID</param>
+        /// <param name="nameSearch"></param>
+        /// <param name="yearSearch"></param>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <returns></returns>
+        [HttpGet("my-contests")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetAllContestsOfOrganizer(
+                                                                    int pageNumber = 1,
+                                                                    int pageSize = 10,
+                                                                    Guid? idSearch = null,
+                                                                    string? nameSearch = null,
+                                                                    int? yearSearch = null,
+                                                                    DateTime? startDate = null,
+                                                                    DateTime? endDate = null)
+        {
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, null,
+                                                                  nameSearch, yearSearch, startDate, endDate, false, true);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                        data: result.Items,
+                        additionalData: paging,
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Contests retrieved successfully."
+                    ));
+        }
 
         /// <summary>
         /// Update an Existing Contest
@@ -138,22 +173,6 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         message: "Update contest successfully."
                     ));
         }
-
-        ///// <summary>
-        ///// Publish a Contest
-        ///// </summary>
-        ///// <param name="id"></param>
-        ///// <returns></returns>
-        //[HttpPut("{id}/publish")]
-        //public async Task<IActionResult> PublishedContest(Guid id)
-        //{
-        //    await _contestService.PublishContestAsync(id);
-        //    return Ok(new BaseResponseModel(
-        //                statusCode: StatusCodes.Status200OK,
-        //                code: ResponseCodeConstants.SUCCESS,
-        //                message: "Publish contest successfully."
-        //            ));
-        //}
 
         /// <summary>
         /// Delete a Contest

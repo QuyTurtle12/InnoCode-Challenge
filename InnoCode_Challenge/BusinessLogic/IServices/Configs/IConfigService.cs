@@ -14,5 +14,8 @@ namespace BusinessLogic.IServices
         Task SetRegistrationWindowAsync(Guid contestId, SetRegistrationWindowDTO dto, string performedByRole);
         Task SetContestPolicyAsync(Guid contestId, SetContestPolicyDTO dto, string performedByRole);
 
+        Task<bool> AreSubmissionsDistributedAsync(Guid roundId);
+        Task MarkSubmissionsAsDistributedAsync(Guid roundId);
+        Task ResetDistributionStatusAsync(Guid roundId);
     }
 }
