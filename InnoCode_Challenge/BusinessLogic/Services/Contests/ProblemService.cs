@@ -263,7 +263,8 @@ namespace BusinessLogic.Services.Contests
                 // Get all rubric criteria for this problem
                 List<TestCase> rubricCriteria = await rubricRepo.Entities
                     .Where(tc => tc.ProblemId == problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.Manual.ToString())
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeleteAt.HasValue)
                     .OrderBy(tc => tc.TestCaseId)
                     .ToListAsync();
 
@@ -305,7 +306,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<RubricTemplateDTO> CreateRubricAsync(Guid roundId, CreateRubricDTO createRubricDTO)
+        public async Task<RubricTemplateDTO> CreateRubricCriterionAsync(Guid roundId, CreateRubricDTO createRubricDTO)
         {
             try
             {
@@ -419,7 +420,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<RubricTemplateDTO> UpdateRubricAsync(Guid roundId, UpdateRubricDTO updateRubricDTO)
+        public async Task<RubricTemplateDTO> UpdateRubricCriterionAsync(Guid roundId, UpdateRubricDTO updateRubricDTO)
         {
             try
             {
@@ -436,7 +437,6 @@ namespace BusinessLogic.Services.Contests
                     .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
                     .FirstOrDefaultAsync();
 
-                // Check if round exists
                 if (round == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
@@ -464,77 +464,79 @@ namespace BusinessLogic.Services.Contests
                         "Rubric can only be updated for manual problem types");
                 }
 
-                // Get existing rubric criteria
-                List<TestCase> existingCriteria = await rubricRepo.Entities
-                    .Where(tc => tc.ProblemId == problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.Manual.ToString())
-                    .ToListAsync();
-
-                // Create dictionaries for efficient lookup
-                Dictionary<Guid, TestCase> existingDict = existingCriteria.ToDictionary(c => c.TestCaseId);
-                Dictionary<Guid, UpdateRubricCriterionDTO> updateDict = updateRubricDTO.Criteria
-                    .Where(c => c.RubricId.HasValue)
-                    .ToDictionary(c => c.RubricId!.Value);
-
-                List<TestCase> resultCriteria = new List<TestCase>();
-
-                // Process updates and identify items to delete
-                foreach (TestCase existing in existingCriteria)
+                // Validate that all criteria have RubricId
+                if (updateRubricDTO.Criteria.Any(c => !c.RubricId.HasValue))
                 {
-                    if (updateDict.TryGetValue(existing.TestCaseId, out UpdateRubricCriterionDTO? updateDTO))
-                    {
-                        // Update existing criterion
-                        existing.Description = updateDTO.Description;
-                        existing.Weight = updateDTO.MaxScore;
-
-                        await rubricRepo.UpdateAsync(existing);
-                        resultCriteria.Add(existing);
-                    }
-                    else
-                    {
-                        // Delete criterion not in update list
-                        existing.DeleteAt = DateTime.UtcNow;
-                        await rubricRepo.UpdateAsync(existing);
-                    }
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "All criteria must have a RubricId for update operation. Use CreateRubricAsync to add new criteria.");
                 }
 
-                // Create new criteria (items without RubricId or not found in existing)
+                // Get the rubric IDs to update
+                List<Guid> rubricIdsToUpdate = updateRubricDTO.Criteria
+                    .Select(c => c.RubricId!.Value)
+                    .ToList();
+
+                // Check for duplicates in the request
+                if (rubricIdsToUpdate.Count != rubricIdsToUpdate.Distinct().Count())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Duplicate rubric IDs found in the request.");
+                }
+
+                // Get existing rubric criteria
+                List<TestCase> existingCriteria = await rubricRepo.Entities
+                    .Where(tc => rubricIdsToUpdate.Contains(tc.TestCaseId)
+                        && tc.ProblemId == problem.ProblemId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeleteAt.HasValue)
+                    .ToListAsync();
+
+                // Validate all rubric IDs exist
+                if (existingCriteria.Count != rubricIdsToUpdate.Count)
+                {
+                    List<Guid> foundIds = existingCriteria.Select(c => c.TestCaseId).ToList();
+                    List<Guid> notFoundIds = rubricIdsToUpdate.Except(foundIds).ToList();
+
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"The following rubric IDs were not found or do not belong to this round: {string.Join(", ", notFoundIds)}");
+                }
+
+                // Create dictionary for efficient lookup
+                Dictionary<Guid, TestCase> existingDict = existingCriteria.ToDictionary(c => c.TestCaseId);
+
+                // Update existing criteria
                 foreach (UpdateRubricCriterionDTO criterionDTO in updateRubricDTO.Criteria)
                 {
-                    // If RubricId is null or not in existing, create new
-                    if (!criterionDTO.RubricId.HasValue || !existingDict.ContainsKey(criterionDTO.RubricId.Value))
-                    {
-                        TestCase newCriterion = new TestCase
-                        {
-                            TestCaseId = Guid.NewGuid(),
-                            ProblemId = problem.ProblemId,
-                            Description = criterionDTO.Description,
-                            Type = TestCaseTypeEnum.Manual.ToString(),
-                            Weight = criterionDTO.MaxScore,
-                            Input = null,
-                            ExpectedOutput = null,
-                            TimeLimitMs = null,
-                            MemoryKb = null
-                        };
+                    TestCase existingCriterion = existingDict[criterionDTO.RubricId!.Value];
 
-                        await rubricRepo.InsertAsync(newCriterion);
-                        resultCriteria.Add(newCriterion);
-                    }
+                    // Update properties
+                    existingCriterion.Description = criterionDTO.Description;
+                    existingCriterion.Weight = criterionDTO.MaxScore;
+
+                    await rubricRepo.UpdateAsync(existingCriterion);
                 }
 
                 await _unitOfWork.SaveAsync();
-
-                // Commit the transaction
                 _unitOfWork.CommitTransaction();
+
+                // Get all rubric criteria for return
+                List<TestCase> allCriteria = await rubricRepo.Entities
+                    .Where(tc => tc.ProblemId == problem.ProblemId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeleteAt.HasValue)
+                    .OrderBy(tc => tc.TestCaseId)
+                    .ToListAsync();
 
                 // Return updated rubric template
                 return new RubricTemplateDTO
                 {
                     ProblemId = problem.ProblemId,
                     ProblemDescription = problem.Description,
-                    TotalMaxScore = resultCriteria.Sum(c => c.Weight),
-                    Criteria = resultCriteria
-                        .OrderBy(c => c.TestCaseId)
+                    TotalMaxScore = allCriteria.Sum(c => c.Weight),
+                    Criteria = allCriteria
                         .Select((c, index) => new RubricCriterionDTO
                         {
                             RubricId = c.TestCaseId,
@@ -557,6 +559,68 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating rubric: {ex.Message}");
+            }
+        }
+
+        public async Task DeleteRubricCriterionAsync(Guid rubricId)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Get rubric repository
+                IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+
+                // Find the rubric criterion
+                TestCase? rubricCriterion = await rubricRepo.Entities
+                    .Include(tc => tc.Problem)
+                    .FirstOrDefaultAsync(tc => tc.TestCaseId == rubricId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeleteAt.HasValue);
+
+                if (rubricCriterion == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Rubric criterion not found or already deleted.");
+                }
+
+                // Verify the problem exists and is not deleted
+                if (rubricCriterion.Problem.DeletedAt.HasValue)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Cannot delete rubric criterion for a deleted problem.");
+                }
+
+                // Verify this is a manual problem type
+                if (rubricCriterion.Problem.Type != ProblemTypeEnum.Manual.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Can only delete rubric criteria for manual problem types.");
+                }
+
+                // Soft delete the rubric criterion
+                rubricCriterion.DeleteAt = DateTime.UtcNow;
+                await rubricRepo.UpdateAsync(rubricCriterion);
+
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error deleting rubric criterion: {ex.Message}");
             }
         }
     }

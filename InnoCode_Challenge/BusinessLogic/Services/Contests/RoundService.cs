@@ -658,7 +658,7 @@ namespace BusinessLogic.Services.Contests
                     SubmissionId = s.SubmissionId,
                     TeamId = s.TeamId,
                     TeamName = s.Team.Name,
-                    SubmittedByStudentId = s.SubmittedByStudentId ?? Guid.Empty,
+                    SubmittedByStudentId = s.SubmittedByStudentId,
                     SubmitedByStudentName = s.SubmittedByStudent != null ? s.SubmittedByStudent.User.Fullname : "N/A",
                     JudgeUserId = judgeUserId,
                     JudgeEmail = judgeUser.Email,

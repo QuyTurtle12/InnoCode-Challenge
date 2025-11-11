@@ -14,7 +14,6 @@ namespace BusinessLogic.IServices.Submissions
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
         Task<Guid> CreateFileSubmissionAsync(Guid roundId, IFormFile file);
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);
-        Task<GetSubmissionDTO> GetSubmissionResultOfLoggedInStudentAsync(Guid roundId);
         Task AddScoreToTeamInLeaderboardAsync(Guid submissionId);
         Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO);
         Task<RubricEvaluationResultDTO> GetMyManualTestResultAsync(Guid roundId);

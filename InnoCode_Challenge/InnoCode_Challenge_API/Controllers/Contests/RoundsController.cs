@@ -19,14 +19,12 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     public class RoundsController : ControllerBase
     {
         private readonly IRoundService _roundService;
-        private readonly IProblemService _problemService;
         private readonly ISubmissionService _submissionService;
 
         // Constructor
-        public RoundsController(IRoundService roundService, IProblemService problemService, ISubmissionService submissionService)
+        public RoundsController(IRoundService roundService, ISubmissionService submissionService)
         {
             _roundService = roundService;
-            _problemService = problemService;
             _submissionService = submissionService;
         }
 
@@ -159,98 +157,65 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
-        /// Get rubric template (scoring criteria) for a problem
+        /// Get my manual test submission result (Student only)
         /// </summary>
         /// <param name="roundId">Round ID</param>
-        /// <returns>Rubric template with all criteria</returns>
-        [HttpGet("{roundId}/rubric")]
-        public async Task<IActionResult> GetRubricTemplate(Guid roundId)
-        {
-            RubricTemplateDTO template = await _problemService.GetRubricTemplateAsync(roundId);
-
-            return Ok(new BaseResponseModel<RubricTemplateDTO>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: template,
-                message: "Rubric template retrieved successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Create rubric (scoring criteria) for a manual problem in a specific round
-        /// </summary>
-        /// <param name="roundId">Round ID</param>
-        /// <param name="createRubricDTO">Rubric criteria to create</param>
-        /// <returns>Created rubric template</returns>
-        [HttpPost("{roundId}/rubric")]
-        [Authorize(Policy = "RequireOrganizerRole")]
-        public async Task<IActionResult> CreateRubric(Guid roundId, CreateRubricDTO createRubricDTO)
-        {
-            RubricTemplateDTO template = await _problemService.CreateRubricAsync(roundId, createRubricDTO);
-
-            return Ok(new BaseResponseModel<RubricTemplateDTO>(
-                statusCode: StatusCodes.Status201Created,
-                code: ResponseCodeConstants.SUCCESS,
-                data: template,
-                message: "Rubric created successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Update rubric (scoring criteria) for a manual problem in a specific round
-        /// </summary>
-        /// <param name="roundId">Round ID</param>
-        /// <param name="updateRubricDTO">Updated rubric criteria</param>
-        /// <returns>Updated rubric template</returns>
-        [HttpPut("{roundId}/rubric")]
-        [Authorize(Policy = "RequireOrganizerRole")]
-        public async Task<IActionResult> UpdateRubric(Guid roundId, UpdateRubricDTO updateRubricDTO)
-        {
-            RubricTemplateDTO template = await _problemService.UpdateRubricAsync(roundId, updateRubricDTO);
-
-            return Ok(new BaseResponseModel<RubricTemplateDTO>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: template,
-                message: "Rubric updated successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Get auto test submission result of the logged-in student for a specific round
-        /// </summary>
-        /// <param name="roundId"></param>
-        /// <returns></returns>
-        [HttpGet("{roundId}/auto-test/results/me")]
+        /// <returns>Manual test evaluation result for the logged-in student</returns>
+        [HttpGet("{roundId}/manual-test/my-result")]
         [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> GetAutoTestSubmissionResults(Guid roundId)
+        public async Task<IActionResult> GetMyManualTestResult(Guid roundId)
         {
-            GetSubmissionDTO result = await _submissionService.GetSubmissionResultOfLoggedInStudentAsync(roundId);
-            return Ok(new BaseResponseModel<GetSubmissionDTO>(
+            RubricEvaluationResultDTO result = await _submissionService.GetMyManualTestResultAsync(roundId);
+
+            return Ok(new BaseResponseModel<RubricEvaluationResultDTO>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
-                message: "Submission result retrieved successfully."
+                message: "Manual test result retrieved successfully."
             ));
         }
 
         /// <summary>
-        /// Evaluates a submission using the Judge0 service
+        /// Get all manual test results for a round with pagination and optional filters (Organizer only)
         /// </summary>
         /// <param name="roundId"></param>
-        /// <param name="submissionDTO"></param>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="studentIdSearch"></param>
+        /// <param name="teamIdSearch"></param>
+        /// <param name="studentNameSearch"></param>
+        /// <param name="teamNameSearch"></param>
         /// <returns></returns>
-        [HttpPost("{roundId}/submissions/auto-evaluations")]
-        [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
+        [HttpGet("{roundId}/manual-test/results")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetAllManualTestResults(
+            Guid roundId,
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? studentIdSearch = null,
+            Guid? teamIdSearch = null,
+            string? studentNameSearch = null,
+            string? teamNameSearch = null)
         {
-            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
+            PaginatedList<RubricEvaluationResultDTO> results = await _submissionService
+                .GetAllManualTestResultsByRoundAsync(roundId, pageNumber, pageSize, studentIdSearch, teamIdSearch, studentNameSearch, teamNameSearch);
 
-            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
+            var paging = new
+            {
+                results.PageNumber,
+                results.PageSize,
+                results.TotalPages,
+                results.TotalCount,
+                results.HasPreviousPage,
+                results.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                data: result,
-                message: "Submission evaluated successfully."
+                data: results.Items,
+                additionalData: paging,
+                message: "Manual test results retrieved successfully."
             ));
         }
 
@@ -261,7 +226,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="roundId">Round ID</param>
         /// <returns>Submission ID</returns>
         [HttpPost]
-        [Route("{roundId}/submissions/files")]
+        [Route("{roundId}/manual-test/submissions")]
         [Consumes("multipart/form-data")]
         [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> UploadFileSubmission(
@@ -278,5 +243,95 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 message: "File submission created successfully."
             ));
         }
+
+        /// <summary>
+        /// Evaluates a submission using the Judge0 service
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="submissionDTO"></param>
+        /// <returns></returns>
+        [HttpPost("{roundId}/auto-test/submissions")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
+        {
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
+
+            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Submission evaluated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get auto test result for the logged-in student in a specific round
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Auto test submission result</returns>
+        [HttpGet("{roundId}/auto-test/my-result")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> GetMyAutoTestResult(Guid roundId)
+        {
+            GetSubmissionDTO result = await _submissionService.GetMyAutoTestResultAsync(roundId);
+
+            return Ok(new BaseResponseModel<GetSubmissionDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Auto test result retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get all auto test results by round with pagination and optional filters
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <param name="pageNumber">Page number (default: 1)</param>
+        /// <param name="pageSize">Page size (default: 10)</param>
+        /// <param name="studentIdSearch">Filter by student ID</param>
+        /// <param name="teamIdSearch">Filter by team ID</param>
+        /// <param name="studentNameSearch">Filter by student name</param>
+        /// <param name="teamNameSearch">Filter by team name</param>
+        /// <returns>Paginated list of auto test results</returns>
+        [HttpGet("{roundId}/auto-test/results")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetAllAutoTestResultsByRound(
+            Guid roundId,
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? studentIdSearch = null,
+            Guid? teamIdSearch = null,
+            string? studentNameSearch = null,
+            string? teamNameSearch = null)
+        {
+            PaginatedList<GetSubmissionDTO> results = await _submissionService.GetAllAutoTestResultsByRoundAsync(
+                roundId,
+                pageNumber,
+                pageSize,
+                studentIdSearch,
+                teamIdSearch,
+                studentNameSearch,
+                teamNameSearch);
+
+            var paging = new
+            {
+                results.PageNumber,
+                results.PageSize,
+                results.TotalPages,
+                results.TotalCount,
+                results.HasPreviousPage,
+                results.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: results.Items,
+                additionalData: paging,
+                message: "Auto test results retrieved successfully."
+            ));
+        }
+
     }
 }

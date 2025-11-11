@@ -12,9 +12,9 @@ namespace BusinessLogic.IServices.Contests
         Task DeleteProblemAsync(Guid id);
 
         Task<RubricTemplateDTO> GetRubricTemplateAsync(Guid roundId);
-        Task<RubricTemplateDTO> CreateRubricAsync(Guid roundId, CreateRubricDTO createRubricDTO);
-        Task<RubricTemplateDTO> UpdateRubricAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
+        Task<RubricTemplateDTO> CreateRubricCriterionAsync(Guid roundId, CreateRubricDTO createRubricDTO);
+        Task<RubricTemplateDTO> UpdateRubricCriterionAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
+        Task DeleteRubricCriterionAsync(Guid rubricId);
 
-        
     }
 }

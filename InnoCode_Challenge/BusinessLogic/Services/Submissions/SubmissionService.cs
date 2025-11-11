@@ -1317,52 +1317,35 @@ namespace BusinessLogic.Services.Submissions
                 // Get the submission repository
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
-                // Get all auto test submissions for this student in this round
-                var allSubmissions = await submissionRepo.Entities
+                Submission? submission = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
                     .Where(s => s.Problem.RoundId == roundId
                         && s.SubmittedByStudentId == studentId
                         && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
                         && !s.DeletedAt.HasValue)
-                    .OrderByDescending(s => s.CreatedAt)
-                    .Select(s => new { s.SubmissionId, s.CreatedAt, s.ProblemId })
-                    .ToListAsync();
-
-                if (!allSubmissions.Any())
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"No auto test submission found for this round");
-                }
-
-                // Get the latest submission ID (highest attempt number)
-                Guid latestSubmissionId = allSubmissions.First().SubmissionId;
-
-                // Now get the full submission with all includes
-                Submission? submission = await submissionRepo.Entities
-                    .Include(s => s.Problem)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
                         .ThenInclude(st => st!.User)
                     .Include(s => s.SubmissionDetails)
                         .ThenInclude(sd => sd.Testcase)
                     .Include(s => s.SubmissionArtifacts)
-                    .Where(s => s.SubmissionId == latestSubmissionId)
+                    .OrderByDescending(s => s.CreatedAt)
                     .FirstOrDefaultAsync();
 
-                if (submission == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Latest auto test submission not found");
-                }
+                // Calculate attempt number with a separate query
+                int attemptNumber = await submissionRepo.Entities
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.SubmittedByStudentId == studentId
+                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && !s.DeletedAt.HasValue)
+                    .CountAsync();
 
                 // Map to DTO
                 GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
-                dto.TeamName = submission.Team?.Name ?? string.Empty;
+                dto.TeamName = submission!.Team?.Name ?? string.Empty;
                 dto.SubmittedByStudentName = submission.SubmittedByStudent?.User.Fullname ?? string.Empty;
-
-                // Set the attempt number
-                dto.submissionAttemptNumber = allSubmissions.Count;
+                dto.submissionAttemptNumber = attemptNumber;
 
                 // Map test case details to DTOs
                 if (submission.SubmissionDetails != null)
@@ -1425,70 +1408,69 @@ namespace BusinessLogic.Services.Submissions
                 // Get repositories
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
-                // Find latest submission per student
-                IQueryable<Submission> latestSubmissionsQuery = submissionRepo.Entities
+                // Build the base query
+                IQueryable<Submission> baseQuery = submissionRepo.Entities
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
                     .Where(s => s.Problem.RoundId == roundId
                         && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
                         && !s.DeletedAt.HasValue)
-                    .GroupBy(s => s.SubmittedByStudentId)
-                    .Select(g => g.OrderByDescending(s => s.CreatedAt).First());
-
-                // Apply filters using
-                if (studentIdSearch.HasValue)
-                {
-                    latestSubmissionsQuery = latestSubmissionsQuery.Where(s => s.SubmittedByStudentId == studentIdSearch.Value);
-                }
-
-                if (teamIdSearch.HasValue)
-                {
-                    latestSubmissionsQuery = latestSubmissionsQuery.Where(s => s.TeamId == teamIdSearch.Value);
-                }
-
-                if (!string.IsNullOrWhiteSpace(studentNameSearch))
-                {
-                    latestSubmissionsQuery = latestSubmissionsQuery
-                        .Include(s => s.SubmittedByStudent)
-                            .ThenInclude(st => st!.User)
-                        .Where(s => s.SubmittedByStudent!.User!.Fullname.Contains(studentNameSearch));
-                }
-
-                if (!string.IsNullOrWhiteSpace(teamNameSearch))
-                {
-                    latestSubmissionsQuery = latestSubmissionsQuery
-                        .Include(s => s.Team)
-                        .Where(s => s.Team.Name.Contains(teamNameSearch));
-                }
-
-                // Add all necessary includes for the final query
-                IQueryable<Submission> finalQuery = latestSubmissionsQuery
-                    .Include(s => s.Problem)
-                    .Include(s => s.Team)
+                    .Include(s => s.Team) 
                     .Include(s => s.SubmittedByStudent)
                         .ThenInclude(st => st!.User)
                     .Include(s => s.SubmissionDetails)
                         .ThenInclude(sd => sd.Testcase)
-                    .Include(s => s.SubmissionArtifacts)
-                    .OrderByDescending(s => s.CreatedAt);
+                    .Include(s => s.SubmissionArtifacts);
 
-                // Get paginated results
-                PaginatedList<Submission> paginatedSubmissions = await submissionRepo.GetPagingAsync(finalQuery, pageNumber, pageSize);
+                // Apply filters using
+                if (studentIdSearch.HasValue)
+                {
+                    baseQuery = baseQuery.Where(s => s.SubmittedByStudentId == studentIdSearch.Value);
+                }
 
-                // Create attempt lookup
-                List<Guid> studentIds = paginatedSubmissions.Items.Select(s => s.SubmittedByStudentId).Distinct().ToList();
+                if (teamIdSearch.HasValue)
+                {
+                    baseQuery = baseQuery.Where(s => s.TeamId == teamIdSearch.Value);
+                }
 
-                Dictionary<Guid, int> attemptCounts = await submissionRepo.Entities
-                    .Where(s => s.Problem.RoundId == roundId
-                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                        && !s.DeletedAt.HasValue
-                        && studentIds.Contains(s.SubmittedByStudentId))
+                if (!string.IsNullOrWhiteSpace(studentNameSearch))
+                {
+                    baseQuery = baseQuery.Where(s => s.SubmittedByStudent!.User!.Fullname.Contains(studentNameSearch));
+                }
+
+                if (!string.IsNullOrWhiteSpace(teamNameSearch))
+                {
+                    baseQuery = baseQuery.Where(s => s.Team.Name.Contains(teamNameSearch));
+                }
+
+                List<Submission> allSubmissions = await baseQuery.ToListAsync();
+
+                // Group by student and get the latest submission for each
+                List<Submission> latestSubmissions = allSubmissions
                     .GroupBy(s => s.SubmittedByStudentId)
-                    .ToDictionaryAsync(
+                    .Select(g => g.OrderByDescending(s => s.CreatedAt).First())
+                    .OrderByDescending(s => s.CreatedAt)
+                    .ToList();
+
+                int totalCount = latestSubmissions.Count;
+                List<Submission> paginatedSubmissions = latestSubmissions
+                    .Skip((pageNumber - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                // Calculate attempt numbers
+                List<Guid> studentIds = paginatedSubmissions.Select(s => s.SubmittedByStudentId).Distinct().ToList();
+
+                Dictionary<Guid, int> attemptCounts = allSubmissions
+                    .Where(s => studentIds.Contains(s.SubmittedByStudentId))
+                    .GroupBy(s => s.SubmittedByStudentId)
+                    .ToDictionary(
                         g => g.Key,
                         g => g.Count()
                     );
 
                 // Map to DTOs
-                IReadOnlyCollection<GetSubmissionDTO> results = paginatedSubmissions.Items.Select(submission =>
+                IReadOnlyCollection<GetSubmissionDTO> results = paginatedSubmissions.Select(submission =>
                 {
                     // Map basic submission info
                     GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
@@ -1515,9 +1497,9 @@ namespace BusinessLogic.Services.Submissions
 
                 return new PaginatedList<GetSubmissionDTO>(
                     results,
-                    paginatedSubmissions.TotalCount,
-                    paginatedSubmissions.PageNumber,
-                    paginatedSubmissions.PageSize);
+                    totalCount,
+                    pageNumber,
+                    pageSize);
             }
             catch (Exception ex)
             {

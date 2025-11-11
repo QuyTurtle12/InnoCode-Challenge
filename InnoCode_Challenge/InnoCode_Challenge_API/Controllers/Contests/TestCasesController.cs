@@ -96,7 +96,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        [HttpDelete("test-cases/{id}")]
+        [HttpDelete("rounds/{roundId}/test-cases/{id}")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> DeleteTestCase(Guid id)
         {

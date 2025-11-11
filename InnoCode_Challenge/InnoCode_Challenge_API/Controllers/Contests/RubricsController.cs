@@ -1,40 +1,22 @@
 ﻿using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {
-    [Route("api/[controller]")]
+    [Route("api/")]
     [ApiController]
-    public class ProblemsController : ControllerBase
+    public class RubricsController : ControllerBase
     {
         private readonly IProblemService _problemService;
 
-        // Constructor
-        public ProblemsController(IProblemService problemService)
+        public RubricsController(IProblemService problemService)
         {
             _problemService = problemService;
-        }
-
-        /// <summary>
-        /// Update an existing problem
-        /// </summary>
-        /// <param name="id">Problem ID</param>
-        /// <param name="problemDTO">Updated problem data</param>
-        /// <returns>No content if successful</returns>
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateProblem(Guid id, UpdateProblemDTO problemDTO)
-        {
-            await _problemService.UpdateProblemAsync(id, problemDTO);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Update Problem successfully."
-                    )); ;
         }
 
         /// <summary>
@@ -76,7 +58,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
-        /// Update rubric (scoring criteria) for a manual problem in a specific round
+        /// Update rubrics (scoring criteria) for a manual problem in a specific round
         /// </summary>
         /// <param name="roundId">Round ID</param>
         /// <param name="updateRubricDTO">Updated rubric criteria</param>
@@ -92,6 +74,23 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 code: ResponseCodeConstants.SUCCESS,
                 data: template,
                 message: "Rubric updated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Delete a rubric criterion by id
+        /// </summary>
+        /// <param name="id">Rubric criterion ID to delete</param>
+        [HttpDelete("rounds/{roundId}/rubric/{id}")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> DeleteRubricCriterion(Guid id)
+        {
+            await _problemService.DeleteRubricCriterionAsync(id);
+
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Rubric criterion deleted successfully."
             ));
         }
     }
