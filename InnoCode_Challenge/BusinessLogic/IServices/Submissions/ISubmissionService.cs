@@ -19,5 +19,8 @@ namespace BusinessLogic.IServices.Submissions
         Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO);
         Task<RubricEvaluationResultDTO> GetMyManualTestResultAsync(Guid roundId);
         Task<PaginatedList<RubricEvaluationResultDTO>> GetAllManualTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
+        Task<GetSubmissionDTO> GetMyAutoTestResultAsync(Guid roundId);
+        Task<PaginatedList<GetSubmissionDTO>> GetAllAutoTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
+
     }
 }

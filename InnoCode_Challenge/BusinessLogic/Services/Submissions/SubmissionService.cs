@@ -1,5 +1,4 @@
-﻿using System.Security.Claims;
-using AutoMapper;
+﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Submissions;
@@ -12,6 +11,8 @@ using Repository.DTOs.SubmissionArtifactDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
+using System.Linq;
+using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -28,6 +29,11 @@ namespace BusinessLogic.Services.Submissions
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
         private readonly ILeaderboardEntryService _leaderboardService;
+
+        private const string OPERATION_NAME = "submit code";
+        private const string DEFAULT_JUDGED_BY = "system";
+        private const double DEFAULT_TIMELIMIT = 10.0;
+        private const int DEFAULT_MEMORY = 512000;
 
         // Constructor
         public SubmissionService(
@@ -53,7 +59,7 @@ namespace BusinessLogic.Services.Submissions
             {
                 // Get the submission repository
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                
+
                 // Start with base query
                 IQueryable<Submission> query = submissionRepo
                     .Entities
@@ -69,7 +75,7 @@ namespace BusinessLogic.Services.Submissions
                 {
                     query = query.Where(s => s.SubmissionId == idSearch.Value);
                 }
-                
+
                 if (roundIdSearch.HasValue)
                 {
                     query = query.Where(s => s.Problem.RoundId == roundIdSearch.Value);
@@ -135,9 +141,9 @@ namespace BusinessLogic.Services.Submissions
                         .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
                         .ToList();
 
-                    return dto; 
+                    return dto;
                 }).ToList();
-                
+
                 // Create new paginated list with mapped DTOs
                 return new PaginatedList<GetSubmissionDTO>(
                     result,
@@ -164,29 +170,29 @@ namespace BusinessLogic.Services.Submissions
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
-                
+
                 // Get the submission repository
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                
+
                 // Find the existing submission
                 Submission? existingSubmission = await submissionRepo.GetByIdAsync(id);
-                
+
                 if (existingSubmission == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"Submission with ID {id} not found.");
                 }
-                
+
                 // Map DTO to entity
                 _mapper.Map(submissionDTO, existingSubmission);
-                
+
                 // Update the submission
                 await submissionRepo.UpdateAsync(existingSubmission);
-                
+
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
-                
+
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
             }
@@ -214,7 +220,7 @@ namespace BusinessLogic.Services.Submissions
                 _unitOfWork.BeginTransaction();
 
                 // Check round deadline before allowing submission
-                await ValidateRoundDeadlineAsync(roundId, "submit code");
+                await ValidateRoundDeadlineAsync(roundId, OPERATION_NAME);
 
                 // Get problem info
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
@@ -287,7 +293,7 @@ namespace BusinessLogic.Services.Submissions
                     TeamId = teamId,
                     ProblemId = problem.ProblemId,
                     SubmittedByStudentId = studentId,
-                    JudgedBy = "system",
+                    JudgedBy = DEFAULT_JUDGED_BY,
                     Status = SubmissionStatusEnum.Pending.ToString(),
                     Score = 0,
                     CreatedAt = DateTime.UtcNow
@@ -325,8 +331,8 @@ namespace BusinessLogic.Services.Submissions
                         Stdin = tc.Input ?? string.Empty,
                         ExpectedOutput = tc.ExpectedOutput ?? string.Empty
                     }).ToList(),
-                    TimeLimitSec = testCases.Max(tc => tc.TimeLimitMs) / 1000.0 ?? 2.0,
-                    MemoryLimitKb = testCases.Max(tc => tc.MemoryKb) ?? 128000
+                    TimeLimitSec = testCases.Max(tc => tc.TimeLimitMs) / 1000.0 ?? DEFAULT_TIMELIMIT,
+                    MemoryLimitKb = testCases.Max(tc => tc.MemoryKb) ?? DEFAULT_MEMORY
                 };
 
                 // Auto evaluate submission using Judge0 service
@@ -680,7 +686,8 @@ namespace BusinessLogic.Services.Submissions
                     .FirstOrDefaultAsync() ?? "Unknown";
 
                 // Validate submission existence
-                if (submission == null) {
+                if (submission == null)
+                {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"No submission found for round \"{roundName}\" by the logged-in student");
@@ -702,7 +709,8 @@ namespace BusinessLogic.Services.Submissions
                     dto.Details = submission.SubmissionDetails
                         .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
                         .ToList();
-                } else
+                }
+                else
                 {
                     dto.Details = null;
                 }
@@ -1279,6 +1287,248 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving manual test results: {ex.Message}");
+            }
+        }
+
+        public async Task<GetSubmissionDTO> GetMyAutoTestResultAsync(Guid roundId)
+        {
+            try
+            {
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "User ID not found");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = await studentRepo.Entities
+                    .Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefaultAsync();
+
+                if (studentId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Student not found");
+                }
+
+                // Get the submission repository
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Get all auto test submissions for this student in this round
+                var allSubmissions = await submissionRepo.Entities
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.SubmittedByStudentId == studentId
+                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && !s.DeletedAt.HasValue)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .Select(s => new { s.SubmissionId, s.CreatedAt, s.ProblemId })
+                    .ToListAsync();
+
+                if (!allSubmissions.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No auto test submission found for this round");
+                }
+
+                // Get the latest submission ID (highest attempt number)
+                Guid latestSubmissionId = allSubmissions.First().SubmissionId;
+
+                // Now get the full submission with all includes
+                Submission? submission = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                    .Include(s => s.Team)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
+                    .Include(s => s.SubmissionArtifacts)
+                    .Where(s => s.SubmissionId == latestSubmissionId)
+                    .FirstOrDefaultAsync();
+
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Latest auto test submission not found");
+                }
+
+                // Map to DTO
+                GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
+                dto.TeamName = submission.Team?.Name ?? string.Empty;
+                dto.SubmittedByStudentName = submission.SubmittedByStudent?.User.Fullname ?? string.Empty;
+
+                // Set the attempt number
+                dto.submissionAttemptNumber = allSubmissions.Count;
+
+                // Map test case details to DTOs
+                if (submission.SubmissionDetails != null)
+                {
+                    dto.Details = submission.SubmissionDetails
+                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .ToList();
+                }
+                else
+                {
+                    dto.Details = null;
+                }
+
+                // Map Artifacts to DTOs
+                if (submission.SubmissionArtifacts != null)
+                {
+                    dto.Artifacts = submission.SubmissionArtifacts
+                        .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
+                        .ToList();
+                }
+                else
+                {
+                    dto.Artifacts = null;
+                }
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving auto test result: {ex.Message}");
+            }
+        }
+
+        public async Task<PaginatedList<GetSubmissionDTO>> GetAllAutoTestResultsByRoundAsync(
+            Guid roundId,
+            int pageNumber,
+            int pageSize,
+            Guid? studentIdSearch,
+            Guid? teamIdSearch,
+            string? studentNameSearch,
+            string? teamNameSearch)
+        {
+            try
+            {
+                // Validate pagination parameters
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Get repositories
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Find latest submission per student
+                IQueryable<Submission> latestSubmissionsQuery = submissionRepo.Entities
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && !s.DeletedAt.HasValue)
+                    .GroupBy(s => s.SubmittedByStudentId)
+                    .Select(g => g.OrderByDescending(s => s.CreatedAt).First());
+
+                // Apply filters using
+                if (studentIdSearch.HasValue)
+                {
+                    latestSubmissionsQuery = latestSubmissionsQuery.Where(s => s.SubmittedByStudentId == studentIdSearch.Value);
+                }
+
+                if (teamIdSearch.HasValue)
+                {
+                    latestSubmissionsQuery = latestSubmissionsQuery.Where(s => s.TeamId == teamIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(studentNameSearch))
+                {
+                    latestSubmissionsQuery = latestSubmissionsQuery
+                        .Include(s => s.SubmittedByStudent)
+                            .ThenInclude(st => st!.User)
+                        .Where(s => s.SubmittedByStudent!.User!.Fullname.Contains(studentNameSearch));
+                }
+
+                if (!string.IsNullOrWhiteSpace(teamNameSearch))
+                {
+                    latestSubmissionsQuery = latestSubmissionsQuery
+                        .Include(s => s.Team)
+                        .Where(s => s.Team.Name.Contains(teamNameSearch));
+                }
+
+                // Add all necessary includes for the final query
+                IQueryable<Submission> finalQuery = latestSubmissionsQuery
+                    .Include(s => s.Problem)
+                    .Include(s => s.Team)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
+                    .Include(s => s.SubmissionArtifacts)
+                    .OrderByDescending(s => s.CreatedAt);
+
+                // Get paginated results
+                PaginatedList<Submission> paginatedSubmissions = await submissionRepo.GetPagingAsync(finalQuery, pageNumber, pageSize);
+
+                // Create attempt lookup
+                List<Guid> studentIds = paginatedSubmissions.Items.Select(s => s.SubmittedByStudentId).Distinct().ToList();
+
+                Dictionary<Guid, int> attemptCounts = await submissionRepo.Entities
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && !s.DeletedAt.HasValue
+                        && studentIds.Contains(s.SubmittedByStudentId))
+                    .GroupBy(s => s.SubmittedByStudentId)
+                    .ToDictionaryAsync(
+                        g => g.Key,
+                        g => g.Count()
+                    );
+
+                // Map to DTOs
+                IReadOnlyCollection<GetSubmissionDTO> results = paginatedSubmissions.Items.Select(submission =>
+                {
+                    // Map basic submission info
+                    GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
+                    dto.TeamName = submission.Team?.Name ?? string.Empty;
+                    dto.SubmittedByStudentName = submission.SubmittedByStudent?.User?.Fullname ?? string.Empty;
+
+                    // Set attempt number
+                    dto.submissionAttemptNumber = attemptCounts.TryGetValue(submission.SubmittedByStudentId, out int count)
+                        ? count
+                        : 1;
+
+                    // Map test case details to DTOs
+                    dto.Details = submission.SubmissionDetails?
+                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .ToList();
+
+                    // Map Artifacts to DTOs
+                    dto.Artifacts = submission.SubmissionArtifacts?
+                        .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
+                        .ToList();
+
+                    return dto;
+                }).ToList();
+
+                return new PaginatedList<GetSubmissionDTO>(
+                    results,
+                    paginatedSubmissions.TotalCount,
+                    paginatedSubmissions.PageNumber,
+                    paginatedSubmissions.PageSize);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving auto test results: {ex.Message}");
             }
         }
     }

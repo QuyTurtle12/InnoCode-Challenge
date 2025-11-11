@@ -66,35 +66,6 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                     ));
         }
 
-        [HttpGet("{roundId}/result/me")]
-        [Authorize(Roles = RoleConstants.Student)]
-        public async Task<IActionResult> GetSubmissionResultOfLoggedInStudent([Required] Guid roundId)
-        {
-            GetSubmissionDTO result = await _submissionService.GetSubmissionResultOfLoggedInStudentAsync(roundId);
-            return Ok(new BaseResponseModel<GetSubmissionDTO>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: result,
-                message: "Submission result retrieved successfully."
-            ));
-        }
-
-        ///// <summary>
-        ///// Creates a new submission
-        ///// </summary>
-        ///// <param name="submissionDto"></param>
-        ///// <returns></returns>
-        //[HttpPost]
-        //public async Task<IActionResult> CreateSubmission(CreateSubmissionDTO submissionDto)
-        //{
-        //    await _submissionService.CreateSubmissionAsync(submissionDto);
-        //    return Ok(new BaseResponseModel(
-        //                 statusCode: StatusCodes.Status201Created,
-        //                 code: ResponseCodeConstants.SUCCESS,
-        //                 message: "Create Submission successfully."
-        //             ));
-        //}
-
         /// <summary>
         /// Updates an existing submission
         /// </summary>
@@ -110,51 +81,6 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                         code: ResponseCodeConstants.SUCCESS,
                         message: "Update Submission successfully."
                     ));
-        }
-
-        /// <summary>
-        /// Evaluates a submission using the Judge0 service
-        /// </summary>
-        /// <param name="roundId"></param>
-        /// <param name="submissionDTO"></param>
-        /// <returns></returns>
-        [HttpPost("{roundId}/evaluations")]
-        [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
-        {
-            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
-
-            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: result,
-                message: "Submission evaluated successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Upload a file submission (.zip or .rar)
-        /// </summary>
-        /// <param name="file">The file to upload (.zip or .rar)</param>
-        /// <param name="roundId">Round ID</param>
-        /// <returns>Submission ID</returns>
-        [HttpPost]
-        [Route("{roundId}/files")]
-        [Consumes("multipart/form-data")]
-        [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> UploadFileSubmission(
-            [FromRoute] Guid roundId,
-            IFormFile file
-            )
-        {
-            Guid submissionId = await _submissionService.CreateFileSubmissionAsync(roundId, file);
-
-            return Ok(new BaseResponseModel<Guid>(
-                statusCode: StatusCodes.Status201Created,
-                code: ResponseCodeConstants.SUCCESS,
-                data: submissionId,
-                message: "File submission created successfully."
-            ));
         }
 
         /// <summary>
@@ -274,5 +200,6 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                 message: "Manual test results retrieved successfully."
             ));
         }
+
     }
 }

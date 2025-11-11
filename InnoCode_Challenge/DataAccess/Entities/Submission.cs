@@ -11,7 +11,7 @@ public partial class Submission
 
     public Guid ProblemId { get; set; }
 
-    public Guid? SubmittedByStudentId { get; set; }
+    public Guid SubmittedByStudentId { get; set; }
 
     public string? JudgedBy { get; set; }
 

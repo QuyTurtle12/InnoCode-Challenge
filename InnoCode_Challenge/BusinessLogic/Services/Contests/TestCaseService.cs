@@ -68,14 +68,6 @@ namespace BusinessLogic.Services.Contests
                         "Test cases can only be created for AutoEvaluation problems.");
                 }
 
-                // Validate test case type
-                if (testCaseDTO.Type != TestCaseTypeEnum.TestCase)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Only TestCase type is allowed.");
-                }
-
                 // Get TestCase Repository
                 IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
 

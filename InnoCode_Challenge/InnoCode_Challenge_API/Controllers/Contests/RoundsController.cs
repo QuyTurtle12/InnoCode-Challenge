@@ -1,8 +1,11 @@
 ﻿using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Submissions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.DTOs.RubricDTOs;
+using Repository.DTOs.SubmissionDTOs;
 using Repository.DTOs.TestCaseDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
@@ -17,12 +20,14 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     {
         private readonly IRoundService _roundService;
         private readonly IProblemService _problemService;
+        private readonly ISubmissionService _submissionService;
 
         // Constructor
-        public RoundsController(IRoundService roundService, IProblemService problemService)
+        public RoundsController(IRoundService roundService, IProblemService problemService, ISubmissionService submissionService)
         {
             _roundService = roundService;
             _problemService = problemService;
+            _submissionService = submissionService;
         }
 
         /// <summary>
@@ -211,5 +216,67 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
+        /// <summary>
+        /// Get auto test submission result of the logged-in student for a specific round
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpGet("{roundId}/auto-test/results/me")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> GetAutoTestSubmissionResults(Guid roundId)
+        {
+            GetSubmissionDTO result = await _submissionService.GetSubmissionResultOfLoggedInStudentAsync(roundId);
+            return Ok(new BaseResponseModel<GetSubmissionDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Submission result retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Evaluates a submission using the Judge0 service
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="submissionDTO"></param>
+        /// <returns></returns>
+        [HttpPost("{roundId}/submissions/auto-evaluations")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
+        {
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
+
+            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Submission evaluated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Upload a file submission (.zip or .rar)
+        /// </summary>
+        /// <param name="file">The file to upload (.zip or .rar)</param>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Submission ID</returns>
+        [HttpPost]
+        [Route("{roundId}/submissions/files")]
+        [Consumes("multipart/form-data")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> UploadFileSubmission(
+            [FromRoute] Guid roundId,
+            IFormFile file
+            )
+        {
+            Guid submissionId = await _submissionService.CreateFileSubmissionAsync(roundId, file);
+
+            return Ok(new BaseResponseModel<Guid>(
+                statusCode: StatusCodes.Status201Created,
+                code: ResponseCodeConstants.SUCCESS,
+                data: submissionId,
+                message: "File submission created successfully."
+            ));
+        }
     }
 }
