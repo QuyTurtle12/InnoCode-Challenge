@@ -377,20 +377,10 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
                 _unitOfWork.CommitTransaction();
 
-                // Return created rubric template
-                return new RubricTemplateDTO
-                {
-                    ProblemId = problem.ProblemId,
-                    ProblemDescription = problem.Description,
-                    TotalMaxScore = createdCriteria.Sum(c => c.Weight),
-                    Criteria = createdCriteria.Select((c, index) => new RubricCriterionDTO
-                    {
-                        RubricId = c.TestCaseId,
-                        Description = c.Description ?? string.Empty,
-                        MaxScore = c.Weight,
-                        Order = index + 1
-                    }).ToList()
-                };
+                // Return the round's rubric
+                RubricTemplateDTO result = await GetRubricTemplateAsync(roundId);
+
+                return result;
             }
             catch (Exception ex)
             {
