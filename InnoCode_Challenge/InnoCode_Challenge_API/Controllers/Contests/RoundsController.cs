@@ -6,7 +6,6 @@ using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
-using Repository.DTOs.TestCaseDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.Enums;

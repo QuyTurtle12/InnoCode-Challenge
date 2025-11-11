@@ -352,19 +352,6 @@ namespace BusinessLogic.Services.Contests
                         "Rubric can only be created for manual problem types");
                 }
 
-                // Check if rubric already exists
-                bool existingRubric = await testCaseRepo.Entities
-                    .AnyAsync(tc => tc.ProblemId == problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.Manual.ToString());
-
-                // If rubric exists, prevent creation
-                if (existingRubric)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Rubric already exists for this round. Please update or delete the existing rubric first.");
-                }
-
                 List<TestCase> createdCriteria = new List<TestCase>();
 
                 // Create rubric criteria
