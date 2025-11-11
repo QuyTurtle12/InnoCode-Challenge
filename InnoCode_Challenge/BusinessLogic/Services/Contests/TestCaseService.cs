@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.TestCaseDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -23,35 +24,208 @@ namespace BusinessLogic.Services.Contests
             _unitOfWork = unitOfWork;
         }
 
-        public async Task CreateTestCaseAsync(CreateTestCaseDTO TestCaseDTO)
+        public async Task CreateTestCaseAsync(Guid roundId, CreateTestCaseDTO testCaseDTO)
         {
             try
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Map DTO to entity
-                TestCase testCase = _mapper.Map<TestCase>(TestCaseDTO);
-                
-                // Get the repository for TestCase entities
+                // Validate input data
+                if (testCaseDTO == null)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test case data cannot be null.");
+                }
+
+                // Validate round and get problem
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync();
+
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found.");
+                }
+
+                if (round.Problem == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Problem not found for this round.");
+                }
+
+                // Validate problem type
+                if (round.Problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test cases can only be created for AutoEvaluation problems.");
+                }
+
+                // Validate test case type
+                if (testCaseDTO.Type != TestCaseTypeEnum.TestCase)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Only TestCase type is allowed.");
+                }
+
+                // Get TestCase Repository
                 IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-                
-                // Insert the new test case
+
+                // Map DTO to Entity
+                TestCase testCase = _mapper.Map<TestCase>(testCaseDTO);
+                testCase.TestCaseId = Guid.NewGuid();
+                testCase.ProblemId = round.Problem.ProblemId;
+                testCase.Type = TestCaseTypeEnum.TestCase.ToString();
+
+                // Insert new test case
                 await testCaseRepo.InsertAsync(testCase);
-                
-                // Save changes to the database
+
+                // Save changes
                 await _unitOfWork.SaveAsync();
-                
-                // Commit the transaction
+
+                // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
+                // Roll back transaction on error
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Rounds: {ex.Message}");
+                    $"Error creating test case: {ex.Message}");
+            }
+        }
+
+        public async Task BulkUpdateTestCasesAsync(Guid roundId, IList<BulkUpdateTestCaseDTO> testCaseDTOs)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate input
+                if (testCaseDTOs == null || !testCaseDTOs.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test case list cannot be null or empty.");
+                }
+
+                // Validate round and get problem with test cases
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                    .Include(r => r.Problem)
+                        .ThenInclude(p => p!.TestCases)
+                    .FirstOrDefaultAsync();
+
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found.");
+                }
+
+                if (round.Problem == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Problem not found for this round.");
+                }
+
+                // Validate problem type
+                if (round.Problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test cases can only be updated for AutoEvaluation problems.");
+                }
+
+                // Get TestCase Repository
+                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+                // Get all test case IDs from DTOs
+                List<Guid> testCaseIds = testCaseDTOs.Select(dto => dto.TestCaseId).ToList();
+
+                // Check for duplicates in the request
+                if (testCaseIds.Count != testCaseIds.Distinct().Count())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Duplicate test case IDs found in the request.");
+                }
+
+                // Fetch all existing test cases that match the IDs and belong to this problem
+                List<TestCase> existingTestCases = await testCaseRepo.Entities
+                    .Where(tc => testCaseIds.Contains(tc.TestCaseId)
+                        && tc.ProblemId == round.Problem.ProblemId
+                        && tc.Type == TestCaseTypeEnum.TestCase.ToString())
+                    .ToListAsync();
+
+                // Validate all test cases exist
+                if (existingTestCases.Count != testCaseIds.Count)
+                {
+                    List<Guid> foundIds = existingTestCases.Select(tc => tc.TestCaseId).ToList();
+                    List<Guid> notFoundIds = testCaseIds.Except(foundIds).ToList();
+
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"The following test case IDs were not found or do not belong to this round: {string.Join(", ", notFoundIds)}");
+                }
+
+                // Create a dictionary for quick lookup
+                Dictionary<Guid, TestCase> testCaseDict = existingTestCases.ToDictionary(tc => tc.TestCaseId);
+
+                // Update each test case
+                foreach (BulkUpdateTestCaseDTO dto in testCaseDTOs)
+                {
+                    TestCase testCase = testCaseDict[dto.TestCaseId];
+
+                    // Map properties from DTO to entity
+                    testCase.Description = dto.Description;
+                    testCase.Weight = dto.Weight;
+                    testCase.TimeLimitMs = dto.TimeLimitMs;
+                    testCase.MemoryKb = dto.MemoryKb;
+                    testCase.Input = dto.Input;
+                    testCase.ExpectedOutput = dto.ExpectedOutput;
+
+                    // Update the test case
+                    await testCaseRepo.UpdateAsync(testCase);
+                }
+
+                // Save all changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error bulk updating test cases: {ex.Message}");
             }
         }
 
@@ -62,139 +236,140 @@ namespace BusinessLogic.Services.Contests
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Get the repository for TestCase entities
-                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-
-                // Find the test case by ID
-                TestCase? testCase = await testCaseRepo
-                    .Entities
-                    .Where(tc => tc.TestCaseId == id)
-                    .Include(tc => tc.SubmissionDetails)
-                    .FirstOrDefaultAsync();
-
-                // Check if test case exists
-                if (testCase == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Test case with ID {id} not found.");
-                }
-                
-                // Check if test case has associated submission details
-                if (testCase.SubmissionDetails != null && testCase.SubmissionDetails.Any())
+                // Validate input
+                if (id == Guid.Empty)
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
-                        $"Cannot delete test case with ID {id} as it has associated submission details.");
+                        "Test case ID cannot be empty.");
                 }
-                
+
+                // Get TestCase Repository
+                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+                // Find test case by id
+                TestCase? testCase = await testCaseRepo.Entities
+                    .Where(tc => tc.TestCaseId == id)
+                    .FirstOrDefaultAsync();
+
+                // Check if test case is not exists and the related problem is already deleted
+                if (testCase == null || testCase.Problem.DeletedAt.HasValue)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Test case not found.");
+                }
+
+                // Validate that the test case type is TestCase (not Manual)
+                if (testCase.Type != TestCaseTypeEnum.TestCase.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Only test cases of type 'TestCase' can be deleted.");
+                }
+
                 // Delete the test case
-                await testCaseRepo.DeleteAsync(testCase);
-                
-                // Save changes to the database
+                testCase.DeleteAt = DateTime.UtcNow;
+
+                await testCaseRepo.UpdateAsync(testCase);
+
+                // Save changes
                 await _unitOfWork.SaveAsync();
-                
-                // Commit the transaction
+
+                // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
+                // Roll back transaction on error
                 _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting test case: {ex.Message}");
             }
         }
 
-        public async Task<PaginatedList<GetTestCaseDTO>> GetPaginatedTestCaseAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? problemIdSearch)
+        public async Task<PaginatedList<GetTestCaseDTO>> GetTestCasesByRoundIdAsync(Guid roundId, int pageNumber, int pageSize)
         {
             try
             {
-                // Get the repository for TestCase entities
+                // Validate pagination parameters
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Validate round exists
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found.");
+                }
+
+                if (round.Problem == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Problem not found for this round.");
+                }
+
+                // Validate problem type is AutoEvaluation
+                if (round.Problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test cases are only available for AutoEvaluation problems.");
+                }
+
+                // Get test case repository
                 IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-                
-                // Build query with optional filters
-                IQueryable<TestCase> query = testCaseRepo.Entities;
-                
-                // Apply filters if provided
-                if (idSearch.HasValue)
-                {
-                    query = query.Where(tc => tc.TestCaseId == idSearch.Value);
-                }
-                
-                if (problemIdSearch.HasValue)
-                {
-                    query = query.Where(tc => tc.ProblemId == problemIdSearch.Value);
-                }
-                
-                // Order results for consistency
-                query = query.OrderBy(tc => tc.TestCaseId);
-                
+
+                // Build query for test cases
+                IQueryable<TestCase> query = testCaseRepo.Entities
+                    .Where(tc => tc.ProblemId == round.Problem.ProblemId
+                        && tc.Type == TestCaseTypeEnum.TestCase.ToString())
+                    .OrderBy(tc => tc.TestCaseId);
+
                 // Get paginated results
                 PaginatedList<TestCase> paginatedTestCases = await testCaseRepo.GetPagingAsync(query, pageNumber, pageSize);
-                
-                // Map entities to DTOs
+
+                // Map to DTOs
                 IReadOnlyCollection<GetTestCaseDTO> testCaseDTOs = paginatedTestCases.Items
-                    .Select(item => _mapper.Map<GetTestCaseDTO>(item))
+                    .Select(tc => _mapper.Map<GetTestCaseDTO>(tc))
                     .ToList();
-                
-                // Create and return the paginated list of DTOs
+
+                // Return paginated list with DTOs
                 return new PaginatedList<GetTestCaseDTO>(
-                    testCaseDTOs, 
-                    paginatedTestCases.TotalCount, 
-                    paginatedTestCases.PageNumber, 
+                    testCaseDTOs,
+                    paginatedTestCases.TotalCount,
+                    paginatedTestCases.PageNumber,
                     paginatedTestCases.PageSize
                 );
             }
             catch (Exception ex)
             {
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error retrieving paginated test cases: {ex.Message}");
-            }
-        }
-
-        public async Task UpdateTestCaseAsync(Guid id, UpdateTestCaseDTO TestCaseDTO)
-        {
-            try
-            {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
-
-                // Get the repository for TestCase entities
-                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-
-                // Find the test case by ID
-                TestCase? testCase = await testCaseRepo.GetByIdAsync(id);
-
-                // Check if test case exists
-                if (testCase == null)
+                if (ex is ErrorException)
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Test case with ID {id} not found.");
+                    throw;
                 }
 
-                // Update the test case with values from DTO
-                _mapper.Map(TestCaseDTO, testCase);
-                
-                // Update the entity
-                await testCaseRepo.UpdateAsync(testCase);
-                
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
-                
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error updating test case: {ex.Message}");
+                    $"Error retrieving test cases: {ex.Message}");
             }
         }
     }

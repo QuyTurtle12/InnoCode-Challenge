@@ -5,9 +5,9 @@ namespace BusinessLogic.IServices.Contests
 {
     public interface ITestCaseService
     {
-        Task<PaginatedList<GetTestCaseDTO>> GetPaginatedTestCaseAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? problemIdSearch);
-        Task CreateTestCaseAsync(CreateTestCaseDTO TestCaseDTO);
-        Task UpdateTestCaseAsync(Guid id, UpdateTestCaseDTO TestCaseDTO);
+        Task<PaginatedList<GetTestCaseDTO>> GetTestCasesByRoundIdAsync(Guid roundId, int pageNumber, int pageSize);
+        Task CreateTestCaseAsync(Guid roundId, CreateTestCaseDTO testCaseDTO);
+        Task BulkUpdateTestCasesAsync(Guid roundId, IList<BulkUpdateTestCaseDTO> testCaseDTOs);
         Task DeleteTestCaseAsync(Guid id);
     }
 }

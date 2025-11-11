@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.Contests;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.TestCaseDTOs;
 using Repository.ResponseModel;
@@ -7,7 +8,7 @@ using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {
-    [Route("api/test-cases")]
+    [Route("api/")]
     [ApiController]
     public class TestCasesController : ControllerBase
     {
@@ -20,13 +21,20 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
-        /// Gets a paginated list of test cases with optional filters
+        /// Get paginated test cases for a specific round
         /// </summary>
-        [HttpGet]
-        public async Task<IActionResult> GetTestCases(int pageNumber = 1, int pageSize = 10, 
-                                                     Guid? idSearch = null, Guid? problemIdSearch = null)
+        /// <param name="roundId"></param>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <returns></returns>
+        [HttpGet("rounds/{roundId}/test-cases")]
+        public async Task<IActionResult> GetTestCasesByRoundId(
+            Guid roundId,
+            int pageNumber = 1,
+            int pageSize = 10)
         {
-            PaginatedList<GetTestCaseDTO> result = await _testCaseService.GetPaginatedTestCaseAsync(pageNumber, pageSize, idSearch, problemIdSearch);
+            PaginatedList<GetTestCaseDTO> result = await _testCaseService.GetTestCasesByRoundIdAsync(
+                roundId, pageNumber, pageSize);
 
             var paging = new
             {
@@ -39,66 +47,65 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             };
 
             return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Test case retrieved successfully."
-                    ));
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result.Items,
+                additionalData: paging,
+                message: "Test cases retrieved successfully."
+            ));
         }
 
         /// <summary>
-        /// Creates a new test case
+        /// Create a new test case for a round
         /// </summary>
-        [HttpPost]
-        public async Task<IActionResult> CreateTestCase([FromForm] CreateTestCaseDTO testCaseDto, IFormFile? inputFile, IFormFile? outputFile)
+        /// <param name="roundId"></param>
+        /// <param name="testCaseDTO"></param>
+        /// <returns></returns>
+        [HttpPost("rounds/{roundId}/test-cases")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> CreateTestCase(Guid roundId, CreateTestCaseDTO testCaseDTO)
         {
-            if (inputFile != null)
-            {
-                using var reader = new StreamReader(inputFile.OpenReadStream());
-                testCaseDto.Input = await reader.ReadToEndAsync();
-            }
-
-            if (outputFile != null)
-            {
-                using var reader = new StreamReader(outputFile.OpenReadStream());
-                testCaseDto.ExpectedOutput = await reader.ReadToEndAsync();
-            }
-
-            await _testCaseService.CreateTestCaseAsync(testCaseDto);
+            await _testCaseService.CreateTestCaseAsync(roundId, testCaseDTO);
             return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status201Created,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Create Test Case successfully."
-                    ));
+                statusCode: StatusCodes.Status201Created,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Test case created successfully."
+            ));
         }
 
         /// <summary>
-        /// Updates an existing test case
+        /// Bulk update multiple test cases for a round
         /// </summary>
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateTestCase(Guid id, [FromBody] UpdateTestCaseDTO testCaseDto)
+        /// <param name="roundId"></param>
+        /// <param name="testCaseDTOs"></param>
+        /// <returns></returns>
+        [HttpPut("rounds/{roundId}/test-cases")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> BulkUpdateTestCases(Guid roundId, IList<BulkUpdateTestCaseDTO> testCaseDTOs)
         {
-            await _testCaseService.UpdateTestCaseAsync(id, testCaseDto);
+            await _testCaseService.BulkUpdateTestCasesAsync(roundId, testCaseDTOs);
             return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Update Test Case successfully."
-                    ));
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: $"Successfully updated {testCaseDTOs.Count} test case(s)."
+            ));
         }
 
         /// <summary>
-        /// Deletes a test case by id
+        /// Delete a test case by id
         /// </summary>
-        [HttpDelete("{id}")]
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpDelete("test-cases/{id}")]
+        [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> DeleteTestCase(Guid id)
         {
             await _testCaseService.DeleteTestCaseAsync(id);
             return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Delete Test Case successfully."
-                    ));
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Test case deleted successfully."
+            ));
         }
     }
 }

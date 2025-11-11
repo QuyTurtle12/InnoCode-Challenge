@@ -23,6 +23,8 @@ public partial class TestCase
 
     public string? ExpectedOutput { get; set; }
 
+    public DateTime? DeleteAt { get; set; }
+
     public virtual Problem Problem { get; set; } = null!;
 
     public virtual ICollection<SubmissionDetail> SubmissionDetails { get; set; } = new List<SubmissionDetail>();

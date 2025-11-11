@@ -489,14 +489,12 @@ namespace BusinessLogic.Services.Contests
 
                         await rubricRepo.UpdateAsync(existing);
                         resultCriteria.Add(existing);
-
-                        // Remove from update dictionary (processed)
-                        updateDict.Remove(existing.TestCaseId);
                     }
                     else
                     {
                         // Delete criterion not in update list
-                        rubricRepo.Delete(existing);
+                        existing.DeleteAt = DateTime.UtcNow;
+                        await rubricRepo.UpdateAsync(existing);
                     }
                 }
 

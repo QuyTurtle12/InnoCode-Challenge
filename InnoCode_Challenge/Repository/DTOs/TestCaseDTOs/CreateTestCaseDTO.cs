@@ -6,8 +6,5 @@ namespace Repository.DTOs.TestCaseDTOs
 {
     public class CreateTestCaseDTO : BaseTestCaseDTO
     {
-        [EnumDataType(typeof(TestCaseTypeEnum))]
-        [JsonConverter(typeof(JsonStringEnumConverter))]
-        public TestCaseTypeEnum Type { get; set; } = TestCaseTypeEnum.TestCase;
     }
 }

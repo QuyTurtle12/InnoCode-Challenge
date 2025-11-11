@@ -1,6 +1,9 @@
 ﻿using BusinessLogic.IServices.Contests;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.RoundDTOs;
+using Repository.DTOs.RubricDTOs;
+using Repository.DTOs.TestCaseDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.Enums;
@@ -13,13 +16,15 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     public class RoundsController : ControllerBase
     {
         private readonly IRoundService _roundService;
+        private readonly IProblemService _problemService;
 
         // Constructor
-        public RoundsController(IRoundService roundService)
+        public RoundsController(IRoundService roundService, IProblemService problemService)
         {
             _roundService = roundService;
+            _problemService = problemService;
         }
-        
+
         /// <summary>
         /// Get paginated rounds with optional filtering
         /// </summary>
@@ -146,6 +151,64 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         data: timeLimitSeconds,
                         message: "Round time limit retrieved successfully."
                     ));
+        }
+
+        /// <summary>
+        /// Get rubric template (scoring criteria) for a problem
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Rubric template with all criteria</returns>
+        [HttpGet("{roundId}/rubric")]
+        public async Task<IActionResult> GetRubricTemplate(Guid roundId)
+        {
+            RubricTemplateDTO template = await _problemService.GetRubricTemplateAsync(roundId);
+
+            return Ok(new BaseResponseModel<RubricTemplateDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: template,
+                message: "Rubric template retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Create rubric (scoring criteria) for a manual problem in a specific round
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <param name="createRubricDTO">Rubric criteria to create</param>
+        /// <returns>Created rubric template</returns>
+        [HttpPost("{roundId}/rubric")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> CreateRubric(Guid roundId, CreateRubricDTO createRubricDTO)
+        {
+            RubricTemplateDTO template = await _problemService.CreateRubricAsync(roundId, createRubricDTO);
+
+            return Ok(new BaseResponseModel<RubricTemplateDTO>(
+                statusCode: StatusCodes.Status201Created,
+                code: ResponseCodeConstants.SUCCESS,
+                data: template,
+                message: "Rubric created successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Update rubric (scoring criteria) for a manual problem in a specific round
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <param name="updateRubricDTO">Updated rubric criteria</param>
+        /// <returns>Updated rubric template</returns>
+        [HttpPut("{roundId}/rubric")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> UpdateRubric(Guid roundId, UpdateRubricDTO updateRubricDTO)
+        {
+            RubricTemplateDTO template = await _problemService.UpdateRubricAsync(roundId, updateRubricDTO);
+
+            return Ok(new BaseResponseModel<RubricTemplateDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: template,
+                message: "Rubric updated successfully."
+            ));
         }
 
     }

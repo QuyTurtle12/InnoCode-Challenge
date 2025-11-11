@@ -2,8 +2,6 @@
 {
     public class BaseTestCaseDTO
     {
-        public Guid ProblemId { get; set; }
-
         public string? Description { get; set; }
 
         public double Weight { get; set; }
