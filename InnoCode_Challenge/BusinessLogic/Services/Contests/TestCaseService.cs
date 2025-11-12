@@ -165,7 +165,8 @@ namespace BusinessLogic.Services.Contests
                 List<TestCase> existingTestCases = await testCaseRepo.Entities
                     .Where(tc => testCaseIds.Contains(tc.TestCaseId)
                         && tc.ProblemId == round.Problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.TestCase.ToString())
+                        && tc.Type == TestCaseTypeEnum.TestCase.ToString()
+                        && !tc.DeleteAt.HasValue)
                     .ToListAsync();
 
                 // Validate all test cases exist
@@ -241,7 +242,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Find test case by id
                 TestCase? testCase = await testCaseRepo.Entities
-                    .Where(tc => tc.TestCaseId == id)
+                    .Where(tc => tc.TestCaseId == id 
+                        && !tc.DeleteAt.HasValue)
+                    .Include(tc => tc.Problem)
                     .FirstOrDefaultAsync();
 
                 // Check if test case is not exists and the related problem is already deleted
@@ -302,8 +305,9 @@ namespace BusinessLogic.Services.Contests
                 // Validate round exists
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
                     .Include(r => r.Problem)
-                    .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+                    .FirstOrDefaultAsync();
 
                 if (round == null)
                 {
@@ -333,7 +337,8 @@ namespace BusinessLogic.Services.Contests
                 // Build query for test cases
                 IQueryable<TestCase> query = testCaseRepo.Entities
                     .Where(tc => tc.ProblemId == round.Problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.TestCase.ToString())
+                        && tc.Type == TestCaseTypeEnum.TestCase.ToString()
+                        && !tc.DeleteAt.HasValue)
                     .OrderBy(tc => tc.TestCaseId);
 
                 // Get paginated results
