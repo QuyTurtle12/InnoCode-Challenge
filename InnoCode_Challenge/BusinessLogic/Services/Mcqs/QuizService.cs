@@ -1,15 +1,21 @@
-﻿using System.Security.Claims;
+﻿using System.Globalization;
+using System.Security.Claims;
+using System.Text;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Mcqs;
+using CsvHelper;
+using CsvHelper.Configuration;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
 using Repository.IRepositories;
+using Repository.Repositories;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Mcqs
@@ -619,6 +625,260 @@ namespace BusinessLogic.Services.Mcqs
                     ResponseCodeConstants.FORBIDDEN,
                     $"Cannot {operationName}. Round {round.Name} has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
             }
+        }
+
+        public async Task<McqImportResultDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile)
+        {
+            var result = new McqImportResultDTO();
+
+            try
+            {
+                // Validate file
+                CsvHelpers.ValidateCsvFile(csvFile);
+
+                // Read CSV content
+                string csvContent;
+                using (var reader = new StreamReader(csvFile.OpenReadStream(), Encoding.UTF8))
+                {
+                    csvContent = await reader.ReadToEndAsync();
+                }
+
+                // Extract bank name from CSV
+                string bankName = CsvHelpers.ExtractBankNameFromCsv(csvContent);
+
+                if (string.IsNullOrWhiteSpace(bankName))
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Bank name is required in first row. Format: BankName,<name> or BankName;<name>"
+                    );
+                }
+
+                // Parse CSV rows
+                List<McqCsvRowDTO> csvRows = ParseCsvRows(csvContent);
+
+                result.TotalRows = csvRows.Count;
+                result.BankName = bankName;
+
+                if (csvRows.Count == 0)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "CSV file contains no valid question rows."
+                    );
+                }
+
+                try
+                {
+                    // Start transaction
+                    _unitOfWork.BeginTransaction();
+
+                    IGenericRepository<Bank> bankRepo = _unitOfWork.GetRepository<Bank>();
+                    IGenericRepository<McqQuestion> questionRepo = _unitOfWork.GetRepository<McqQuestion>();
+                    IGenericRepository<McqOption> optionRepo = _unitOfWork.GetRepository<McqOption>();
+
+                    // Create new bank
+                    Bank bank = await CreateNewBankAsync(bankRepo, bankName);
+                    result.BankId = bank.BankId;
+
+                    // Process all questions
+                    int rowNumber = 2; // Start from row 2 (row 1 is BankName)
+                    foreach (var row in csvRows)
+                    {
+                        rowNumber++;
+                        try
+                        {
+                            // Validate row
+                            string? validationError = ValidateCsvRow(row, rowNumber);
+                            if (!string.IsNullOrEmpty(validationError))
+                            {
+                                result.Errors.Add(validationError);
+                                result.ErrorCount++;
+                                continue;
+                            }
+
+                            // Create question
+                            McqQuestion? question = new McqQuestion
+                            {
+                                QuestionId = Guid.NewGuid(),
+                                BankId = bank.BankId,
+                                Text = row.QuestionText.Trim(),
+                                CreatedAt = DateTime.UtcNow,
+                                DeletedAt = null
+                            };
+
+                            await questionRepo.InsertAsync(question);
+                            await _unitOfWork.SaveAsync();
+
+                            // Create options (2-4)
+                            await CreateOptionsForQuestion(optionRepo, question.QuestionId, row);
+                            await _unitOfWork.SaveAsync();
+
+                            result.ImportedQuestionIds.Add(question.QuestionId);
+                            result.SuccessCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            result.Errors.Add($"Row {rowNumber}: {ex.Message}");
+                            result.ErrorCount++;
+                        }
+                    }
+
+                    // Commit transaction
+                    _unitOfWork.CommitTransaction();
+                    return result;
+                }
+                catch (Exception)
+                {
+                    // Roll back transaction on error
+                    _unitOfWork.RollBack();
+                    throw;
+                }
+                
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error importing MCQ questions: {ex.Message}"
+                );
+            }
+        }
+
+        private static List<McqCsvRowDTO> ParseCsvRows(string csvContent)
+        {
+            // Skip first row (BankName metadata)
+            string[]? lines = csvContent.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            string? dataContent = string.Join(Environment.NewLine, lines.Skip(1));
+
+            // Detect delimiter from header row
+            char delimiter = CsvHelpers.DetectDelimiter(dataContent);
+
+            // Parse CSV using CsvHelper with detected delimiter
+            using StringReader? reader = new StringReader(dataContent);
+            using CsvReader? csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                HasHeaderRecord = true,
+                TrimOptions = TrimOptions.Trim,
+                MissingFieldFound = null,
+                HeaderValidated = null,
+                BadDataFound = null,
+                Delimiter = delimiter.ToString()
+            });
+
+            List<McqCsvRowDTO> result = new List<McqCsvRowDTO>();
+
+            // Read all records and filter out empty rows
+            foreach (var row in csv.GetRecords<McqCsvRowDTO>())
+            {
+                if (IsEmptyRow(row))
+                    break;
+
+                result.Add(row);
+            }
+
+            return result;
+        }
+
+        private static async Task<Bank> CreateNewBankAsync(
+            IGenericRepository<Bank> bankRepo,
+            string bankName)
+        {
+            Bank bank = new Bank
+            {
+                BankId = Guid.NewGuid(),
+                Name = bankName,
+                CreatedAt = DateTime.UtcNow,
+                DeletedAt = null
+            };
+
+            await bankRepo.InsertAsync(bank);
+            await bankRepo.SaveAsync();
+
+            return bank;
+        }
+
+        private static async Task CreateOptionsForQuestion(
+            IGenericRepository<McqOption> optionRepo,
+            Guid questionId,
+            McqCsvRowDTO row)
+        {
+            // Add Option A and B (required)
+            IList<(string, bool)> options = new List<(string text, bool isCorrect)>
+            {
+                (row.OptionA.Trim(), row.CorrectAnswer.ToUpper() == "A"),
+                (row.OptionB.Trim(), row.CorrectAnswer.ToUpper() == "B")
+            };
+
+            // Add Option C if present
+            if (!string.IsNullOrWhiteSpace(row.OptionC))
+                options.Add((row.OptionC.Trim(), row.CorrectAnswer.ToUpper() == "C"));
+
+            // Add Option D if present
+            if (!string.IsNullOrWhiteSpace(row.OptionD))
+                options.Add((row.OptionD.Trim(), row.CorrectAnswer.ToUpper() == "D"));
+
+            // Insert options into repository
+            foreach (var (text, isCorrect) in options)
+            {
+                McqOption option = new McqOption
+                {
+                    OptionId = Guid.NewGuid(),
+                    QuestionId = questionId,
+                    Text = text,
+                    IsCorrect = isCorrect
+                };
+                await optionRepo.InsertAsync(option);
+            }
+        }
+
+        private static string? ValidateCsvRow(McqCsvRowDTO row, int rowNumber)
+        {
+            // Validate question text
+            if (string.IsNullOrWhiteSpace(row.QuestionText))
+                return $"Row {rowNumber}: Question text is required.";
+
+            // Validate question text length
+            if (row.QuestionText.Length > 1000)
+                return $"Row {rowNumber}: Question text exceeds 1000 characters.";
+
+            // Validate options A and B
+            if (string.IsNullOrWhiteSpace(row.OptionA) || string.IsNullOrWhiteSpace(row.OptionB))
+                return $"Row {rowNumber}: At least 2 options (A and B) are required.";
+
+            // Validate correct answer
+            string? correctAnswer = row.CorrectAnswer?.ToUpper().Trim();
+            if (string.IsNullOrEmpty(correctAnswer) || !"ABCD".Contains(correctAnswer))
+                return $"Row {rowNumber}: Correct answer must be A, B, C, or D.";
+
+            // Validate presence of options C and D if they are the correct answer
+            bool hasOptionC = !string.IsNullOrWhiteSpace(row.OptionC);
+            bool hasOptionD = !string.IsNullOrWhiteSpace(row.OptionD);
+
+            // Check if correct answer is C or D but option is missing
+            if (correctAnswer == "C" && !hasOptionC)
+                return $"Row {rowNumber}: Correct answer is C but Option C is empty.";
+
+            if (correctAnswer == "D" && !hasOptionD)
+                return $"Row {rowNumber}: Correct answer is D but Option D is empty.";
+
+            return null;
+        }
+
+        private static bool IsEmptyRow(McqCsvRowDTO row)
+        {
+            return string.IsNullOrWhiteSpace(row.QuestionText) &&
+                   string.IsNullOrWhiteSpace(row.OptionA) &&
+                   string.IsNullOrWhiteSpace(row.OptionB) &&
+                   string.IsNullOrWhiteSpace(row.OptionC) &&
+                   string.IsNullOrWhiteSpace(row.OptionD) &&
+                   string.IsNullOrWhiteSpace(row.CorrectAnswer);
         }
     }
 }

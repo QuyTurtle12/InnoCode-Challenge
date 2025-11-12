@@ -194,5 +194,24 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                 message: "Banks retrieved successfully."
             ));
         }
+
+        /// <summary>
+        /// Import MCQ questions from CSV file
+        /// </summary>
+        /// <param name="csvFile">CSV file containing questions</param>
+        /// <returns>Import result</returns>
+        [HttpPost("import-csv")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> ImportMcqQuestionsFromCsv(IFormFile csvFile)
+        {
+            McqImportResultDTO result = await _quizService.ImportMcqQuestionsFromCsvAsync(csvFile);
+            return Ok(new
+            {
+                code = ResponseCodeConstants.SUCCESS,
+                message = $"Import completed. {result.SuccessCount} questions imported to new bank '{result.BankName}'",
+                data = result
+            });
+        }
     }
 }
