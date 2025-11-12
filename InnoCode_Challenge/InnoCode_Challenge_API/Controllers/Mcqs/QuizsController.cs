@@ -1,10 +1,12 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.Net.NetworkInformation;
 using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.QuizDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Mcqs
@@ -199,19 +201,23 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// Import MCQ questions from CSV file
         /// </summary>
         /// <param name="csvFile">CSV file containing questions</param>
+        /// <param name="testId">Test ID</param>
+        /// <param name="bankStatus">Public, Private, InviteOnly</param>
         /// <returns>Import result</returns>
-        [HttpPost("import-csv")]
+        [HttpPost("/api/mcq-tests/{testId}/import-csv")]
         [Authorize(Policy = "RequireOrganizerRole")]
         [Consumes("multipart/form-data")]
-        public async Task<IActionResult> ImportMcqQuestionsFromCsv(IFormFile csvFile)
+        public async Task<IActionResult> ImportMcqQuestionsFromCsv(
+            IFormFile csvFile,
+            [FromRoute] Guid testId,
+            [FromQuery] BankStatusEnum bankStatus = BankStatusEnum.Public)
         {
-            McqImportResultDTO result = await _quizService.ImportMcqQuestionsFromCsvAsync(csvFile);
-            return Ok(new
-            {
-                code = ResponseCodeConstants.SUCCESS,
-                message = $"Import completed. {result.SuccessCount} questions imported to new bank '{result.BankName}'",
-                data = result
-            });
+            await _quizService.ImportMcqQuestionsFromCsvAsync(csvFile, testId, bankStatus);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Questions imported successfully."
+            ));
         }
     }
 }

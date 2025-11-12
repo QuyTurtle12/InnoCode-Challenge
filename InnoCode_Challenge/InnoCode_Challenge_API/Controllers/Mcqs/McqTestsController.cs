@@ -22,39 +22,6 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
             _mcqTestService = mcqTestService;
         }
 
-        ///// <summary>
-        ///// Get paginated list of Mcq Tests with optional filtering by id and roundId
-        ///// </summary>
-        ///// <param name="pageNumber"></param>
-        ///// <param name="pageSize"></param>
-        ///// <param name="idSearch"></param>
-        ///// <param name="roundIdSearch"></param>
-        ///// <returns></returns>
-        //[HttpGet]
-        //public async Task<IActionResult> GetMcqTests(int pageNumber = 1, int pageSize = 10, 
-        //    Guid? idSearch = null, Guid? roundIdSearch = null)
-        //{
-        //    PaginatedList<GetMcqTestDTO> result = await _mcqTestService.GetPaginatedMcqTestAsync(pageNumber, pageSize, idSearch, roundIdSearch);
-
-        //    var paging = new
-        //    {
-        //        result.PageNumber,
-        //        result.PageSize,
-        //        result.TotalPages,
-        //        result.TotalCount,
-        //        result.HasPreviousPage,
-        //        result.HasNextPage
-        //    };
-
-        //    return Ok(new BaseResponseModel<object>(
-        //                statusCode: StatusCodes.Status200OK,
-        //                code: ResponseCodeConstants.SUCCESS,
-        //                data: result.Items,
-        //                additionalData: paging,
-        //                message: "Mcq Test retrieved successfully."
-        //            ));
-        //}
-
         /// <summary>
         /// Add questions from question bank to Mcq Test
         /// </summary>
@@ -65,7 +32,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> AddQuestionToTest(Guid testId,[Required] Guid bankId)
         {
-            await _mcqTestService.AddQuestionsToTest(testId, bankId);
+            await _mcqTestService.AddQuestionsToTestAsync(testId, bankId);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,

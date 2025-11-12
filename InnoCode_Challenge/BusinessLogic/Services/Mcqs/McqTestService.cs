@@ -25,7 +25,7 @@ namespace BusinessLogic.Services.Mcqs
             _unitOfWork = uow;
         }
 
-        public async Task AddQuestionsToTest(Guid testId, Guid bankId)
+        public async Task AddQuestionsToTestAsync(Guid testId, Guid bankId)
         {
             try
             {

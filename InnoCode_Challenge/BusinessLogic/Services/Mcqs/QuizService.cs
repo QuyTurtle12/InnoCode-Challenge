@@ -25,12 +25,14 @@ namespace BusinessLogic.Services.Mcqs
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ILeaderboardEntryService _leaderboardService;
+        private readonly IMcqTestService _mcqTestService;
 
-        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService)
+        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService, IMcqTestService mcqTestService)
         {
             _unitOfWork = unitOfWork;
             _httpContextAccessor = httpContextAccessor;
             _leaderboardService = leaderboardService;
+            _mcqTestService = mcqTestService;
         }
 
         public async Task<QuizResultDTO> ProcessQuizSubmissionAsync(Guid roundId, CreateQuizSubmissionDTO quizSubmissionDTO)
@@ -107,7 +109,7 @@ namespace BusinessLogic.Services.Mcqs
                     // Skip invalid options
                     if (option == null)
                     {
-                        continue; 
+                        continue;
                     }
 
                     // Check if the answer is correct
@@ -627,7 +629,7 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<McqImportResultDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile)
+        public async Task ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid testId, BankStatusEnum status)
         {
             var result = new McqImportResultDTO();
 
@@ -679,6 +681,8 @@ namespace BusinessLogic.Services.Mcqs
                     IGenericRepository<McqQuestion> questionRepo = _unitOfWork.GetRepository<McqQuestion>();
                     IGenericRepository<McqOption> optionRepo = _unitOfWork.GetRepository<McqOption>();
 
+                    await ClearQuestionsInTest(testId);
+
                     // Create new bank
                     Bank bank = await CreateNewBankAsync(bankRepo, bankName);
                     result.BankId = bank.BankId;
@@ -728,7 +732,7 @@ namespace BusinessLogic.Services.Mcqs
 
                     // Commit transaction
                     _unitOfWork.CommitTransaction();
-                    return result;
+
                 }
                 catch (Exception)
                 {
@@ -736,7 +740,9 @@ namespace BusinessLogic.Services.Mcqs
                     _unitOfWork.RollBack();
                     throw;
                 }
-                
+
+                await _mcqTestService.AddQuestionsToTestAsync(testId, result.BankId);
+
             }
             catch (Exception ex)
             {
@@ -879,6 +885,45 @@ namespace BusinessLogic.Services.Mcqs
                    string.IsNullOrWhiteSpace(row.OptionC) &&
                    string.IsNullOrWhiteSpace(row.OptionD) &&
                    string.IsNullOrWhiteSpace(row.CorrectAnswer);
+        }
+
+        private async Task ClearQuestionsInTest(Guid testId)
+        {
+            IGenericRepository<McqTest> testRepo = _unitOfWork.GetRepository<McqTest>();
+            IGenericRepository<McqTestQuestion> mcqTestQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+
+            // Get the test
+            McqTest? existingMcqTest = await testRepo
+                .Entities
+                .Where(t => t.TestId == testId)
+                .Include(t => t.McqTestQuestions)
+                .FirstOrDefaultAsync();
+
+            // Validate test existence
+            if (existingMcqTest == null)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"MCQ Test with ID {testId} not found."
+                );
+            }
+
+            // Remove existing questions from the test
+            if (existingMcqTest.McqTestQuestions != null && existingMcqTest.McqTestQuestions.Any())
+            {
+                // Get all existing questions for the test
+                List<McqTestQuestion> questionsToDelete = existingMcqTest.McqTestQuestions.ToList();
+
+                // Delete existing questions
+                foreach (McqTestQuestion question in questionsToDelete)
+                {
+                    mcqTestQuestionRepo.Delete(question);
+                }
+
+                // Save changes after deletions
+                await _unitOfWork.SaveAsync();
+            }
         }
     }
 }
