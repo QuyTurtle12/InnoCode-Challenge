@@ -28,6 +28,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
         /// <param name="creatorIdSearch"></param>
+        /// <param name="roundIdSearch"></param>
         /// <param name="nameSearch"></param>
         /// <param name="yearSearch"></param>
         /// <param name="startDate"></param>
@@ -38,12 +39,13 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                                                                                  int pageSize = 10,
                                                                                  Guid? idSearch = null,
                                                                                  Guid? creatorIdSearch = null,
+                                                                                 Guid? roundIdSearch = null,
                                                                                  string? nameSearch = null,
                                                                                  int? yearSearch = null,
                                                                                  DateTime? startDate = null,
                                                                                  DateTime? endDate = null)
         {
-            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch,
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch, roundIdSearch,
                                                                   nameSearch, yearSearch, startDate, endDate);
 
             var paging = new
@@ -72,6 +74,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
         /// <param name="creatorIdSearch"></param>
+        /// <param name="roundIdSearch"></param>
         /// <param name="nameSearch"></param>
         /// <param name="yearSearch"></param>
         /// <param name="startDate"></param>
@@ -84,12 +87,13 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                                                                                 int pageSize = 10,
                                                                                 Guid? idSearch = null,
                                                                                 Guid? creatorIdSearch = null,
+                                                                                Guid? roundIdSearch = null,
                                                                                 string? nameSearch = null,
                                                                                 int? yearSearch = null,
                                                                                 DateTime? startDate = null,
                                                                                 DateTime? endDate = null)
         {
-            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch,
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch, roundIdSearch,
                                                                   nameSearch, yearSearch, startDate, endDate, true, false);
 
             var paging = new
@@ -117,7 +121,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <param name="idSearch"></param>
-        /// <param name="creatorIdSearch">organizer ID</param>
+        /// <param name="roundIdSearch">round ID</param>
         /// <param name="nameSearch"></param>
         /// <param name="yearSearch"></param>
         /// <param name="startDate"></param>
@@ -129,12 +133,13 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                                                                     int pageNumber = 1,
                                                                     int pageSize = 10,
                                                                     Guid? idSearch = null,
+                                                                    Guid? roundIdSearch = null,
                                                                     string? nameSearch = null,
                                                                     int? yearSearch = null,
                                                                     DateTime? startDate = null,
                                                                     DateTime? endDate = null)
         {
-            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, null,
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, null, roundIdSearch,
                                                                   nameSearch, yearSearch, startDate, endDate, false, true);
 
             var paging = new

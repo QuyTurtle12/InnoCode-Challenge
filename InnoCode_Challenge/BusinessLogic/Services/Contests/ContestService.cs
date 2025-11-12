@@ -97,6 +97,7 @@ namespace BusinessLogic.Services.Contests
             int pageSize,
             Guid? idSearch,
             Guid? creatorIdSearch,
+            Guid? roundIdSearch,
             string? nameSearch,
             int? yearSearch,
             DateTime? startDate,
@@ -200,6 +201,11 @@ namespace BusinessLogic.Services.Contests
                     query = query.Where(c => Guid.Parse(c.CreatedBy!) == creatorIdSearch.Value);
                 }
 
+                if (roundIdSearch.HasValue)
+                {
+                    query = query.Where(c => c.Rounds.Any(r => r.RoundId == roundIdSearch));
+                }
+
                 if (!string.IsNullOrWhiteSpace(nameSearch))
                 {
                     query = query.Where(c => c.Name.Contains(nameSearch));
@@ -260,6 +266,23 @@ namespace BusinessLogic.Services.Contests
                     .Where(u => organizerGuids.Contains(u.UserId) && !u.DeletedAt.HasValue)
                     .ToDictionaryAsync(u => u.UserId, u => u.Fullname);
 
+                // Extract distinct round IDs
+                List<Guid> roundIds = resultQuery.Items
+                    .SelectMany(c => c.Rounds)
+                    .Select(r => r.RoundId)
+                    .Distinct()
+                    .ToList();
+
+                // Load time limit configs for all rounds in one query
+                List<Config> timeLimitConfigs = await configRepo.Entities
+                    .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                                && c.Key.Contains("time_limit_seconds")
+                                && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Create a lookup for fast access
+                Dictionary<string, Config> timeLimitDict = timeLimitConfigs.ToDictionary(c => c.Key);
+
                 // Map the result to DTO
                 IReadOnlyCollection<GetContestDTO> result = resultQuery.Items.Select(item =>
                 {
@@ -277,6 +300,14 @@ namespace BusinessLogic.Services.Contests
                         // Assign additional properties
                         roundDTO.RoundName = r.Name;
                         roundDTO.ContestName = item.Name;
+
+                        // Fetch time limit from config
+                        string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(r.RoundId);
+                        if (timeLimitDict.TryGetValue(timeLimitKey, out Config? timeLimitConfig) 
+                            && int.TryParse(timeLimitConfig.Value, out int timeLimit))
+                        {
+                            roundDTO.TimeLimitSeconds = timeLimit;
+                        }
 
                         // Map problem information if exists
                         if (r.Problem != null)
@@ -495,7 +526,7 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.CommitTransaction();
 
                 // Return the updated contest DTO
-                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, null, false, false);
+                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
 
                 return result.Items.First();
             }

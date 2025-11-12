@@ -10,6 +10,7 @@ namespace BusinessLogic.IServices.Contests
             int pageSize,
             Guid? idSearch,
             Guid? creatorIdSearch,
+            Guid? roundIdSearch,
             string? nameSearch,
             int? yearSearch,
             DateTime? startDate,
