@@ -402,7 +402,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Validate against contest dates and other rounds (excluding current round)
-                await ValidateRoundDatesAsync(round.ContestId, roundDTO.Start, roundDTO.End, id);
+                await ValidateRoundDatesAsync(round.ContestId, roundDTO.Start, roundDTO.End, round.RoundId);
 
                 // Update round properties
                 _mapper.Map(roundDTO, round);

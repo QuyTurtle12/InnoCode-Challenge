@@ -1,9 +1,11 @@
-﻿using BusinessLogic.IServices.Contests;
+﻿using BusinessLogic.IServices;
+using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.TestCaseDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
@@ -13,11 +15,13 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     public class TestCasesController : ControllerBase
     {
         private readonly ITestCaseService _testCaseService;
+        private readonly IConfigService _configService;
 
         // Constructor
-        public TestCasesController(ITestCaseService testCaseService)
+        public TestCasesController(ITestCaseService testCaseService, IConfigService configService)
         {
             _testCaseService = testCaseService;
+            _configService = configService;
         }
 
         /// <summary>
@@ -105,6 +109,40 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 message: "Test case deleted successfully."
+            ));
+        }
+
+        [HttpPost("rounds/{roundId}/test-cases/import-csv")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> ImportTestCasesFromCsv(
+            IFormFile csvFile,
+            [FromRoute] Guid roundId)
+        {
+            var result = await _testCaseService.ImportTestCasesFromCsvAsync(csvFile, roundId);
+
+            return Ok(new BaseResponseModel<TestCaseImportResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: $"Import completed. {result.SuccessCount} test cases imported to round '{result.RoundName}'"
+            ));
+        }
+
+        /// <summary>
+        /// Download test case import template
+        /// </summary>
+        /// <returns></returns>
+        [HttpGet("/api/test-cases/template")]
+        public async Task<IActionResult> DownloadMcqImportTemplate()
+        {
+            string url = await _configService.DownloadImportTemplate(ImportTemplateEnum.TestCaseTemplate);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: url,
+                message: "Template downloaded successfully."
             ));
         }
     }

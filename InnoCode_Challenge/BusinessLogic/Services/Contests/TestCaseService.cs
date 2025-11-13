@@ -1,5 +1,9 @@
-﻿using AutoMapper;
+﻿using System.Globalization;
+using System.Text;
+using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using CsvHelper;
+using CsvHelper.Configuration;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +12,7 @@ using Repository.IRepositories;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Contests
@@ -368,6 +373,281 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving test cases: {ex.Message}");
             }
+        }
+
+        public async Task<TestCaseImportResultDTO> ImportTestCasesFromCsvAsync(IFormFile csvFile, Guid roundId)
+        {
+            var result = new TestCaseImportResultDTO { RoundId = roundId };
+
+            try
+            {
+                // Validate file
+                CsvHelpers.ValidateCsvFile(csvFile);
+
+                // Read CSV content
+                string csvContent;
+                using (var reader = new StreamReader(csvFile.OpenReadStream(), Encoding.UTF8))
+                {
+                    csvContent = await reader.ReadToEndAsync();
+                }
+
+                // Parse CSV rows
+                List<TestCaseCsvRowDTO> csvRows = ParseTestCaseCsvRows(csvContent);
+
+                result.TotalRows = csvRows.Count;
+
+                if (csvRows.Count == 0)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "CSV file contains no valid test case rows."
+                    );
+                }
+
+                try
+                {
+                    // Start transaction
+                    _unitOfWork.BeginTransaction();
+
+                    // Get repositories
+                    IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                    IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+                    IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+                    // Validate round exists
+                    Round? round = await roundRepo.Entities
+                        .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+                    if (round == null)
+                    {
+                        throw new ErrorException(
+                            StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            $"Round with ID {roundId} not found."
+                        );
+                    }
+
+                    result.RoundName = round.Name;
+
+                    // Get problem for this round
+                    Problem? problem = await problemRepo.Entities
+                        .FirstOrDefaultAsync(p => p.RoundId == roundId && !p.DeletedAt.HasValue);
+
+                    if (problem == null)
+                    {
+                        throw new ErrorException(
+                            StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            $"Problem not found for round {roundId}."
+                        );
+                    }
+
+                    // Verify this is an auto-evaluation problem
+                    if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                    {
+                        throw new ErrorException(
+                            StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Test cases can only be imported for auto-evaluation problem types."
+                        );
+                    }
+
+                    result.ProblemId = problem.ProblemId;
+
+                    // Remove existing test cases =====
+                    List<TestCase> existingTestCases = await testCaseRepo.Entities
+                        .Where(tc => tc.ProblemId == problem.ProblemId
+                            && tc.Type == TestCaseTypeEnum.TestCase.ToString()
+                            && !tc.DeleteAt.HasValue)
+                        .ToListAsync();
+
+                    if (existingTestCases.Any())
+                    {
+                        foreach (TestCase existingTestCase in existingTestCases)
+                        {
+                            existingTestCase.DeleteAt = DateTime.UtcNow;
+                            await testCaseRepo.UpdateAsync(existingTestCase);
+                        }
+
+                        await _unitOfWork.SaveAsync();
+                    }
+
+                    // Process all test cases
+                    int rowNumber = 1;
+                    foreach (TestCaseCsvRowDTO row in csvRows)
+                    {
+                        rowNumber++;
+                        try
+                        {
+                            // Validate row
+                            string? validationError = ValidateTestCaseRow(row, rowNumber);
+                            if (!string.IsNullOrEmpty(validationError))
+                            {
+                                result.Errors.Add(validationError);
+                                result.ErrorCount++;
+                                continue;
+                            }
+
+                            // Parse numeric values
+                            if (!double.TryParse(row.Weight, out double weight))
+                            {
+                                result.Errors.Add($"Row {rowNumber}: Invalid weight value '{row.Weight}'.");
+                                result.ErrorCount++;
+                                continue;
+                            }
+
+                            int? timeLimitMs = null;
+                            if (!string.IsNullOrWhiteSpace(row.TimeLimitMs))
+                            {
+                                if (int.TryParse(row.TimeLimitMs, out int parsedTime))
+                                {
+                                    timeLimitMs = parsedTime;
+                                }
+                                else
+                                {
+                                    result.Errors.Add($"Row {rowNumber}: Invalid time limit value '{row.TimeLimitMs}'.");
+                                    result.ErrorCount++;
+                                    continue;
+                                }
+                            }
+
+                            int? memoryKb = null;
+                            if (!string.IsNullOrWhiteSpace(row.MemoryKb))
+                            {
+                                if (int.TryParse(row.MemoryKb, out int parsedMemory))
+                                {
+                                    memoryKb = parsedMemory;
+                                }
+                                else
+                                {
+                                    result.Errors.Add($"Row {rowNumber}: Invalid memory limit value '{row.MemoryKb}'.");
+                                    result.ErrorCount++;
+                                    continue;
+                                }
+                            }
+
+                            // Create test case
+                            TestCase testCase = new TestCase
+                            {
+                                TestCaseId = Guid.NewGuid(),
+                                ProblemId = problem.ProblemId,
+                                Description = row.Description?.Trim(),
+                                Type = TestCaseTypeEnum.TestCase.ToString(),
+                                Weight = weight,
+                                TimeLimitMs = timeLimitMs,
+                                MemoryKb = memoryKb,
+                                Input = row.Input?.Trim(),
+                                ExpectedOutput = row.ExpectedOutput.Trim()
+                            };
+
+                            await testCaseRepo.InsertAsync(testCase);
+                            await _unitOfWork.SaveAsync();
+
+                            result.ImportedTestCaseIds.Add(testCase.TestCaseId);
+                            result.SuccessCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            result.Errors.Add($"Row {rowNumber}: {ex.Message}");
+                            result.ErrorCount++;
+                        }
+                    }
+
+                    // Commit transaction
+                    _unitOfWork.CommitTransaction();
+                    return result;
+                }
+                catch (Exception)
+                {
+                    // Roll back transaction on error
+                    _unitOfWork.RollBack();
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error importing test cases: {ex.Message}"
+                );
+            }
+        }
+
+        private static List<TestCaseCsvRowDTO> ParseTestCaseCsvRows(string csvContent)
+        {
+            // Detect delimiter
+            char delimiter = CsvHelpers.DetectDelimiter(csvContent);
+
+            // Parse CSV using CsvHelper
+            using StringReader reader = new StringReader(csvContent);
+            using CsvReader csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                HasHeaderRecord = true,
+                TrimOptions = TrimOptions.Trim,
+                MissingFieldFound = null,
+                HeaderValidated = null,
+                BadDataFound = null,
+                Delimiter = delimiter.ToString()
+            });
+
+            var result = new List<TestCaseCsvRowDTO>();
+
+            // Read records until first empty row
+            foreach (var row in csv.GetRecords<TestCaseCsvRowDTO>())
+            {
+                // Stop at first completely empty row
+                if (IsEmptyTestCaseRow(row))
+                    break;
+
+                result.Add(row);
+            }
+
+            return result;
+        }
+
+        private static bool IsEmptyTestCaseRow(TestCaseCsvRowDTO row)
+        {
+            return string.IsNullOrWhiteSpace(row.Description) &&
+                   string.IsNullOrWhiteSpace(row.Weight) &&
+                   string.IsNullOrWhiteSpace(row.TimeLimitMs) &&
+                   string.IsNullOrWhiteSpace(row.MemoryKb) &&
+                   string.IsNullOrWhiteSpace(row.Input) &&
+                   string.IsNullOrWhiteSpace(row.ExpectedOutput);
+        }
+
+        private static string? ValidateTestCaseRow(TestCaseCsvRowDTO row, int rowNumber)
+        {
+            // Validate weight
+            if (string.IsNullOrWhiteSpace(row.Weight))
+                return $"Row {rowNumber}: Weight is required.";
+
+            if (!double.TryParse(row.Weight, out double weight) || weight <= 0)
+                return $"Row {rowNumber}: Weight must be a positive number.";
+
+            // Validate expected output
+            if (string.IsNullOrWhiteSpace(row.ExpectedOutput))
+                return $"Row {rowNumber}: Expected output is required.";
+
+            // Validate time limit if provided
+            if (!string.IsNullOrWhiteSpace(row.TimeLimitMs))
+            {
+                if (!int.TryParse(row.TimeLimitMs, out int timeLimit) || timeLimit <= 0)
+                    return $"Row {rowNumber}: Time limit must be a positive integer.";
+            }
+
+            // Validate memory limit if provided
+            if (!string.IsNullOrWhiteSpace(row.MemoryKb))
+            {
+                if (!int.TryParse(row.MemoryKb, out int memory) || memory <= 0)
+                    return $"Row {rowNumber}: Memory limit must be a positive integer.";
+            }
+
+            return null;
         }
     }
 }

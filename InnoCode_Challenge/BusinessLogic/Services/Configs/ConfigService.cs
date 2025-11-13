@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ConfigDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -255,5 +256,65 @@ namespace BusinessLogic.Services
             }
         }
 
+        public async Task<string> DownloadImportTemplate(ImportTemplateEnum template)
+        {
+            // Get repository for Config entities
+            IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+
+            // Get template key
+            string templateKey = string.Empty;
+            switch (template)
+            {
+                case ImportTemplateEnum.McqTemplate:
+                    templateKey = ConfigKeys.McqTestImportTemplate();
+                    break;
+                case ImportTemplateEnum.TestCaseTemplate:
+                    templateKey = ConfigKeys.AutoTestImportTemplate();
+                    break;
+                case ImportTemplateEnum.RubricTemplate:
+                    templateKey = ConfigKeys.ManualTestImportTemplate();
+                    break;
+                default:
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.INVALID_INPUT,
+                        "Invalid import template type."
+                    );
+            }
+            
+
+            // Retrieve template value
+            Config? config = await configRepo.Entities
+                .Where(c => c.Key == templateKey)
+                .FirstOrDefaultAsync();
+
+            // Validate template existence
+            if (config == null || string.IsNullOrWhiteSpace(config.Value))
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "MCQ import template not found."
+                );
+            }
+
+            // Return template content
+            IGenericRepository<Attachment> attachmentRepo = _uow.GetRepository<Attachment>();
+            Attachment? attachment = await attachmentRepo.Entities
+                .Where(a => a.AttachmentId == Guid.Parse(config.Value))
+                .FirstOrDefaultAsync();
+
+            // Validate attachment existence
+            if (attachment == null || string.IsNullOrWhiteSpace(attachment.Url))
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "MCQ import template attachment not found."
+                );
+            }
+
+            return attachment.Url;
+        }
     }
 }

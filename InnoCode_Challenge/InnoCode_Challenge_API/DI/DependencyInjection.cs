@@ -258,6 +258,7 @@ namespace InnoCode_Challenge_API.DI
         {
             // Register all background services here
             services.AddHostedService<ContestStateBackgroundService>();
+            services.AddHostedService<RoundSateBackgroundService>();
         }
 
         public static void AddServices(this IServiceCollection services)

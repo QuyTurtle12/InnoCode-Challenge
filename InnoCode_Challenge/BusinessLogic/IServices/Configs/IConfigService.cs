@@ -1,4 +1,5 @@
 ﻿using Repository.DTOs.ConfigDTOs;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices
@@ -17,5 +18,6 @@ namespace BusinessLogic.IServices
         Task<bool> AreSubmissionsDistributedAsync(Guid roundId);
         Task MarkSubmissionsAsDistributedAsync(Guid roundId);
         Task ResetDistributionStatusAsync(Guid roundId);
+        Task<string> DownloadImportTemplate(ImportTemplateEnum template);
     }
 }

@@ -14,6 +14,5 @@ namespace BusinessLogic.IServices.Mcqs
         Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(int pageNumber, int pageSize, Guid? bankId, string? nameSearch);
         Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId);
         Task ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid TestId, BankStatusEnum bankStatus);
-        Task<string> DownloadMcqImportTemplate();
     }
 }

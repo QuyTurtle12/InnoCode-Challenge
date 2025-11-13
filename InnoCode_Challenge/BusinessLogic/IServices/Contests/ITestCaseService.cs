@@ -1,4 +1,6 @@
-﻿using Repository.DTOs.TestCaseDTOs;
+﻿using Microsoft.AspNetCore.Http;
+using Repository.DTOs.TestCaseDTOs;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests
@@ -9,5 +11,6 @@ namespace BusinessLogic.IServices.Contests
         Task CreateTestCaseAsync(Guid roundId, CreateTestCaseDTO testCaseDTO);
         Task BulkUpdateTestCasesAsync(Guid roundId, IList<BulkUpdateTestCaseDTO> testCaseDTOs);
         Task DeleteTestCaseAsync(Guid id);
+        Task<TestCaseImportResultDTO> ImportTestCasesFromCsvAsync(IFormFile csvFile, Guid roundId);
     }
 }

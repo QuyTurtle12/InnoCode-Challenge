@@ -926,46 +926,6 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<string> DownloadMcqImportTemplate()
-        {
-            // Get repository for Config entities
-            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-
-            // Get template key
-            string templateKey = ConfigKeys.McqTestImportTemplate();
-
-            // Retrieve template value
-            Config? config = await configRepo.Entities
-                .Where(c => c.Key == templateKey)
-                .FirstOrDefaultAsync();
-
-            // Validate template existence
-            if (config == null || string.IsNullOrWhiteSpace(config.Value))
-            {
-                throw new ErrorException(
-                    StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND,
-                    "MCQ import template not found."
-                );
-            }
-
-            // Return template content
-            IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
-            Attachment? attachment = await attachmentRepo.Entities
-                .Where(a => a.AttachmentId == Guid.Parse(config.Value))
-                .FirstOrDefaultAsync();
-
-            // Validate attachment existence
-            if (attachment == null || string.IsNullOrWhiteSpace(attachment.Url))
-            {
-                throw new ErrorException(
-                    StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND,
-                    "MCQ import template attachment not found."
-                );
-            }
-
-            return attachment.Url;
-        }
+        
     }
 }

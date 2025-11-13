@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.Net.NetworkInformation;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,10 +17,12 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
     public class QuizsController : ControllerBase
     {
         private readonly IQuizService _quizService;
+        private readonly IConfigService _configService;
 
-        public QuizsController(IQuizService quizService)
+        public QuizsController(IQuizService quizService, IConfigService configService)
         {
             _quizService = quizService;
+            _configService = configService;
         }
 
         /// <summary>
@@ -227,7 +230,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         [HttpGet("/api/mcq-tests/template")]
         public async Task<IActionResult> DownloadMcqImportTemplate()
         {
-            string url = await _quizService.DownloadMcqImportTemplate();
+            string url = await _configService.DownloadImportTemplate(ImportTemplateEnum.McqTemplate);
 
             return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,

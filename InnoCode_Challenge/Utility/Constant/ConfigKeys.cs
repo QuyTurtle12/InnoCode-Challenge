@@ -20,6 +20,8 @@
 
         public static string RoundTimeLimitSeconds(Guid roundId) => $"contest:round:{roundId}:time_limit_seconds";
         public static string McqTestImportTemplate() => $"template:McqImportTemplate:mcq_test";
+        public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
+        public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";
 
     }
 }
