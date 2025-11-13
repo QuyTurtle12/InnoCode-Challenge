@@ -1,14 +1,20 @@
-﻿using AutoMapper;
+﻿using System.Globalization;
+using System.Text;
+using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using CsvHelper;
+using CsvHelper.Configuration;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RubricDTOs;
+using Repository.DTOs.RubricDTOs.Repository.DTOs.RubricDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Contests
@@ -596,6 +602,236 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting rubric criterion: {ex.Message}");
             }
+        }
+
+        public async Task<RubricCsvImportResultDTO> ImportRubricFromCsvAsync(IFormFile csvFile, Guid roundId)
+        {
+            try
+            {
+                RubricCsvImportResultDTO result = new RubricCsvImportResultDTO { RoundId = roundId };
+
+                // Validate file
+                CsvHelpers.ValidateCsvFile(csvFile);
+
+                // Read CSV content
+                string csvContent;
+                using (var reader = new StreamReader(csvFile.OpenReadStream(), Encoding.UTF8))
+                {
+                    csvContent = await reader.ReadToEndAsync();
+                }
+
+                // Parse CSV rows
+                List<RubricCsvRowDTO> csvRows = ParseRubricCsvRows(csvContent);
+
+                result.TotalRows = csvRows.Count;
+
+                if (csvRows.Count == 0)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "CSV file contains no valid rubric criteria rows."
+                    );
+                }
+
+                try
+                {
+                    // Start transaction
+                    _unitOfWork.BeginTransaction();
+
+                    // Get repositories
+                    IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                    IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+                    IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+
+                    // Validate round exists
+                    Round? round = await roundRepo.Entities
+                        .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+                    if (round == null)
+                    {
+                        throw new ErrorException(
+                            StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            $"Round with ID {roundId} not found."
+                        );
+                    }
+
+                    result.RoundName = round.Name;
+
+                    // Get problem for this round
+                    Problem? problem = await problemRepo.Entities
+                        .FirstOrDefaultAsync(p => p.RoundId == roundId && !p.DeletedAt.HasValue);
+
+                    if (problem == null)
+                    {
+                        throw new ErrorException(
+                            StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            $"Problem not found for round {roundId}."
+                        );
+                    }
+
+                    // Verify this is a manual problem type
+                    if (problem.Type != ProblemTypeEnum.Manual.ToString())
+                    {
+                        throw new ErrorException(
+                            StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Rubric criteria can only be imported for manual problem types."
+                        );
+                    }
+
+                    result.ProblemId = problem.ProblemId;
+
+                    // Remove existing rubric criteria
+                    List<TestCase> existingRubrics = await rubricRepo.Entities
+                        .Where(tc => tc.ProblemId == problem.ProblemId
+                            && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                            && !tc.DeleteAt.HasValue)
+                        .ToListAsync();
+
+                    if (existingRubrics.Any())
+                    {
+                        foreach (TestCase existingRubric in existingRubrics)
+                        {
+                            existingRubric.DeleteAt = DateTime.UtcNow;
+                            await rubricRepo.UpdateAsync(existingRubric);
+                        }
+
+                        await _unitOfWork.SaveAsync();
+                    }
+
+                    // Process all rubric criteria
+                    int rowNumber = 1;
+                    foreach (RubricCsvRowDTO row in csvRows)
+                    {
+                        rowNumber++;
+                        try
+                        {
+                            // Validate row
+                            string? validationError = ValidateRubricRow(row, rowNumber);
+                            if (!string.IsNullOrEmpty(validationError))
+                            {
+                                result.Errors.Add(validationError);
+                                result.ErrorCount++;
+                                continue;
+                            }
+
+                            // Parse max score value
+                            if (!double.TryParse(row.MaxScore, out double maxScore))
+                            {
+                                result.Errors.Add($"Row {rowNumber}: Invalid max score value '{row.MaxScore}'.");
+                                result.ErrorCount++;
+                                continue;
+                            }
+
+                            // Create rubric criterion
+                            TestCase rubricCriterion = new TestCase
+                            {
+                                TestCaseId = Guid.NewGuid(),
+                                ProblemId = problem.ProblemId,
+                                Description = row.Description?.Trim(),
+                                Type = TestCaseTypeEnum.Manual.ToString(),
+                                Weight = maxScore,
+                                Input = null,
+                                ExpectedOutput = null,
+                                TimeLimitMs = null,
+                                MemoryKb = null
+                            };
+
+                            await rubricRepo.InsertAsync(rubricCriterion);
+                            await _unitOfWork.SaveAsync();
+
+                            result.ImportedTestCaseIds.Add(rubricCriterion.TestCaseId);
+                            result.SuccessCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            result.Errors.Add($"Row {rowNumber}: {ex.Message}");
+                            result.ErrorCount++;
+                        }
+                    }
+
+                    // Commit transaction
+                    _unitOfWork.CommitTransaction();
+                    return result;
+                }
+                catch (Exception)
+                {
+                    // Roll back transaction on error
+                    _unitOfWork.RollBack();
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error importing rubric criteria: {ex.Message}"
+                );
+            }
+        }
+
+        private static List<RubricCsvRowDTO> ParseRubricCsvRows(string csvContent)
+        {
+            // Detect delimiter
+            char delimiter = CsvHelpers.DetectDelimiter(csvContent);
+
+            // Parse CSV using CsvHelper
+            using StringReader reader = new StringReader(csvContent);
+            using CsvReader csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                HasHeaderRecord = true,
+                TrimOptions = TrimOptions.Trim,
+                MissingFieldFound = null,
+                HeaderValidated = null,
+                BadDataFound = null,
+                Delimiter = delimiter.ToString()
+            });
+
+            var result = new List<RubricCsvRowDTO>();
+
+            // Read records until first empty row
+            foreach (var row in csv.GetRecords<RubricCsvRowDTO>())
+            {
+                // Stop at first completely empty row
+                if (IsEmptyRubricRow(row))
+                    break;
+
+                result.Add(row);
+            }
+
+            return result;
+        }
+
+        private static bool IsEmptyRubricRow(RubricCsvRowDTO row)
+        {
+            return string.IsNullOrWhiteSpace(row.Description) &&
+                   string.IsNullOrWhiteSpace(row.MaxScore);
+        }
+
+        private static string? ValidateRubricRow(RubricCsvRowDTO row, int rowNumber)
+        {
+            // Validate description
+            if (string.IsNullOrWhiteSpace(row.Description))
+                return $"Row {rowNumber}: Description is required.";
+
+            if (row.Description.Length > 500)
+                return $"Row {rowNumber}: Description cannot exceed 500 characters.";
+
+            // Validate max score
+            if (string.IsNullOrWhiteSpace(row.MaxScore))
+                return $"Row {rowNumber}: Max score is required.";
+
+            if (!double.TryParse(row.MaxScore, out double maxScore) || maxScore <= 0)
+                return $"Row {rowNumber}: Max score must be a positive number.";
+
+            return null;
         }
     }
 }

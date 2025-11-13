@@ -377,10 +377,10 @@ namespace BusinessLogic.Services.Contests
 
         public async Task<TestCaseImportResultDTO> ImportTestCasesFromCsvAsync(IFormFile csvFile, Guid roundId)
         {
-            var result = new TestCaseImportResultDTO { RoundId = roundId };
-
             try
             {
+                TestCaseImportResultDTO result = new TestCaseImportResultDTO { RoundId = roundId };
+
                 // Validate file
                 CsvHelpers.ValidateCsvFile(csvFile);
 

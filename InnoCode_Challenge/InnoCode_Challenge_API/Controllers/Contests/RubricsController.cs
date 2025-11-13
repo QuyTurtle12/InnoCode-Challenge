@@ -1,10 +1,15 @@
-﻿using BusinessLogic.IServices.Contests;
+﻿using BusinessLogic.IServices;
+using BusinessLogic.IServices.Contests;
+using BusinessLogic.Services.Contests;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.RubricDTOs;
+using Repository.DTOs.RubricDTOs.Repository.DTOs.RubricDTOs;
+using Repository.DTOs.TestCaseDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.Enums;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {
@@ -13,10 +18,12 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     public class RubricsController : ControllerBase
     {
         private readonly IProblemService _problemService;
+        private readonly IConfigService _configService;
 
-        public RubricsController(IProblemService problemService)
+        public RubricsController(IProblemService problemService, IConfigService configService)
         {
             _problemService = problemService;
+            _configService = configService;
         }
 
         /// <summary>
@@ -91,6 +98,46 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 message: "Rubric criterion deleted successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Download rubric import template
+        /// </summary>
+        /// <returns></returns>
+        [HttpGet("rubrics/template")]
+        public async Task<IActionResult> DownloadRubricImportTemplate()
+        {
+            string url = await _configService.DownloadImportTemplate(ImportTemplateEnum.RubricTemplate);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: url,
+                message: "Template downloaded successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Import rubric criteria from CSV file
+        /// </summary>
+        /// <param name="csvFile"></param>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpPost("rounds/{roundId}/rubric/import-csv")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> ImportTestCasesFromCsv(
+            IFormFile csvFile,
+            [FromRoute] Guid roundId)
+        {
+            RubricCsvImportResultDTO result = await _problemService.ImportRubricFromCsvAsync(csvFile, roundId);
+
+            return Ok(new BaseResponseModel<RubricCsvImportResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: $"Import completed. {result.SuccessCount} rubric criteria imported to round '{result.RoundName}'"
             ));
         }
     }

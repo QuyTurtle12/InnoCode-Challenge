@@ -1,5 +1,8 @@
-﻿using Repository.DTOs.ProblemDTOs;
+﻿using Microsoft.AspNetCore.Http;
+using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RubricDTOs;
+using Repository.DTOs.RubricDTOs.Repository.DTOs.RubricDTOs;
+using Repository.DTOs.TestCaseDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests
@@ -15,6 +18,6 @@ namespace BusinessLogic.IServices.Contests
         Task<RubricTemplateDTO> CreateRubricCriterionAsync(Guid roundId, CreateRubricDTO createRubricDTO);
         Task<RubricTemplateDTO> UpdateRubricCriterionAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
         Task DeleteRubricCriterionAsync(Guid rubricId);
-
+        Task<RubricCsvImportResultDTO> ImportRubricFromCsvAsync(IFormFile csvFile, Guid roundId);
     }
 }
