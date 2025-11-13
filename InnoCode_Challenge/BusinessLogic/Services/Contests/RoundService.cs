@@ -181,21 +181,32 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
                 }
 
-                // Delete related Problem if exists
-                if (round.Problem != null)
+                // Delete related Problem and its child entities using ProblemService
+                if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
                 {
-                    IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                    round.Problem.DeletedAt = DateTime.UtcNow;
-                    await problemRepo.UpdateAsync(round.Problem);
+                    await _problemService.DeleteProblemAsync(round.Problem.ProblemId);
                 }
 
-                // Delete related McqTests if exists
-                if (round.McqTest != null)
+                // Delete related McqTest and its child entities using McqTestService
+                if (round.McqTest != null && !round.McqTest.DeletedAt.HasValue)
                 {
-                    IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
-                    round.McqTest.DeletedAt = DateTime.UtcNow;
-                    await mcqTestRepo.UpdateAsync(round.McqTest);
+                    await _mcqTestService.DeleteMcqTestAsync(round.McqTest.TestId);
                 }
+
+                // Delete round time limit config
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(round.RoundId);
+                Config? timeLimitConfig = await configRepo.Entities
+                    .FirstOrDefaultAsync(c => c.Key == timeLimitKey && c.Scope == "contest");
+
+                if (timeLimitConfig != null)
+                {
+                    timeLimitConfig.DeletedAt = DateTime.UtcNow;
+                    await configRepo.UpdateAsync(timeLimitConfig);
+                }
+
+                // Delete distribution status config if exists
+                await _configService.ResetDistributionStatusAsync(round.RoundId);
 
                 // Delete the round
                 round.DeletedAt = DateTime.UtcNow;
@@ -377,7 +388,12 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
                 // Find round by id
-                Round? round = await roundRepo.GetByIdAsync(id);
+                Round? round = await roundRepo
+                    .Entities
+                    .Where(r => r.RoundId == id)
+                    .Include(r => r.McqTest)
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync();
 
                 // Check if round exists
                 if (round == null)
@@ -391,10 +407,30 @@ namespace BusinessLogic.Services.Contests
                 // Update round properties
                 _mapper.Map(roundDTO, round);
 
+                // Handle problem type specific logic
+                switch (roundDTO.ProblemType)
+                {
+                    case ProblemTypeEnum.McqTest:
+                        await _mcqTestService.UpdateMcqTestAsync(round.McqTest!.TestId, roundDTO.McqTestConfig!);
+                        break;
+
+                    case ProblemTypeEnum.AutoEvaluation:
+                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
+                        break;
+
+                    case ProblemTypeEnum.Manual:
+                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
+                        break;
+
+                    default:
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
+                }
+
+
                 // Update the round
                 await roundRepo.UpdateAsync(round);
 
-                // update time limit config (if need)
+                // update time limit config
                 if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
                 {
                     await UpsertConfigAsync(

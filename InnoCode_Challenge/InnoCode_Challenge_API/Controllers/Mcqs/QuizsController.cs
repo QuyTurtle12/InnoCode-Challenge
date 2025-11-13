@@ -219,5 +219,22 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                 message: "Questions imported successfully."
             ));
         }
+
+        /// <summary>
+        /// Download MCQ import template
+        /// </summary>
+        /// <returns></returns>
+        [HttpGet("/api/mcq-tests/template")]
+        public async Task<IActionResult> DownloadMcqImportTemplate()
+        {
+            string url = await _quizService.DownloadMcqImportTemplate();
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: url,
+                message: "Template downloaded successfully."
+            ));
+        }
     }
 }

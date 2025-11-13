@@ -66,15 +66,16 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
-            
                 // Get the problem repository
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-        
-                // Find the problem by id
-                Problem? problem = await problemRepo.GetByIdAsync(id);
-        
+                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+                // Find the problem by id with related entities
+                Problem? problem = await problemRepo.Entities
+                    .Where(p => p.ProblemId == id)
+                    .Include(p => p.TestCases)
+                    .FirstOrDefaultAsync();
+
                 // Check if the problem exists
                 if (problem == null)
                 {
@@ -82,26 +83,31 @@ namespace BusinessLogic.Services.Contests
                         ResponseCodeConstants.NOT_FOUND,
                         "Problem not found");
                 }
-        
-                // Delete the problem (soft delete)
+
+                // Delete all related test cases and rubric criteria
+                if (problem.TestCases != null && problem.TestCases.Any())
+                {
+                    foreach (TestCase testCase in problem.TestCases.Where(tc => !tc.DeleteAt.HasValue))
+                    {
+                        testCase.DeleteAt = DateTime.UtcNow;
+                        await testCaseRepo.UpdateAsync(testCase);
+                    }
+                }
+
+                // Delete the problem
                 problem.DeletedAt = DateTime.UtcNow;
+                await problemRepo.UpdateAsync(problem);
 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
-        
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something else fails, roll back the transaction
-                _unitOfWork.RollBack();
-                
                 if (ex is ErrorException)
                 {
                     throw;
                 }
-                
+
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Problem: {ex.Message}");
@@ -184,9 +190,6 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Begin transaction
-                _unitOfWork.BeginTransaction();
-                
                 // Get the problem repository
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
                 
@@ -210,15 +213,9 @@ namespace BusinessLogic.Services.Contests
                 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
-                
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-
                 if (ex is ErrorException)
                 {
                     throw;
