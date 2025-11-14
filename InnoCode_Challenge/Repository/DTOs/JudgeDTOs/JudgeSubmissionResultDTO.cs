@@ -45,6 +45,7 @@
         public string? CompileOutput { get; set; }
         public string? Message { get; set; }
         public JudgeStatusDTO? Status { get; set; }
+        public string? Token { get; set; }
         public string? Time { get; set; }
         public int? Memory { get; set; }
     }
