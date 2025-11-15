@@ -761,6 +761,32 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        public async Task MarkFinishFinishRoundAsync(Guid roundId)
+        {
+            // Get user ID from JWT token
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"Null User Id");
 
+            // Get student ID from user ID
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                .Select(s => s.StudentId)
+                .FirstOrDefault();
+
+            // Check if student has already finished this round
+            bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+            if (IsAlreadyFinishedRound)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot submit. You have already finished this round.");
+            }
+
+            // Mark student as finished for this round
+            await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+        }
     }
 }

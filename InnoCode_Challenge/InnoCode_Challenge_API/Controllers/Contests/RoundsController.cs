@@ -141,7 +141,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
-            
+
         [HttpGet("{id}/time-limit")]
         public async Task<IActionResult> GetRoundTimeLimit(Guid id)
         {
@@ -330,6 +330,22 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 additionalData: paging,
                 message: "Auto test results retrieved successfully."
             ));
+        }
+
+        /// <summary>
+        /// Mark a round as finished
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpPost("{roundId}/finish")]
+        public async Task<IActionResult> MarkFinishRound(Guid roundId)
+        {
+            await _roundService.MarkFinishFinishRoundAsync(roundId);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Round marked as finished successfully."
+                    ));
         }
 
     }

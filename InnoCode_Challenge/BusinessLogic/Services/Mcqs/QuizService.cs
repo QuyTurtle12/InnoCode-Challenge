@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using System.Security.Claims;
 using System.Text;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Mcqs;
 using CsvHelper;
@@ -11,7 +12,6 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
 using Repository.IRepositories;
-using Repository.Repositories;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -26,13 +26,15 @@ namespace BusinessLogic.Services.Mcqs
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ILeaderboardEntryService _leaderboardService;
         private readonly IMcqTestService _mcqTestService;
+        private readonly IConfigService _configService;
 
-        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService, IMcqTestService mcqTestService)
+        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService, IMcqTestService mcqTestService, IConfigService configService)
         {
             _unitOfWork = unitOfWork;
             _httpContextAccessor = httpContextAccessor;
             _leaderboardService = leaderboardService;
             _mcqTestService = mcqTestService;
+            _configService = configService;
         }
 
         public async Task<QuizResultDTO> ProcessQuizSubmissionAsync(Guid roundId, CreateQuizSubmissionDTO quizSubmissionDTO)
@@ -57,6 +59,16 @@ namespace BusinessLogic.Services.Mcqs
                     .Select(s => s.StudentId)
                     .FirstOrDefault();
 
+                // Check if student has already finished this round
+                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+                if (IsAlreadyFinishedRound)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        $"Cannot submit. You have already finished this round.");
+                }
+
                 // Verify the MCQ test exists
                 IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
                 McqTest? mcqTest = await mcqTestRepo
@@ -70,6 +82,12 @@ namespace BusinessLogic.Services.Mcqs
                         ResponseCodeConstants.NOT_FOUND,
                         $"MCQ Test in Round ID {roundId} not found");
                 }
+
+                // Get all test questions with weights for scoring calculation
+                IGenericRepository<McqTestQuestion> testQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+                Dictionary<Guid, double> questionWeights = await testQuestionRepo.Entities
+                    .Where(tq => tq.TestId == mcqTest.TestId)
+                    .ToDictionaryAsync(tq => tq.QuestionId, tq => tq.Weight);
 
                 // Create MCQ attempt record
                 IGenericRepository<McqAttempt> attemptRepo = _unitOfWork.GetRepository<McqAttempt>();
@@ -94,6 +112,8 @@ namespace BusinessLogic.Services.Mcqs
 
                 int totalQuestions = quizSubmissionDTO.Answers.Count;
                 int correctAnswers = 0;
+                double totalPossibleWeight = 0;
+                double earnedWeight = 0;
                 List<QuizAnswerResultDTO> answerResults = new List<QuizAnswerResultDTO>();
 
                 // Evaluate each answer
@@ -112,11 +132,16 @@ namespace BusinessLogic.Services.Mcqs
                         continue;
                     }
 
+                    // Get the weight for this question
+                    double questionWeight = questionWeights.TryGetValue(option.QuestionId, out double weight) ? weight : 1.0;
+                    totalPossibleWeight += questionWeight;
+
                     // Check if the answer is correct
                     bool isCorrect = option.IsCorrect;
                     if (isCorrect)
                     {
                         correctAnswers++;
+                        earnedWeight += questionWeight;
                     }
 
                     // Create attempt item
@@ -125,7 +150,7 @@ namespace BusinessLogic.Services.Mcqs
                         ItemId = Guid.NewGuid(),
                         AttemptId = attempt.AttemptId,
                         TestId = mcqTest.TestId,
-                        QuestionId = answer.QuestionId,
+                        QuestionId = option.QuestionId,
                         SelectedOptionId = answer.SelectedOptionId,
                         Correct = isCorrect
                     };
@@ -135,7 +160,7 @@ namespace BusinessLogic.Services.Mcqs
                     // Add to result list
                     QuizAnswerResultDTO answerResult = new QuizAnswerResultDTO
                     {
-                        QuestionId = answer.QuestionId,
+                        QuestionId = option.QuestionId,
                         QuestionText = option.Question?.Text ?? string.Empty,
                         SelectedOptionId = answer.SelectedOptionId,
                         SelectedOptionText = option.Text,
@@ -148,8 +173,9 @@ namespace BusinessLogic.Services.Mcqs
                 // Save all attempt items
                 await _unitOfWork.SaveAsync();
 
-                // Calculate the score (percentage of correct answers)
-                double score = totalQuestions > 0 ? ((double)correctAnswers / totalQuestions) * 100 : 0;
+                // Calculate weighted score
+                double score = totalPossibleWeight > 0 ? earnedWeight : 0;
+                score = Math.Round(score, 2);
 
                 // Update the attempt with the final score
                 attempt.Score = score;
@@ -204,6 +230,9 @@ namespace BusinessLogic.Services.Mcqs
                     Score = score,
                     AnswerResults = answerResults
                 };
+
+                // Mark as finished for the round
+                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();

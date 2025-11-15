@@ -254,6 +254,8 @@ namespace BusinessLogic.Services
                 };
                 await configRepo.InsertAsync(newConfig);
             }
+
+            await _uow.SaveAsync();
         }
 
         public async Task<string> DownloadImportTemplate(ImportTemplateEnum template)
@@ -315,6 +317,31 @@ namespace BusinessLogic.Services
             }
 
             return attachment.Url;
+        }
+
+        public async Task<bool> IsStudentFinishedRoundAsync(Guid roundId, Guid studentId)
+        {
+            // Get repository
+            IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+
+            // Get key
+            string key = ConfigKeys.RoundStudent(roundId, studentId);
+
+            Config? config = await configRepo.GetByIdAsync(key);
+
+            // Config not exist
+            if (config == null)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public async Task MarkFinishedSubmissionAsync(Guid roundId, Guid studentId)
+        {
+            string key = ConfigKeys.RoundStudent(roundId, studentId);
+            await SetConfigValueAsync(key, "true", "round");
         }
     }
 }

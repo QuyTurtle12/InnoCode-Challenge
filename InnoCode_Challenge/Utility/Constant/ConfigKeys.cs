@@ -22,5 +22,6 @@
         public static string McqTestImportTemplate() => $"template:McqImportTemplate:mcq_test";
         public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
         public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";
+        public static string RoundStudent(Guid roundId, Guid studentId) => $"round:{roundId}:student:{studentId}";
     }
 }

@@ -19,5 +19,8 @@ namespace BusinessLogic.IServices
         Task MarkSubmissionsAsDistributedAsync(Guid roundId);
         Task ResetDistributionStatusAsync(Guid roundId);
         Task<string> DownloadImportTemplate(ImportTemplateEnum template);
+
+        Task<bool> IsStudentFinishedRoundAsync(Guid roundId, Guid studentId);
+        Task MarkFinishedSubmissionAsync(Guid roundId, Guid studentId);
     }
 }

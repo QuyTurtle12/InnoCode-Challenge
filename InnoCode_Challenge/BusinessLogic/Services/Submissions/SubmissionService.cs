@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Submissions;
@@ -29,6 +30,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
         private readonly ILeaderboardEntryService _leaderboardService;
+        private readonly IConfigService _configService;
 
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
@@ -42,7 +44,8 @@ namespace BusinessLogic.Services.Submissions
             IJudge0Service judge0Service,
             IHttpContextAccessor httpContextAccessor,
             ICloudinaryService cloudinaryService,
-            ILeaderboardEntryService leaderboardService)
+            ILeaderboardEntryService leaderboardService,
+            IConfigService configService)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -50,6 +53,7 @@ namespace BusinessLogic.Services.Submissions
             _httpContextAccessor = httpContextAccessor;
             _cloudinaryService = cloudinaryService;
             _leaderboardService = leaderboardService;
+            _configService = configService;
         }
 
         public async Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(
@@ -265,8 +269,18 @@ namespace BusinessLogic.Services.Submissions
                     .Select(s => s.StudentId)
                     .FirstOrDefault();
 
-                // Get contest ID from round ID
-                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+                if (IsAlreadyFinishedRound)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        $"Cannot execute code. You have already finished this round.");
+                }
+
+                    // Get contest ID from round ID
+                    IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 Guid contestId = contestRepo.Entities
                     .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
                     .Select(c => c.ContestId)
@@ -279,11 +293,11 @@ namespace BusinessLogic.Services.Submissions
                     .Select(t => t.TeamId)
                     .FirstOrDefault();
 
-                // Count previous submissions for this problem by this student's team
+                // Count previous submissions of logged-in student for this problem
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 int previousSubmissionsCount = await submissionRepo.Entities
                     .Where(s => s.ProblemId == problem.ProblemId &&
-                           s.TeamId == teamId)
+                           s.SubmittedByStudentId == Guid.Parse(userId))
                     .CountAsync();
 
                 // Create a submission record
@@ -490,6 +504,28 @@ namespace BusinessLogic.Services.Submissions
                 // Check round deadline before allowing submission
                 await ValidateRoundDeadlineAsync(roundId, "submit file");
 
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefault();
+
+                // Check if student has already finished this round
+                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+                if (IsAlreadyFinishedRound)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        $"Cannot {OPERATION_NAME}. You have already finished this round.");
+                }
+
                 // Validate file
                 if (file == null || file.Length == 0)
                 {
@@ -507,18 +543,6 @@ namespace BusinessLogic.Services.Submissions
                         ResponseCodeConstants.BADREQUEST,
                         $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
                 }
-
-                // Get user ID from JWT token
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Null User Id");
-
-                // Get student ID from user ID
-                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
-                    .Select(s => s.StudentId)
-                    .FirstOrDefault();
 
                 // Get team ID for the student in this round's contest
                 IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
@@ -765,12 +789,29 @@ namespace BusinessLogic.Services.Submissions
                         $"No submission found for this problem");
                 }
 
+                // Get roundId and studentId
+                Guid roundId = submission.Problem.RoundId;
+                Guid studentId = submission.SubmittedByStudentId;
+
+                // Check if student has already finished this round
+                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+                if (IsAlreadyFinishedRound)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        $"Cannot {OPERATION_NAME}. You have already finished this round.");
+                }
+
                 // Get contest ID and score
                 Guid contestId = submission.Problem.Round.ContestId;
                 double score = submission.Score;
 
                 // Update team score in leaderboard
                 await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, score);
+
+                // Mark finished round
+                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
             }
             catch (Exception ex)
             {
