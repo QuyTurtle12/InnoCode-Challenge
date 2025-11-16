@@ -68,6 +68,23 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
+        /// Get Contest by contest ID
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetContestById(Guid id)
+        {
+            GetContestDTO contest = await _contestService.GetContestByIdAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: contest,
+                        message: "Contest retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
         /// Get Contests that this logged-in student is participated with Pagination and Optional Filters
         /// </summary>
         /// <param name="pageNumber"></param>

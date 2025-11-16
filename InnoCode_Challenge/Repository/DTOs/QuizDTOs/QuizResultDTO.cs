@@ -33,5 +33,6 @@
         public DateTime StartTime { get; set; }
         public DateTime? EndTime { get; set; }
         public double Score { get; set; }
+        public List<QuizAnswerResultDTO> AnswerResults { get; set; } = new List<QuizAnswerResultDTO>();
     }
 }

@@ -303,7 +303,7 @@ namespace BusinessLogic.Services.Contests
 
                         // Fetch time limit from config
                         string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(r.RoundId);
-                        if (timeLimitDict.TryGetValue(timeLimitKey, out Config? timeLimitConfig) 
+                        if (timeLimitDict.TryGetValue(timeLimitKey, out Config? timeLimitConfig)
                             && int.TryParse(timeLimitConfig.Value, out int timeLimit))
                         {
                             roundDTO.TimeLimitSeconds = timeLimit;
@@ -372,7 +372,7 @@ namespace BusinessLogic.Services.Contests
                     }
 
                     // Fetch rewards text from config
-                    string rewardsKey = ConfigKeys.ContestRewards (item.ContestId);
+                    string rewardsKey = ConfigKeys.ContestRewards(item.ContestId);
                     Config? rewardsConfig = configLookup[rewardsKey].FirstOrDefault();
                     if (rewardsConfig != null && !string.IsNullOrWhiteSpace(rewardsConfig.Value))
                     {
@@ -387,6 +387,184 @@ namespace BusinessLogic.Services.Contests
 
                 // Return the paginated list of DTOs
                 return paginatedList;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving Contests: {ex.Message}");
+            }
+        }
+
+        public async Task<GetContestDTO> GetContestByIdAsync(Guid id)
+        {
+            try
+            {
+                // Get contest repository
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                // Get contest
+                Contest? contest = await contestRepo
+                    .Entities
+                    .Where(c => c.ContestId == id && !c.DeletedAt.HasValue)
+                    .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
+                        .ThenInclude(r => r.Problem)
+                    .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
+                        .ThenInclude(r => r.McqTest)
+                    .OrderByDescending(c => c.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                // Create a queryable for mapping
+                if (contest == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Contest not found.");
+                }
+
+                // Get related configs
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Load all configs for a contest in one query
+                List<Config> configs = await configRepo.Entities
+                    .Where(c => c.Key.Contains(id.ToString()) && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Create a lookup dictionary for faster access
+                ILookup<string, Config> configLookup = configs.ToLookup(c => c.Key);
+
+                // Extract distinct organizer IDs from the results
+                string? organizerId = contest.CreatedBy;
+
+                // Get user repository
+                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+
+                // Parse organizer ID to Guid
+                Guid organizerGuid = Guid.TryParse(organizerId, out Guid guid) ? guid : Guid.Empty;
+
+                // Get organizer name
+                string organizerName = await userRepo
+                    .Entities
+                    .Where(u => organizerGuid == u.UserId && !u.DeletedAt.HasValue)
+                    .Select(u => u.Fullname)
+                    .FirstOrDefaultAsync() ?? "Unknown Organizer";
+
+                // Extract distinct round ID
+                List<Guid> roundIds = contest.Rounds
+                    .Select(r => r.RoundId)
+                    .Distinct()
+                    .ToList();
+
+                // Load time limit configs for all rounds in one query
+                List<Config> timeLimitConfigs = await configRepo.Entities
+                    .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                                && c.Key.Contains("time_limit_seconds")
+                                && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Create a lookup for fast access
+                Dictionary<string, Config> timeLimitDict = timeLimitConfigs.ToDictionary(c => c.Key);
+
+                Guid createdById = Guid.Parse(contest.CreatedBy!);
+
+                // Map the result to DTO
+                GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(contest);
+
+                // Assign non-deleted rounds
+                contestDTO.rounds = contest.Rounds
+                .Where(r => !r.DeletedAt.HasValue)
+                .Select(r =>
+                {
+                    // Map base round properties
+                    GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(r);
+
+                    // Assign additional properties
+                    roundDTO.RoundName = r.Name;
+                    roundDTO.ContestName = contest.Name;
+
+                    // Fetch time limit from config
+                    string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(r.RoundId);
+                    if (timeLimitDict.TryGetValue(timeLimitKey, out Config? timeLimitConfig)
+                        && int.TryParse(timeLimitConfig.Value, out int timeLimit))
+                    {
+                        roundDTO.TimeLimitSeconds = timeLimit;
+                    }
+
+                    // Map problem information if exists
+                    if (r.Problem != null)
+                    {
+                        roundDTO.ProblemType = r.Problem.Type;
+                        roundDTO.Problem = _mapper.Map<GetProblemDTO>(r.Problem);
+                    }
+                    // Map MCQ test information if exists
+                    else if (r.McqTest != null)
+                    {
+                        roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
+                        roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(r.McqTest);
+                    }
+
+                    return roundDTO;
+                }).ToList();
+
+                // Map creator ID
+                contestDTO.CreatedById = createdById;
+
+                // Map creator name
+                contestDTO.CreatedByName = organizerName;
+
+                // Convert start/end to ISO 8601 format
+                if (contest.Start.HasValue)
+                    contestDTO.Start = DateTime.SpecifyKind(contest.Start.Value, DateTimeKind.Local);
+                if (contest.End.HasValue)
+                    contestDTO.End = DateTime.SpecifyKind(contest.End.Value, DateTimeKind.Local);
+
+                // Fetch team members max from config
+                string teamMemberMaxKey = ConfigKeys.ContestTeamMembersMax(contest.ContestId);
+                Config? teamMemberMaxConfig = configLookup[teamMemberMaxKey].FirstOrDefault();
+                if (teamMemberMaxConfig != null && int.TryParse(teamMemberMaxConfig.Value, out int teamMemberMax))
+                {
+                    contestDTO.TeamMembersMax = teamMemberMax;
+                }
+
+                // Fetch team limit max from config
+                string teamLimitMaxKey = ConfigKeys.ContestTeamLimitMax(contest.ContestId);
+                Config? teamLimitMaxConfig = configLookup[teamLimitMaxKey].FirstOrDefault();
+                if (teamLimitMaxConfig != null && int.TryParse(teamLimitMaxConfig.Value, out int teamLimitMax))
+                {
+                    contestDTO.TeamLimitMax = teamLimitMax;
+                }
+
+                // Fetch registration start from config
+                string regStartKey = ConfigKeys.ContestRegStart(contest.ContestId);
+                Config? regStartConfig = configLookup[regStartKey].FirstOrDefault();
+                if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
+                {
+                    contestDTO.RegistrationStart = regStart;
+                }
+
+                // Fetch registration end from config
+                string regEndKey = ConfigKeys.ContestRegEnd(contest.ContestId);
+                Config? regEndConfig = configLookup[regEndKey].FirstOrDefault();
+                if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
+                {
+                    contestDTO.RegistrationEnd = regEnd;
+                }
+
+                // Fetch rewards text from config
+                string rewardsKey = ConfigKeys.ContestRewards(contest.ContestId);
+                Config? rewardsConfig = configLookup[rewardsKey].FirstOrDefault();
+                if (rewardsConfig != null && !string.IsNullOrWhiteSpace(rewardsConfig.Value))
+                {
+                    contestDTO.RewardsText = rewardsConfig.Value;
+                }
+
+                // Return contest data
+                return contestDTO;
             }
             catch (Exception ex)
             {
@@ -625,7 +803,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
-                
+
                 // Set team limit max
                 if (teamLimitMax.HasValue)
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(entity.ContestId), teamLimitMax.Value.ToString());

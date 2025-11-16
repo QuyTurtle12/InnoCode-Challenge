@@ -338,6 +338,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="roundId"></param>
         /// <returns></returns>
         [HttpPost("{roundId}/finish")]
+        [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> MarkFinishRound(Guid roundId)
         {
             await _roundService.MarkFinishFinishRoundAsync(roundId);

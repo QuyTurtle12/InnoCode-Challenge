@@ -1,6 +1,8 @@
 ﻿using System.Globalization;
+using System.Security.Claims;
 using System.Text;
 using AutoMapper;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using CsvHelper;
 using CsvHelper.Configuration;
@@ -21,12 +23,16 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IConfigService _configService;
 
         // Constructor
-        public TestCaseService(IMapper mapper, IUOW unitOfWork)
+        public TestCaseService(IMapper mapper, IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, IConfigService configService)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
+            _httpContextAccessor = httpContextAccessor;
+            _configService = configService;
         }
 
         public async Task CreateTestCaseAsync(Guid roundId, CreateTestCaseDTO testCaseDTO)
@@ -334,6 +340,22 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
                         "Test cases are only available for AutoEvaluation problems.");
+                }
+
+                // Get user role from JWT token
+                string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+
+                // If user is a student, validate round deadline and check if already finished
+                if (userRole == RoleConstants.Student)
+                {
+                    await ValidateRoundDeadlineAsync(roundId, "access auto test round");
+
+                    if (await IsAlreadyFinishRound(roundId))
+                    {
+                        throw new ErrorException(StatusCodes.Status403Forbidden,
+                            ResponseCodeConstants.FORBIDDEN,
+                            $"Cannot access. You have already finished this round.");
+                    }
                 }
 
                 // Get test case repository
@@ -648,6 +670,65 @@ namespace BusinessLogic.Services.Contests
             }
 
             return null;
+        }
+
+        private async Task<bool> IsAlreadyFinishRound(Guid roundId)
+        {
+            // Get user ID from JWT token
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"Null User Id");
+
+            // Get student ID from user ID
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                .Select(s => s.StudentId)
+                .FirstOrDefault();
+
+            // Check if student has already finished this round
+            bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+            if (IsAlreadyFinishedRound)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private async Task ValidateRoundDeadlineAsync(Guid roundId, string operationName)
+        {
+            // Get the round details
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                .FirstOrDefaultAsync();
+
+            // Validate round existence
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Round with ID {roundId} not found");
+            }
+
+            // Check if current time is within the round's start and end time
+            DateTime now = DateTime.UtcNow;
+
+            if (now < round.Start)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot {operationName}. Round {round.Name} has not started yet. Start time: {round.Start:yyyy-MM-dd HH:mm:ss} UTC");
+            }
+
+            if (now > round.End)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    $"Cannot {operationName}. Round {round.Name} has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
+            }
         }
     }
 }

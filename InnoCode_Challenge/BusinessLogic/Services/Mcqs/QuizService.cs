@@ -385,17 +385,52 @@ namespace BusinessLogic.Services.Mcqs
                 // Get paginated data
                 PaginatedList<McqAttempt> resultQuery = await attemptRepo.GetPagingAsync(query, pageNumber, pageSize);
 
+                // Get attempt IDs for loading related data
+                List<Guid> attemptIds = resultQuery.Items.Select(a => a.AttemptId).ToList();
+
+                // Load all attempt items for these attempts in one query
+                IGenericRepository<McqAttemptItem> attemptItemRepo = _unitOfWork.GetRepository<McqAttemptItem>();
+                List<McqAttemptItem> allAttemptItems = await attemptItemRepo.Entities
+                    .Where(ai => attemptIds.Contains(ai.AttemptId))
+                    .Include(ai => ai.Question)
+                    .Include(ai => ai.SelectedOption)
+                    .ToListAsync();
+
+                // Group attempt items by attempt ID for efficient lookup
+                Dictionary<Guid, List<McqAttemptItem>> attemptItemsGrouped = allAttemptItems
+                    .GroupBy(ai => ai.AttemptId)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
                 // Map to DTOs
-                IReadOnlyCollection<QuizAttemptSummaryDTO> result = resultQuery.Items.Select(item => new QuizAttemptSummaryDTO
+                IReadOnlyCollection<QuizAttemptSummaryDTO> result = resultQuery.Items.Select(item =>
                 {
-                    AttemptId = item.AttemptId,
-                    TestId = item.TestId,
-                    TestName = item.Test?.Name ?? "Unknown Test",
-                    StudentId = item.StudentId,
-                    StudentName = item.Student?.User?.Fullname ?? "Unknown Student",
-                    StartTime = item.Start,
-                    EndTime = item.End,
-                    Score = item.Score ?? 0
+                    // Get attempt items for this attempt
+                    List<McqAttemptItem> attemptItems = attemptItemsGrouped.ContainsKey(item.AttemptId)
+                        ? attemptItemsGrouped[item.AttemptId]
+                        : new List<McqAttemptItem>();
+
+                    // Map attempt items to answer results
+                    List<QuizAnswerResultDTO> answerResults = attemptItems.Select(ai => new QuizAnswerResultDTO
+                    {
+                        QuestionId = ai.QuestionId,
+                        SelectedOptionId = ai.SelectedOptionId ?? Guid.Empty,
+                        IsCorrect = ai.Correct,
+                        QuestionText = ai.Question?.Text ?? "Unknown Question",
+                        SelectedOptionText = ai.SelectedOption?.Text ?? "No answer"
+                    }).ToList();
+
+                    return new QuizAttemptSummaryDTO
+                    {
+                        AttemptId = item.AttemptId,
+                        TestId = item.TestId,
+                        TestName = item.Test?.Name ?? "Unknown Test",
+                        StudentId = item.StudentId,
+                        StudentName = item.Student?.User?.Fullname ?? "Unknown Student",
+                        StartTime = item.Start,
+                        EndTime = item.End,
+                        Score = item.Score ?? 0,
+                        AnswerResults = answerResults
+                    };
                 }).ToList();
 
                 // Create new paginated list with mapped DTOs
@@ -428,6 +463,22 @@ namespace BusinessLogic.Services.Mcqs
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
                         "Page number and page size must be greater than or equal to 1.");
+                }
+
+                // Get user role from JWT token
+                string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+
+                // If user is a student, validate round deadline and check if already finished
+                if (userRole == RoleConstants.Student)
+                {
+                    await ValidateRoundDeadlineAsync(roundId, "access quiz");
+
+                    if (await IsAlreadyFinishRound(roundId))
+                    {
+                        throw new ErrorException(StatusCodes.Status403Forbidden,
+                            ResponseCodeConstants.FORBIDDEN,
+                            $"Cannot access. You have already finished this round.");
+                    }
                 }
 
                 // Create a deterministic seed based on student ID + round ID
@@ -955,6 +1006,29 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        
+        private async Task<bool> IsAlreadyFinishRound(Guid roundId)
+        {
+            // Get user ID from JWT token
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"Null User Id");
+
+            // Get student ID from user ID
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                .Select(s => s.StudentId)
+                .FirstOrDefault();
+
+            // Check if student has already finished this round
+            bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+            if (IsAlreadyFinishedRound)
+            {
+                return true;
+            }
+
+            return false;
+        }
     }
 }

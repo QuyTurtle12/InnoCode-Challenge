@@ -12,6 +12,7 @@ using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
+using Repository.Repositories;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -74,11 +75,25 @@ namespace BusinessLogic.Services.Contests
                 // Map DTO to Entity
                 Round round = _mapper.Map<Round>(roundDTO);
 
+                // Adjust time from Vietnam timezone to UTC
+                TimeSpan vietnamOffset = TimeSpan.FromHours(7);
+                round.Start = roundDTO.Start.Subtract(vietnamOffset);
+                round.End = roundDTO.End.Subtract(vietnamOffset);
+
                 // Assign contest ID
                 round.ContestId = contestId;
 
-                // Set initial status
-                round.Status = RoundStatusEnum.Closed.ToString();
+                DateTime now = DateTime.UtcNow;
+
+                // Set initial status based on current time
+                if (now < round.Start || now >= round.End)
+                {
+                    round.Status = RoundStatusEnum.Closed.ToString();
+                }
+                else
+                {
+                    round.Status = RoundStatusEnum.Opened.ToString();
+                }
 
                 // Insert new round
                 await roundRepo.InsertAsync(round);
@@ -406,6 +421,11 @@ namespace BusinessLogic.Services.Contests
 
                 // Update round properties
                 _mapper.Map(roundDTO, round);
+
+                // Adjust time from Vietnam timezone to UTC
+                TimeSpan vietnamOffset = TimeSpan.FromHours(7);
+                round.Start = roundDTO.Start.Subtract(vietnamOffset);
+                round.End = roundDTO.End.Subtract(vietnamOffset);
 
                 // Handle problem type specific logic
                 switch (roundDTO.ProblemType)
@@ -782,7 +802,7 @@ namespace BusinessLogic.Services.Contests
             {
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
-                    $"Cannot submit. You have already finished this round.");
+                    $"Cannot end round. You have already finished this round.");
             }
 
             // Mark student as finished for this round

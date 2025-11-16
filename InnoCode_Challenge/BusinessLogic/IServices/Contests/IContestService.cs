@@ -18,6 +18,8 @@ namespace BusinessLogic.IServices.Contests
             bool isMyParticipatedContest = false,
             bool isMyContest = false
             );
+
+        Task<GetContestDTO> GetContestByIdAsync(Guid id);
         Task<GetContestDTO> UpdateContestAsync(Guid id, UpdateContestDTO contestDTO);
         Task DeleteContestAsync(Guid id);
         Task<ContestCreatedDTO> CreateContestWithPolicyAsync(CreateContestAdvancedDTO dto);
