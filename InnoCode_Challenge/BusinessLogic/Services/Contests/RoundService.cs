@@ -249,6 +249,85 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        public async Task<GetRoundDTO> GetRoundByIdAsync(Guid id)
+        {
+            try
+            {
+                // Validate input
+                if (id == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Round ID cannot be empty.");
+                }
+
+                // Get Round Repository
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+
+                // Get the specific round with related entities
+                Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == id && !r.DeletedAt.HasValue)
+                    .Include(r => r.Contest)
+                    .Include(r => r.Problem)
+                    .Include(r => r.McqTest)
+                    .FirstOrDefaultAsync();
+
+                // Check if round exists
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found.");
+                }
+
+                // Load time limit config for this round
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                string tlKey = ConfigKeys.RoundTimeLimitSeconds(round.RoundId);
+
+                Config? tlConfig = await configRepo.Entities
+                    .Where(c => c.Key == tlKey && c.Scope == "contest" && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                // Map entity to DTO
+                GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
+
+                roundDTO.ContestName = round.Contest?.Name ?? "N/A";
+                roundDTO.RoundName = round.Name;
+
+                // Map time limit from config
+                if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
+                {
+                    roundDTO.TimeLimitSeconds = secs;
+                }
+
+                // Map problem information if exists
+                if (round.Problem != null && round.Problem.DeletedAt == null)
+                {
+                    roundDTO.ProblemType = round.Problem.Type;
+                    roundDTO.Problem = _mapper.Map<GetProblemDTO>(round.Problem);
+                }
+                // Map MCQ test information if exists
+                else if (round.McqTest != null && round.McqTest.DeletedAt == null)
+                {
+                    roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
+                    roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(round.McqTest);
+                }
+
+                return roundDTO;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving Round: {ex.Message}");
+            }
+        }
+
         public async Task<PaginatedList<GetRoundDTO>> GetPaginatedRoundAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? roundNameSearch, string? contestNameSearch, DateTime? startDate, DateTime? endDate)
         {
             try

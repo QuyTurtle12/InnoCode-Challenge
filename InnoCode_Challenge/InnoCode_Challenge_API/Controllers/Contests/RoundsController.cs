@@ -63,6 +63,23 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
+        /// Get round by id
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetRoundById(Guid id)
+        {
+            GetRoundDTO round = await _roundService.GetRoundByIdAsync(id);
+            return Ok(new BaseResponseModel<GetRoundDTO>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: round,
+                        message: "Round retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
         /// Create a new round
         /// </summary>
         [HttpPost("{contestId}")]
