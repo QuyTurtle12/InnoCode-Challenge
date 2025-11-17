@@ -10,5 +10,8 @@ namespace BusinessLogic.IServices.Students
         Task<TeamDTO> CreateAsync(CreateTeamDTO dto);
         Task<TeamDTO> UpdateAsync(Guid id, UpdateTeamDTO dto);
         Task DeleteAsync(Guid id);
+
+        Task<IReadOnlyList<TeamWithMembersDTO>> GetMyTeamsAsync();
+
     }
 }

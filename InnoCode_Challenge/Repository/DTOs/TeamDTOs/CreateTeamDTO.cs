@@ -12,8 +12,5 @@ namespace Repository.DTOs.TeamDTOs
 
         [Required]
         public Guid SchoolId { get; set; }
-
-        [Required]
-        public Guid MentorId { get; set; }
     }
 }

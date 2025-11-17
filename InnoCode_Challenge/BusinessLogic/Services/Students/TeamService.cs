@@ -5,6 +5,7 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.TeamDTOs;
+using Repository.DTOs.TeamMemberDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.ExceptionCustom;
@@ -17,13 +18,16 @@ namespace BusinessLogic.Services.Students
         private readonly IUOW _unitOfWork;
         private readonly IMapper _mapper;
         private readonly ILeaderboardEntryService _leaderboardEntryService;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public TeamService(IUOW unitOfWork, IMapper mapper, ILeaderboardEntryService leaderboardEntryService)
+        public TeamService(IUOW unitOfWork, IMapper mapper, ILeaderboardEntryService leaderboardEntryService, IHttpContextAccessor httpContextAccessor)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
             _leaderboardEntryService = leaderboardEntryService;
+            _httpContextAccessor = httpContextAccessor; 
         }
+
 
         public async Task<PaginatedList<TeamDTO>> GetAsync(TeamQueryParams queryParams)
         {
@@ -94,6 +98,20 @@ namespace BusinessLogic.Services.Students
             var schoolRepository = _unitOfWork.GetRepository<School>();
             var mentorRepository = _unitOfWork.GetRepository<Mentor>();
 
+            // mentorId diff userId
+            string userId = GetCurrentUserIdOrThrow();
+            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid); 
+
+            var meAsMentor = await mentorRepository.Entities
+                .Include(m => m.User)
+                .FirstOrDefaultAsync(m =>
+                    m.User != null &&
+                    ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid) ||
+                     m.User.UserId.ToString() == userId));
+            if (meAsMentor == null)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_MENTOR",
+                    "Only mentors can create teams."); 
+
             bool contestExists = await contestRepository.Entities.AnyAsync(c => c.ContestId == dto.ContestId);
             if (!contestExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND", $"No contest with ID={dto.ContestId}");
@@ -102,11 +120,9 @@ namespace BusinessLogic.Services.Students
             if (!schoolExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={dto.SchoolId}");
 
-            var mentor = await mentorRepository.Entities
-                .Include(m => m.User)
-                .FirstOrDefaultAsync(m => m.MentorId == dto.MentorId);
-            if (mentor == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "MENTOR_NOT_FOUND", $"No mentor with ID={dto.MentorId}");
+            if (meAsMentor.SchoolId != dto.SchoolId) 
+                throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL",
+                    "This mentor does not belong to the selected school."); 
 
             var trimmedName = dto.Name.Trim();
 
@@ -118,8 +134,6 @@ namespace BusinessLogic.Services.Students
                 throw new ErrorException(StatusCodes.Status400BadRequest, "NAME_EXISTS",
                     "A team with this name already exists in the contest.");
 
-            if (mentor.SchoolId != dto.SchoolId) throw new ErrorException(StatusCodes.Status409Conflict,"MENTOR_NOT_BELONG_TO_SCHOOL","This mentor is not belong to this school.");
-
             var now = DateTime.UtcNow;
             var team = new Team
             {
@@ -127,17 +141,15 @@ namespace BusinessLogic.Services.Students
                 Name = trimmedName,
                 ContestId = dto.ContestId,
                 SchoolId = dto.SchoolId,
-                MentorId = dto.MentorId,
+                MentorId = meAsMentor.MentorId,    
                 CreatedAt = now,
                 DeletedAt = null,
                 Status = TeamStatusConstants.Active
-
             };
 
             await teamRepository.InsertAsync(team);
             await _unitOfWork.SaveAsync();
 
-            // Add team to leaderboard
             await _leaderboardEntryService.AddTeamToLeaderboardAsync(dto.ContestId, team.TeamId);
 
             var created = await teamRepository.Entities
@@ -149,6 +161,7 @@ namespace BusinessLogic.Services.Students
 
             return _mapper.Map<TeamDTO>(created);
         }
+
 
         public async Task<TeamDTO> UpdateAsync(Guid id, UpdateTeamDTO dto)
         {
@@ -256,5 +269,102 @@ namespace BusinessLogic.Services.Students
             teamRepository.Update(team);
             await _unitOfWork.SaveAsync();
         }
+
+        public async Task<IReadOnlyList<TeamWithMembersDTO>> GetMyTeamsAsync()
+        {
+            string userId = GetCurrentUserIdOrThrow();
+
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            var studentRepo = _unitOfWork.GetRepository<Student>();
+            var mentorRepo = _unitOfWork.GetRepository<Mentor>();
+
+            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid);
+
+            Guid? myStudentId = await studentRepo.Entities
+                .Where(s => s.DeletedAt == null
+                    && ((hasUserGuid && EF.Property<Guid>(s, "UserId") == userGuid) 
+                        || s.UserId.ToString() == userId))                          
+                .Select(s => (Guid?)s.StudentId)
+                .FirstOrDefaultAsync();
+
+            // mentorId diff userId
+            Guid? myMentorId = await mentorRepo.Entities
+                .Include(m => m.User)
+                .Where(m => m.User != null
+                    && ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid) 
+                        || m.User.UserId.ToString() == userId))                          
+                .Select(m => (Guid?)m.MentorId)
+                .FirstOrDefaultAsync();
+
+            IQueryable<Team> q = teamRepo.Entities
+                .Where(t => t.DeletedAt == null)
+                .Include(t => t.Contest)
+                .Include(t => t.School)
+                .Include(t => t.Mentor).ThenInclude(m => m.User)
+                .Include(t => t.TeamMembers).ThenInclude(tm => tm.Student).ThenInclude(s => s.User);
+
+            if (myStudentId.HasValue && myMentorId.HasValue)
+            {
+                q = q.Where(t => t.MentorId == myMentorId.Value
+                              || t.TeamMembers.Any(tm => tm.StudentId == myStudentId.Value));
+            }
+            else if (myStudentId.HasValue)
+            {
+                q = q.Where(t => t.TeamMembers.Any(tm => tm.StudentId == myStudentId.Value));
+            }
+            else if (myMentorId.HasValue)
+            {
+                q = q.Where(t => t.MentorId == myMentorId.Value);
+            }
+            else
+            {
+                return Array.Empty<TeamWithMembersDTO>();
+            }
+
+            var teams = await q.OrderByDescending(t => t.CreatedAt).ToListAsync();
+
+            var result = teams.Select(t => new TeamWithMembersDTO
+            {
+                TeamId = t.TeamId,
+                Name = t.Name,
+                ContestId = t.ContestId,
+                ContestName = t.Contest?.Name ?? "N/A",
+                SchoolId = t.SchoolId,
+                SchoolName = t.School?.Name ?? "N/A",
+                MentorId = t.MentorId,
+                MentorName = t.Mentor?.User?.Fullname ?? "N/A",
+                CreatedAt = t.CreatedAt,
+                Members = t.TeamMembers
+                    .OrderByDescending(tm => tm.MemberRole == "Captain")
+                    .ThenBy(tm => tm.Student.User.Fullname)
+                    .Select(tm => new Repository.DTOs.TeamMemberDTOs.TeamMemberDTO
+                    {
+                        TeamId = tm.TeamId,
+                        TeamName = t.Name,
+                        StudentId = tm.StudentId,
+                        StudentFullname = tm.Student.User.Fullname,
+                        StudentEmail = tm.Student.User.Email,
+                        MemberRole = tm.MemberRole ?? "Member",
+                        JoinedAt = tm.JoinedAt
+                    }).ToList()
+            }).ToList();
+
+            return result;
+        }
+        private string GetCurrentUserIdOrThrow()
+        {
+            var user = _httpContextAccessor.HttpContext?.User;
+            if (user == null || user.Identity == null || !user.Identity.IsAuthenticated)
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Sign in required.");
+
+            var id = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                     ?? user.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+
+            if (string.IsNullOrWhiteSpace(id))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Invalid user context.");
+
+            return id;
+        }
+
     }
 }
