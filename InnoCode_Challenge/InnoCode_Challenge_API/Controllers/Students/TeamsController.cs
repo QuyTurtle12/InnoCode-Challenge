@@ -88,5 +88,20 @@ namespace InnoCode_Challenge_API.Controllers.Students
             await _teamService.DeleteAsync(id);
             return NoContent();
         }
+
+        [HttpGet("me")]
+        [Authorize] 
+        public async Task<IActionResult> GetMine()
+        {
+            var teams = await _teamService.GetMyTeamsAsync();
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: teams,
+                message: "Teams of current user retrieved successfully."
+            ));
+        }
+
     }
 }
