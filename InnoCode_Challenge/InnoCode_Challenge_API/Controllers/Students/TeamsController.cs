@@ -55,7 +55,7 @@ namespace InnoCode_Challenge_API.Controllers.Students
         }
 
         [HttpPost]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Roles = RoleConstants.Mentor)]
         public async Task<IActionResult> Create([FromBody] CreateTeamDTO dto)
         {
             var created = await _teamService.CreateAsync(dto);
@@ -68,7 +68,7 @@ namespace InnoCode_Challenge_API.Controllers.Students
                 ));
         }
 
-        [HttpPut("{id:guid}")]
+            [HttpPut("{id:guid}")]
         [Authorize(Roles = RoleConstants.Admin)]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateTeamDTO dto)
         {

@@ -98,6 +98,20 @@ namespace BusinessLogic.Services.Students
             var schoolRepository = _unitOfWork.GetRepository<School>();
             var mentorRepository = _unitOfWork.GetRepository<Mentor>();
 
+            // mentorId diff userId
+            string userId = GetCurrentUserIdOrThrow();
+            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid); 
+
+            var meAsMentor = await mentorRepository.Entities
+                .Include(m => m.User)
+                .FirstOrDefaultAsync(m =>
+                    m.User != null &&
+                    ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid) ||
+                     m.User.UserId.ToString() == userId));
+            if (meAsMentor == null)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_MENTOR",
+                    "Only mentors can create teams."); 
+
             bool contestExists = await contestRepository.Entities.AnyAsync(c => c.ContestId == dto.ContestId);
             if (!contestExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND", $"No contest with ID={dto.ContestId}");
@@ -106,11 +120,9 @@ namespace BusinessLogic.Services.Students
             if (!schoolExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={dto.SchoolId}");
 
-            var mentor = await mentorRepository.Entities
-                .Include(m => m.User)
-                .FirstOrDefaultAsync(m => m.MentorId == dto.MentorId);
-            if (mentor == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "MENTOR_NOT_FOUND", $"No mentor with ID={dto.MentorId}");
+            if (meAsMentor.SchoolId != dto.SchoolId) 
+                throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL",
+                    "This mentor does not belong to the selected school."); 
 
             var trimmedName = dto.Name.Trim();
 
@@ -122,8 +134,6 @@ namespace BusinessLogic.Services.Students
                 throw new ErrorException(StatusCodes.Status400BadRequest, "NAME_EXISTS",
                     "A team with this name already exists in the contest.");
 
-            if (mentor.SchoolId != dto.SchoolId) throw new ErrorException(StatusCodes.Status409Conflict,"MENTOR_NOT_BELONG_TO_SCHOOL","This mentor is not belong to this school.");
-
             var now = DateTime.UtcNow;
             var team = new Team
             {
@@ -131,17 +141,15 @@ namespace BusinessLogic.Services.Students
                 Name = trimmedName,
                 ContestId = dto.ContestId,
                 SchoolId = dto.SchoolId,
-                MentorId = dto.MentorId,
+                MentorId = meAsMentor.MentorId,    
                 CreatedAt = now,
                 DeletedAt = null,
                 Status = TeamStatusConstants.Active
-
             };
 
             await teamRepository.InsertAsync(team);
             await _unitOfWork.SaveAsync();
 
-            // Add team to leaderboard
             await _leaderboardEntryService.AddTeamToLeaderboardAsync(dto.ContestId, team.TeamId);
 
             var created = await teamRepository.Entities
@@ -153,6 +161,7 @@ namespace BusinessLogic.Services.Students
 
             return _mapper.Map<TeamDTO>(created);
         }
+
 
         public async Task<TeamDTO> UpdateAsync(Guid id, UpdateTeamDTO dto)
         {
