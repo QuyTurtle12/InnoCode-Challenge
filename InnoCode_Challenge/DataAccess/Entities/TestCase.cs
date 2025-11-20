@@ -25,6 +25,8 @@ public partial class TestCase
 
     public DateTime? DeleteAt { get; set; }
 
+    public int? OrderIndex { get; set; }
+
     public virtual Problem Problem { get; set; } = null!;
 
     public virtual ICollection<SubmissionDetail> SubmissionDetails { get; set; } = new List<SubmissionDetail>();

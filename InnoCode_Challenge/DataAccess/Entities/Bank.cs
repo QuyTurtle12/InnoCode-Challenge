@@ -13,5 +13,7 @@ public partial class Bank
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? CreatedBy { get; set; }
+
     public virtual ICollection<McqQuestion> McqQuestions { get; set; } = new List<McqQuestion>();
 }

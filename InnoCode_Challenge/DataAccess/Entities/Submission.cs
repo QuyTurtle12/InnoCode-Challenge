@@ -29,7 +29,7 @@ public partial class Submission
 
     public virtual ICollection<SubmissionDetail> SubmissionDetails { get; set; } = new List<SubmissionDetail>();
 
-    public virtual Student? SubmittedByStudent { get; set; }
+    public virtual Student SubmittedByStudent { get; set; } = null!;
 
     public virtual Team Team { get; set; } = null!;
 }

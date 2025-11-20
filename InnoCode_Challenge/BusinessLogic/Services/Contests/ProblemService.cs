@@ -285,12 +285,12 @@ namespace BusinessLogic.Services.Contests
                     ProblemId = problem.ProblemId,
                     ProblemDescription = problem.Description,
                     TotalMaxScore = rubricCriteria.Sum(r => r.Weight),
-                    Criteria = rubricCriteria.Select((r, index) => new RubricCriterionDTO
+                    Criteria = rubricCriteria.Select(r => new RubricCriterionDTO
                     {
                         RubricId = r.TestCaseId,
                         Description = r.Description ?? r.Input ?? "Criterion",
                         MaxScore = r.Weight,
-                        Order = index + 1
+                        Order = r.OrderIndex ?? 1
                     }).ToList()
                 };
 
@@ -355,6 +355,13 @@ namespace BusinessLogic.Services.Contests
                         "Rubric can only be created for manual problem types");
                 }
 
+                // Get the last order index
+                int lastOrderIndex = await testCaseRepo.Entities
+                    .Where(tc => tc.ProblemId == problem.ProblemId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeleteAt.HasValue)
+                    .MaxAsync(tc => tc.OrderIndex) ?? 1;
+
                 List<TestCase> createdCriteria = new List<TestCase>();
 
                 // Create rubric criteria
@@ -367,6 +374,7 @@ namespace BusinessLogic.Services.Contests
                         Description = criterion.Description,
                         Type = TestCaseTypeEnum.Manual.ToString(),
                         Weight = criterion.MaxScore,
+                        OrderIndex = lastOrderIndex,
                         Input = null,
                         ExpectedOutput = null,
                         TimeLimitMs = null,
@@ -495,6 +503,7 @@ namespace BusinessLogic.Services.Contests
                     // Update properties
                     existingCriterion.Description = criterionDTO.Description;
                     existingCriterion.Weight = criterionDTO.MaxScore;
+                    existingCriterion.OrderIndex = criterionDTO.Order;
 
                     await rubricRepo.UpdateAsync(existingCriterion);
                 }
@@ -517,12 +526,12 @@ namespace BusinessLogic.Services.Contests
                     ProblemDescription = problem.Description,
                     TotalMaxScore = allCriteria.Sum(c => c.Weight),
                     Criteria = allCriteria
-                        .Select((c, index) => new RubricCriterionDTO
+                        .Select(c => new RubricCriterionDTO
                         {
                             RubricId = c.TestCaseId,
                             Description = c.Description ?? string.Empty,
                             MaxScore = c.Weight,
-                            Order = index + 1
+                            Order = c.OrderIndex ?? 1
                         })
                         .ToList()
                 };
@@ -702,6 +711,9 @@ namespace BusinessLogic.Services.Contests
                         await _unitOfWork.SaveAsync();
                     }
 
+                    // Initialize the first order index
+                    int orderIndex = 1;
+
                     // Process all rubric criteria
                     int rowNumber = 1;
                     foreach (RubricCsvRowDTO row in csvRows)
@@ -734,6 +746,7 @@ namespace BusinessLogic.Services.Contests
                                 Description = row.Description?.Trim(),
                                 Type = TestCaseTypeEnum.Manual.ToString(),
                                 Weight = maxScore,
+                                OrderIndex = orderIndex,
                                 Input = null,
                                 ExpectedOutput = null,
                                 TimeLimitMs = null,
@@ -745,6 +758,7 @@ namespace BusinessLogic.Services.Contests
 
                             result.ImportedTestCaseIds.Add(rubricCriterion.TestCaseId);
                             result.SuccessCount++;
+                            orderIndex++;
                         }
                         catch (Exception ex)
                         {
