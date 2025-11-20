@@ -5,6 +5,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.LeaderboardEntryDTOs;
 using Repository.IRepositories;
+using Repository.Repositories;
+using System.Security.Claims;
 using System.Text.Json;
 using Utility.Constant;
 using Utility.Enums;
@@ -18,13 +20,15 @@ namespace BusinessLogic.Services.Contests
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
         private readonly ILeaderboardRealtimeService _realtimeService;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         // Constructor
-        public LeaderboardEntryService(IMapper mapper, IUOW uow, ILeaderboardRealtimeService realtimeService)
+        public LeaderboardEntryService(IMapper mapper, IUOW uow, ILeaderboardRealtimeService realtimeService, IHttpContextAccessor httpContextAccessor)
         {
             _mapper = mapper;
             _unitOfWork = uow;
             _realtimeService = realtimeService;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task<string> ToggleLeaderboardFreezeAsync(Guid contestId)
@@ -448,7 +452,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<PaginatedList<GetLeaderboardEntryDTO>> GetPaginatedLeaderboardAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? contestNameSearch)
+        public async Task<GetLeaderboardEntryDTO> GetLeaderboardAsync(int pageNumber, int pageSize, Guid contestIdSearch)
         {
             try
             {
@@ -458,75 +462,217 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
                 }
 
-                // Get the repository for LeaderboardEntry
+                // Get current user information
+                string? userIdClaim = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+                string? userRole = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Role);
+
+                Guid? currentUserId = null;
+                if (Guid.TryParse(userIdClaim, out Guid parsedUserId))
+                {
+                    currentUserId = parsedUserId;
+                }
+
+                // Get repositories
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
-                // Start with base query
-                IQueryable<LeaderboardEntry> query = leaderboardRepo
-                    .Entities
-                    .Include(l => l.Contest)
-                    .Include(l => l.Team);
-
-                // Apply filters if provided
-                if (idSearch.HasValue)
+                // Determine user's team if they're a student or mentor
+                Guid? userTeamId = null;
+                if (currentUserId.HasValue)
                 {
-                    query = query.Where(l => l.EntryId == idSearch.Value);
-                }
-
-                if (contestIdSearch.HasValue)
-                {
-                    query = query.Where(l => l.ContestId == contestIdSearch.Value);
-                }
-
-                if (!string.IsNullOrEmpty(contestNameSearch))
-                {
-                    query = query.Where(l => l.Contest.Name.Contains(contestNameSearch));
-                }
-
-                // Order by rank 
-                query = query.OrderBy(l => l.Rank);
-
-                // Execute query to get all matching entries
-                List<LeaderboardEntry> allEntries = await query.ToListAsync();
-
-                // Group entries by ContestId
-                var groupedEntries = allEntries
-                    .GroupBy(entry => entry.ContestId)
-                    .Select(group =>
+                    if (userRole == RoleConstants.Student)
                     {
-                        // Get first entry to extract common information
-                        LeaderboardEntry firstEntry = group.First();
+                        Student? student = await studentRepo.Entities
+                            .FirstOrDefaultAsync(s => s.UserId == currentUserId.Value && s.DeletedAt == null);
 
-                        // Map to DTO
-                        GetLeaderboardEntryDTO dto = _mapper.Map<GetLeaderboardEntryDTO>(firstEntry);
-
-                        // Create the team list with teams ordered by rank
-                        dto.teamIdList = group.OrderBy(e => e.Rank).Select(entry => new TeamInfo
+                        if (student != null)
                         {
-                            TeamId = entry.TeamId,
-                            TeamName = entry.Team.Name,
-                            Rank = entry.Rank ?? 0,
-                            Score = entry.Score ?? 0
-                        }).ToList();
+                            TeamMember? teamMember = await teamMemberRepo.Entities
+                                .Include(tm => tm.Team)
+                                .FirstOrDefaultAsync(tm => tm.StudentId == student.StudentId
+                                                          && tm.Team.ContestId == contestIdSearch
+                                                          && tm.Team.DeletedAt == null);
+                            userTeamId = teamMember?.TeamId;
+                        }
+                    }
+                    else if (userRole == RoleConstants.Mentor)
+                    {
+                        Mentor? mentor = await mentorRepo.Entities
+                            .FirstOrDefaultAsync(m => m.UserId == currentUserId.Value && m.DeletedAt == null);
 
-                        return dto;
-                    })
-                    .ToList();
+                        if (mentor != null)
+                        {
+                            Team? team = await teamRepo.Entities
+                                .FirstOrDefaultAsync(t => t.MentorId == mentor.MentorId
+                                                         && t.ContestId == contestIdSearch
+                                                         && t.DeletedAt == null);
+                            userTeamId = team?.TeamId;
+                        }
+                    }
+                }
 
-                // Apply pagination to the grouped results
-                int totalCount = groupedEntries.Count;
-                var paginatedGroups = groupedEntries
+                // Get all leaderboard entries for the contest
+                List<LeaderboardEntry> allEntries = await leaderboardRepo.Entities
+                    .Where(l => l.ContestId == contestIdSearch)
+                    .Include(l => l.Contest)
+                    .Include(l => l.Team)
+                    .OrderBy(l => l.Rank)
+                    .ToListAsync();
+
+                if (!allEntries.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "No leaderboard entries found for the specified contest.");
+                }
+
+                // Get the first entry to extract contest information
+                LeaderboardEntry firstEntry = allEntries.First();
+
+                // Map to DTO
+                GetLeaderboardEntryDTO dto = _mapper.Map<GetLeaderboardEntryDTO>(firstEntry);
+
+                // Create team info list from all entries
+                var allTeams = allEntries.Select(entry => new TeamInfo
+                {
+                    TeamId = entry.TeamId,
+                    TeamName = entry.Team.Name,
+                    Rank = entry.Rank ?? 0,
+                    Score = entry.Score ?? 0,
+                    Members = new List<MemberInfo>()
+                }).ToList();
+
+                // Set total team count
+                int totalTeamCount = allTeams.Count;
+
+                // Apply pagination to teams
+                List<TeamInfo> paginatedTeams = allTeams
                     .Skip((pageNumber - 1) * pageSize)
                     .Take(pageSize)
                     .ToList();
 
-                // Create and return a new paginated list with the DTOs
-                return new PaginatedList<GetLeaderboardEntryDTO>(
-                    paginatedGroups,
-                    totalCount,
-                    pageNumber,
-                    pageSize
-                );
+                // Determine if should show all members or only user's team members
+                bool showAllMembers = userRole != RoleConstants.Student && userRole != RoleConstants.Mentor;
+
+                // Get all rounds for this contest
+                List<Round> rounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestIdSearch && !r.DeletedAt.HasValue)
+                    .OrderBy(r => r.Start)
+                    .ToListAsync();
+
+                // Populate member details for paginated teams only
+                foreach (var teamData in paginatedTeams)
+                {
+                    bool isUserTeam = userTeamId.HasValue && userTeamId.Value == teamData.TeamId;
+
+                    // If user is student/mentor and this is not their team, skip member details
+                    if (!showAllMembers && !isUserTeam)
+                    {
+                        continue;
+                    }
+
+                    // Get team members with their student and user information
+                    List<TeamMember> teamMembers = await teamMemberRepo.Entities
+                        .Include(tm => tm.Student)
+                            .ThenInclude(s => s.User)
+                        .Where(tm => tm.TeamId == teamData.TeamId)
+                        .ToListAsync();
+
+                    // Process each member
+                    foreach (TeamMember teamMember in teamMembers)
+                    {
+                        MemberInfo memberInfo = new MemberInfo
+                        {
+                            MemberId = teamMember.StudentId,
+                            MemberName = teamMember.Student.User.Fullname,
+                            MemberRole = teamMember.MemberRole,
+                            TotalScore = 0,
+                            RoundScores = new List<RoundScoreDetail>()
+                        };
+
+                        // Calculate scores for each round
+                        foreach (Round round in rounds)
+                        {
+                            double roundScore = 0;
+                            string roundType = string.Empty;
+                            DateTime? completedAt = null;
+
+                            // Get key
+                            string key = ConfigKeys.RoundStudent(round.RoundId, teamMember.StudentId);
+                            Config? config = await configRepo.GetByIdAsync(key);
+
+                            // Skip if this student hasn't finished this round
+                            if (config == null || config.DeletedAt != null)
+                            {
+                                continue;
+                            }
+
+                            // Check if round has MCQ test
+                            McqAttempt? mcqAttempt = await mcqAttemptRepo.Entities
+                                .Where(ma => ma.RoundId == round.RoundId
+                                            && ma.StudentId == teamMember.StudentId
+                                            && ma.End.HasValue)
+                                .OrderByDescending(ma => ma.End)
+                                .FirstOrDefaultAsync();
+
+                            if (mcqAttempt != null)
+                            {
+                                roundScore = mcqAttempt.Score ?? 0;
+                                roundType = ProblemTypeEnum.McqTest.ToString();
+                                //completedAt = config.UpdatedAt;
+                                completedAt = config.UpdatedAt;
+                            }
+                            else
+                            {
+                                // Check if round has Problem submission
+                                Submission? submission = await submissionRepo.Entities
+                                    .Include(s => s.Problem)
+                                    .Where(s => s.Problem.RoundId == round.RoundId
+                                               && s.SubmittedByStudentId == teamMember.StudentId
+                                               && s.TeamId == teamData.TeamId
+                                               && s.Status == SubmissionStatusEnum.Finished.ToString())
+                                    .OrderByDescending(s => s.CreatedAt)
+                                    .FirstOrDefaultAsync();
+
+                                if (submission != null)
+                                {
+                                    roundScore = submission.Score;
+                                    roundType = submission.Problem.Type ?? "Unknown Type";
+                                    completedAt = config.UpdatedAt;
+                                }
+                            }
+
+                            // Add round score detail
+                            memberInfo.RoundScores.Add(new RoundScoreDetail
+                            {
+                                RoundId = round.RoundId,
+                                RoundName = round.Name,
+                                Score = roundScore,
+                                RoundType = roundType,
+                                CompletedAt = completedAt
+                            });
+
+                            // Add to total score
+                            memberInfo.TotalScore += roundScore;
+                        }
+
+                        // Add member info to team
+                        teamData.Members.Add(memberInfo);
+                    }
+                }
+
+                // Set the paginated team list and total count
+                dto.teamIdList = paginatedTeams;
+                dto.TotalTeamCount = totalTeamCount;
+
+                return dto;
             }
             catch (Exception ex)
             {
@@ -537,7 +683,7 @@ namespace BusinessLogic.Services.Contests
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error retrieving grouped leaderboard: {ex.Message}");
+                    $"Error retrieving leaderboard: {ex.Message}");
             }
         }
 

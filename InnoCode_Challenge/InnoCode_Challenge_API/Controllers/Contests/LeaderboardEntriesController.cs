@@ -27,27 +27,31 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         public async Task<IActionResult> GetLeaderboard(
             [Required] Guid contestId,
             int pageNumber = 1,
-            int pageSize = 10,
-            Guid? idSearch = null,
-            string? contestNameSearch = null)
+            int pageSize = 10)
         {
-            var result = await _leaderboardService.GetPaginatedLeaderboardAsync(
-                pageNumber, pageSize, idSearch, contestId, contestNameSearch);
+            GetLeaderboardEntryDTO result = await _leaderboardService.GetLeaderboardAsync(
+                pageNumber, pageSize, contestId);
+
+            // Calculate pagination info based on the team list
+            int totalTeams = result.TotalTeamCount;
+            int totalPages = (int)Math.Ceiling(totalTeams / (double)pageSize);
+            bool hasPreviousPage = pageNumber > 1;
+            bool hasNextPage = pageNumber < totalPages;
 
             var paging = new
             {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
+                PageNumber = pageNumber,
+                PageSize = pageSize,
+                TotalPages = totalPages,
+                TotalCount = totalTeams,
+                HasPreviousPage = hasPreviousPage,
+                HasNextPage = hasNextPage
             };
 
             return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                data: result.Items,
+                data: result,
                 additionalData: paging,
                 message: "Leaderboard retrieved successfully."
             ));

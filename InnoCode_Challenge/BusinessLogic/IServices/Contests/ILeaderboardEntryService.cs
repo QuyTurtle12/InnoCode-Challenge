@@ -5,7 +5,7 @@ namespace BusinessLogic.IServices.Contests
 {
     public interface ILeaderboardEntryService
     {
-        Task<PaginatedList<GetLeaderboardEntryDTO>> GetPaginatedLeaderboardAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? contestNameSearch);
+        Task<GetLeaderboardEntryDTO> GetLeaderboardAsync(int pageNumber, int pageSize, Guid contestIdSearch);
         Task AddTeamToLeaderboardAsync(Guid contestId, Guid teamId);
         Task UpdateLeaderboardAsync(Guid contestId);
         Task UpdateTeamScoreAsync(Guid contestId, Guid teamId, double newScore);
