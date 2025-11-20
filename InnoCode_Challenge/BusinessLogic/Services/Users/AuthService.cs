@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Repository.DTOs.AuthDTOs;
+using Repository.DTOs.AuthDTOs.Repository.DTOs.AuthDTOs;
 using Repository.IRepositories;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -33,6 +34,90 @@ namespace BusinessLogic.Services.Users
             _mapper = mapper;
             _jwtSettings = jwtConfig.Value;
             _httpContextAccessor = httpContextAccessor;
+        }
+        public async Task<AuthResponseDTO> RegisterStudentStrictAsync(RegisterStudentDTO dto)
+        {
+            //Check password and confirm password match
+            if (!string.Equals(dto.Password, dto.ConfirmPassword, StringComparison.Ordinal))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "CONFIRM_PASSWORD_MISMATCH", "Passwords do not match.");
+
+            // Check SchoolId not null or empty
+            if (dto.SchoolId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    "SCHOOL_ID_REQUIRED", "SchoolId is required.");
+
+            var email = NormalizeEmail(dto.Email);
+
+            var userRepo = _unitOfWork.GetRepository<User>();
+            var studentRepo = _unitOfWork.GetRepository<Student>();
+            var schoolRepo = _unitOfWork.GetRepository<School>();
+
+            // Check duplicate email exists
+            bool emailExists = await userRepo.Entities.AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+            if (emailExists)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_EXISTS", "Email is already registered.");
+
+            // Check SchoolId present and valid
+            var school = await schoolRepo.Entities
+                .FirstOrDefaultAsync(s => s.SchoolId == dto.SchoolId && s.DeletedAt == null);
+            if (school == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={dto.SchoolId}");
+
+            var now = DateTime.UtcNow;
+
+            var user = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = dto.FullName.Trim(),
+                Email = email,
+                PasswordHash = PasswordHasher.Hash(dto.Password),
+                Role = RoleConstants.Student,
+                Status = UserStatusConstants.Unverified,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var student = new Student
+            {
+                StudentId = Guid.NewGuid(),
+                UserId = user.UserId,
+                SchoolId = dto.SchoolId,
+                Grade = string.IsNullOrWhiteSpace(dto.Grade) ? null : dto.Grade.Trim(),
+                CreatedAt = now
+            };
+
+            _unitOfWork.BeginTransaction();
+            try
+            {
+                await userRepo.InsertAsync(user);
+                await _unitOfWork.SaveAsync();
+
+                await studentRepo.InsertAsync(student);
+                await _unitOfWork.SaveAsync();
+
+                _unitOfWork.CommitTransaction();
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+
+            var accessToken = GenerateJwtToken(user);
+            var (refreshToken, refreshExp) = GenerateRefreshToken(user);
+
+            return new AuthResponseDTO
+            {
+                Token = accessToken,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
+                RefreshToken = refreshToken,
+                RefreshExpiresAt = refreshExp,
+                UserId = user.UserId.ToString(),
+                Role = user.Role,
+                FullName = user.Fullname,
+                Email = user.Email,
+                EmailVerified = false // Unverified right after signup
+            };
         }
 
         public async Task<AuthResponseDTO> RegisterAsync(RegisterUserDTO dto)
@@ -80,7 +165,7 @@ namespace BusinessLogic.Services.Users
                 Role = user.Role,
                 FullName = user.Fullname,
                 Email = user.Email,
-                EmailVerified = string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase) 
+                EmailVerified = string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase)
             };
         }
 
