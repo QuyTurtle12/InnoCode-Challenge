@@ -626,7 +626,6 @@ namespace BusinessLogic.Services.Contests
                             {
                                 roundScore = mcqAttempt.Score ?? 0;
                                 roundType = ProblemTypeEnum.McqTest.ToString();
-                                //completedAt = config.UpdatedAt;
                                 completedAt = config.UpdatedAt;
                             }
                             else

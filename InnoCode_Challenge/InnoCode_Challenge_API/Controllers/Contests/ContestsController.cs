@@ -97,7 +97,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="startDate"></param>
         /// <param name="endDate"></param>
         /// <returns></returns>
-        [HttpGet("mine")]
+        [HttpGet("participation")]
         [Authorize(Policy ="RequireStudentRole")]
         public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetParticipatedContests(
                                                                                 int pageNumber = 1,
