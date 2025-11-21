@@ -1,10 +1,12 @@
-﻿using Repository.DTOs.AuthDTOs;
-using DataAccess.Entities;
+﻿using DataAccess.Entities;
+using Repository.DTOs.AuthDTOs;
+using Repository.DTOs.AuthDTOs.Repository.DTOs.AuthDTOs;
 
 namespace BusinessLogic.IServices.Users
 {
     public interface IAuthService
     {
+        Task<AuthResponseDTO> RegisterStudentStrictAsync(RegisterStudentDTO dto);
         Task<AuthResponseDTO> RegisterAsync(RegisterUserDTO dto);
         Task<AuthResponseDTO> LoginAsync(LoginDTO dto);
         Task<User?> GetCurrentLoggedInUser();

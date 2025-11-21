@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.AuthDTOs;
+using Repository.DTOs.AuthDTOs.Repository.DTOs.AuthDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 
@@ -18,20 +19,23 @@ namespace InnoCode_Challenge_API.Controllers.Users
         {
             _authService = authService;
         }
+
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] RegisterUserDTO dto)
+        [AllowAnonymous]
+        public async Task<IActionResult> Register([FromBody] RegisterStudentDTO dto)
         {
-            var result = await _authService.RegisterAsync(dto);
+            var result = await _authService.RegisterStudentStrictAsync(dto);
 
             var response = new BaseResponseModel<AuthResponseDTO>(
-                statusCode: StatusCodes.Status200OK,
+                statusCode: StatusCodes.Status201Created,
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
-                message: "User registered successfully."
+                message: "Student registered successfully."
             );
 
-            return Ok(response);
+            return StatusCode(StatusCodes.Status201Created, response);
         }
+
 
         [HttpPost("register-judge")]
         public async Task<IActionResult> RegisterJudge([FromBody] RegisterUserDTO dto)

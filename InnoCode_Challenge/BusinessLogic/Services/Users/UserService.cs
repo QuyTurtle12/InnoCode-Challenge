@@ -118,7 +118,7 @@ namespace BusinessLogic.Services.Users
         public async Task<UserDTO> UpdateUserAsync(Guid id, UpdateUserDTO dto, string performedByRole)
         {
             var repo = _uow.GetRepository<User>();
-            var user = await repo.GetByIdAsync(dto.Id);
+            var user = await repo.GetByIdAsync(id);
 
             if (user == null || user.DeletedAt != null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", $"No user found with ID={id}");

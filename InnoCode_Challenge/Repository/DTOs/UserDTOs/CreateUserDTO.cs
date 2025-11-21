@@ -23,8 +23,8 @@ namespace Repository.DTOs.UserDTOs
         [RegularExpression(RoleConstants.RoleRegexPattern, ErrorMessage = RoleConstants.RoleRegexErrorMessage)]
         public string Role { get; set; } = null!;
 
-        [RegularExpression("^(Active|Inactive|Locked)$",
-            ErrorMessage = "Status must be one of: Active, Inactive, Locked.")]
-        public string Status { get; set; } = "Active";
+        [RegularExpression(UserStatusConstants.StatusRegexPattern,
+            ErrorMessage = UserStatusConstants.StatusRegexErrorMessage)]
+        public string Status { get; set; } = UserStatusConstants.Active;
     }
 }
