@@ -42,13 +42,11 @@ namespace InnoCode_Challenge_API.Middleware
                 context.Response.StatusCode = ex.StatusCode;
                 context.Response.ContentType = "application/json";
 
-                // force standard {errorCode,errorMessage}
                 var result = JsonSerializer.Serialize(new
                 {
                     errorCode = ex.Code,
                     errorMessage = ex.Message
                 });
-                await context.Response.WriteAsync(result);
 
                 await context.Response.WriteAsync(result);
             }
@@ -58,10 +56,11 @@ namespace InnoCode_Challenge_API.Middleware
                 context.Response.StatusCode = ex.StatusCode;
                 context.Response.ContentType = "application/json";
 
-                var errorCode = ex.ErrorDetail?.ErrorCode ?? "UNKNOWN_ERROR";
-                var errorMessage = ex.ErrorDetail?.ErrorMessage?.ToString() ?? "An error occurred.";
-
-                var result = JsonSerializer.Serialize(new {errorCode,errorMessage});
+                var result = JsonSerializer.Serialize(new
+                {
+                    errorCode = ex.ErrorDetail?.ErrorCode ?? "UNKNOWN_ERROR",
+                    errorMessage = ex.ErrorDetail?.ErrorMessage?.ToString() ?? "An error occurred."
+                });
 
                 await context.Response.WriteAsync(result);
             }
@@ -80,5 +79,6 @@ namespace InnoCode_Challenge_API.Middleware
                 await context.Response.WriteAsync(result);
             }
         }
+
     }
 }
