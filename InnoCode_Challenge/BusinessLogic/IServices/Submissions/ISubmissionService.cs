@@ -2,6 +2,7 @@
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Submissions
@@ -10,7 +11,7 @@ namespace BusinessLogic.IServices.Submissions
     {
         Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? roundIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName);
         Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO SubmissionDTO);
-        Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO);
+        Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO, TestCaseEvaluationTypeEnum evaluationType);
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
         Task<Guid> CreateFileSubmissionAsync(Guid roundId, IFormFile file);
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);

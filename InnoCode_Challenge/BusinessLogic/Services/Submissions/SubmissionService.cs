@@ -36,6 +36,10 @@ namespace BusinessLogic.Services.Submissions
         private const string DEFAULT_JUDGED_BY = "system";
         private const double DEFAULT_TIMELIMIT = 10.0;
         private const int DEFAULT_MEMORY = 512000;
+        private const string FILE_ARTIFACT_TYPE = "file";
+        private const string CODE_ARTIFACT_TYPE = "code";
+        private const string AUTO_TEST_SUBMISSION_FOLDER = "code-submissions";
+        private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
 
         // Constructor
         public SubmissionService(
@@ -216,7 +220,7 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO)
+        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO, TestCaseEvaluationTypeEnum evaluationType)
         {
             try
             {
@@ -269,7 +273,6 @@ namespace BusinessLogic.Services.Submissions
                     .Select(s => s.StudentId)
                     .FirstOrDefault();
 
-
                 bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
 
                 if (IsAlreadyFinishedRound)
@@ -279,8 +282,8 @@ namespace BusinessLogic.Services.Submissions
                         $"Cannot execute code. You have already finished this round.");
                 }
 
-                    // Get contest ID from round ID
-                    IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                // Get contest ID from round ID
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 Guid contestId = contestRepo.Entities
                     .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
                     .Select(c => c.ContestId)
@@ -297,8 +300,60 @@ namespace BusinessLogic.Services.Submissions
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 int previousSubmissionsCount = await submissionRepo.Entities
                     .Where(s => s.ProblemId == problem.ProblemId &&
-                           s.SubmittedByStudentId == Guid.Parse(userId))
+                           s.SubmittedByStudentId == studentId)
                     .CountAsync();
+
+                // Determine the source code and artifact details based on evaluation type
+                string sourceCode;
+                string artifactType;
+                string artifactUrl;
+
+                if (evaluationType == TestCaseEvaluationTypeEnum.File)
+                {
+                    // For file-based evaluation, upload file to Cloudinary and get URL
+                    if (submissionDTO.File == null || submissionDTO.File.Length == 0)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "File is required for File evaluation type");
+                    }
+
+                    // Validate file type (Python files only)
+                    string fileExtension = Path.GetExtension(submissionDTO.File.FileName).ToLower();
+                    List<string> allowedExtensions = new List<string> { ".py", ".python" };
+
+                    if (!allowedExtensions.Contains(fileExtension))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
+                    }
+
+                    // Upload file to Cloudinary
+                    artifactUrl = await _cloudinaryService.UploadFileAsync(submissionDTO.File, AUTO_TEST_SUBMISSION_FOLDER);
+
+                    // Download file content from Cloudinary URL for Judge0 execution
+                    sourceCode = await SubmissionHelpers.DownloadFileContentAsync(artifactUrl);
+                    artifactType = FILE_ARTIFACT_TYPE;
+                }
+                else
+                {
+                    // For code-based evaluation, convert code to file and upload to Cloudinary
+                    if (string.IsNullOrEmpty(submissionDTO.Code))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Code is required for Code evaluation type");
+                    }
+
+                    // Unescape the code to convert \n, \t,... to actual characters
+                    sourceCode = System.Text.RegularExpressions.Regex.Unescape(submissionDTO.Code);
+
+                    // Upload code directly to Cloudinary as a text file
+                    string fileName = $"code_{studentId}_{DateTime.UtcNow:yyyyMMddHHmmss}.py";
+                    artifactUrl = await UploadCodeAsFileAsync(submissionDTO.Code, fileName);
+                    artifactType = CODE_ARTIFACT_TYPE;
+                }
 
                 // Create a submission record
                 Submission submission = new Submission
@@ -315,14 +370,14 @@ namespace BusinessLogic.Services.Submissions
 
                 await submissionRepo.InsertAsync(submission);
 
-                // Save submission artifact (the code)
+                // Save submission artifact
                 IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
                 SubmissionArtifact artifact = new SubmissionArtifact
                 {
                     ArtifactId = Guid.NewGuid(),
                     SubmissionId = submission.SubmissionId,
-                    Type = "code",
-                    Url = submissionDTO.Code,
+                    Type = artifactType,
+                    Url = artifactUrl,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -333,7 +388,7 @@ namespace BusinessLogic.Services.Submissions
                 JudgeSubmissionRequestDTO judge0Request = new JudgeSubmissionRequestDTO
                 {
                     LanguageId = SubmissionHelpers.ConvertToJudge0LanguageId(problem.Language),
-                    Code = submissionDTO.Code,
+                    Code = sourceCode,
                     Problem = new JudgeProblemDTO
                     {
                         Id = problem.ProblemId.ToString(),
@@ -376,6 +431,58 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error evaluating submission: {ex.Message}");
+            }
+        }
+
+        private async Task<string> UploadCodeAsFileAsync(string code, string fileName)
+        {
+            try
+            {
+                // Unescape the code string (convert \n to actual newlines, \t to tabs, etc.)
+                string unescapedCode = System.Text.RegularExpressions.Regex.Unescape(code);
+
+                // Create a temporary file
+                string tempFilePath = Path.Combine(Path.GetTempPath(), fileName);
+
+                // Write code to temporary file
+                await File.WriteAllTextAsync(tempFilePath, code, System.Text.Encoding.UTF8);
+
+                try
+                {
+                    // Open file stream
+                    using FileStream fileStream = new FileStream(tempFilePath, FileMode.Open, FileAccess.Read);
+
+                    // Create FormFile from stream
+                    IFormFile formFile = new FormFile(
+                        baseStream: fileStream,
+                        baseStreamOffset: 0,
+                        length: fileStream.Length,
+                        name: "code",
+                        fileName: fileName)
+                    {
+                        Headers = new HeaderDictionary(),
+                        ContentType = "text/plain"
+                    };
+
+                    // Upload to Cloudinary
+                    string cloudinaryUrl = await _cloudinaryService.UploadFileAsync(formFile, AUTO_TEST_SUBMISSION_FOLDER);
+
+                    return cloudinaryUrl;
+                }
+                finally
+                {
+                    // Clean up temporary file
+                    if (File.Exists(tempFilePath))
+                    {
+                        File.Delete(tempFilePath);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Failed to upload code as file: {ex.Message}");
             }
         }
 
@@ -578,7 +685,7 @@ namespace BusinessLogic.Services.Submissions
                 }
 
                 // Upload file to Cloudinary
-                string fileUrl = await _cloudinaryService.UploadFileAsync(file, "submissions");
+                string fileUrl = await _cloudinaryService.UploadFileAsync(file, MANUAL_TEST_SUBMISSION_FOLDER);
 
                 // Get problem ID of the round
                 Guid problemId = await roundRepo.Entities

@@ -40,11 +40,14 @@ namespace BusinessLogic.Services.FileStorages
                 extension != ".jpeg" &&
                 extension != ".jpg" &&
                 extension != ".pdf" &&
-                extension != ".png")
+                extension != ".png" &&
+                extension != ".py" &&
+                extension != ".python" &&
+                extension != ".txt")
             {
                 throw new ErrorException(StatusCodes.Status400BadRequest,
                     ResponseCodeConstants.BADREQUEST,
-                    "Only .zip or .rar or .pdf or .png or .jpg or .jpeg files are allowed");
+                    "Only .zip, .rar, .pdf, .png, .jpg, .jpeg, .py, .python, or .txt files are allowed");
             }
 
             // Check file size (limit to 100MB)

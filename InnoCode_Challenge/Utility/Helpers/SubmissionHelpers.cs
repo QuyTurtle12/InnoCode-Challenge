@@ -1,4 +1,8 @@
-﻿namespace Utility.Helpers
+﻿using Microsoft.AspNetCore.Http;
+using Utility.Constant;
+using Utility.ExceptionCustom;
+
+namespace Utility.Helpers
 {
     public static class SubmissionHelpers
     {
@@ -32,6 +36,26 @@
             }
 
             return null;
+        }
+
+        public static async Task<string> DownloadFileContentAsync(string fileUrl)
+        {
+            try
+            {
+                using HttpClient httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+                HttpResponseMessage response = await httpClient.GetAsync(fileUrl);
+                response.EnsureSuccessStatusCode();
+
+                return await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Failed to download file from URL: {ex.Message}");
+            }
         }
     }
 }

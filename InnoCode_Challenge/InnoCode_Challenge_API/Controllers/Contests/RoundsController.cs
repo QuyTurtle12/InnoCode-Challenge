@@ -265,12 +265,17 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// </summary>
         /// <param name="roundId"></param>
         /// <param name="submissionDTO"></param>
+        /// <param name="type">Code, File</param>
         /// <returns></returns>
         [HttpPost("{roundId}/auto-test/submissions")]
+        [Consumes("multipart/form-data")]
         [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> EvaluateSubmission(Guid roundId, CreateSubmissionDTO submissionDTO)
+        public async Task<IActionResult> EvaluateSubmission(
+            [FromRoute] Guid roundId,
+            [FromForm] CreateSubmissionDTO submissionDTO,
+            [FromForm] TestCaseEvaluationTypeEnum type)
         {
-            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO);
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateSubmissionAsync(roundId, submissionDTO, type);
 
             return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
                 statusCode: StatusCodes.Status200OK,
