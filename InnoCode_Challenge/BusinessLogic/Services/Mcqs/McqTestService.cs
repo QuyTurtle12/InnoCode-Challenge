@@ -25,35 +25,39 @@ namespace BusinessLogic.Services.Mcqs
             _unitOfWork = uow;
         }
 
-        public async Task AddQuestionsToTestAsync(Guid testId, Guid bankId)
+        public async Task AddQuestionsToTestAsync(Guid testId, List<Guid> questionIds)
         {
             try
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Get Mcq Test repository
+                // Get repositories
                 IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
-
-                // Get Bank repository
-                IGenericRepository<Bank> bankRepo = _unitOfWork.GetRepository<Bank>();
-
-                // Get Mcq Test Question repository
+                IGenericRepository<McqQuestion> questionRepo = _unitOfWork.GetRepository<McqQuestion>();
                 IGenericRepository<McqTestQuestion> mcqTestQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
-
 
                 // Get the Mcq Test
                 McqTest? existingMcqTest = await mcqTestRepo
                     .Entities
                     .Where(t => t.TestId == testId)
-                        .Include(t => t.McqTestQuestions)
+                    .Include(t => t.McqTestQuestions)
                     .FirstOrDefaultAsync();
 
                 // Validate test exists
-                if (existingMcqTest == null) { 
+                if (existingMcqTest == null)
+                {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"MCQ Test with ID {testId} not found.");
+                }
+
+                // Validate question IDs list is not empty
+                if (questionIds == null || !questionIds.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "At least one question ID must be provided.");
                 }
 
                 // Clear existing questions from the test
@@ -72,34 +76,28 @@ namespace BusinessLogic.Services.Mcqs
                     await _unitOfWork.SaveAsync();
                 }
 
-                // Retrieve all questions from the specified bank
-                Bank? bank = await bankRepo.Entities
-                    .Where(b => b.BankId == bankId)
-                    .Include(b => b.McqQuestions)
-                    .FirstOrDefaultAsync();
+                // Retrieve the questions with the provided IDs
+                List<McqQuestion> questions = await questionRepo.Entities
+                    .Where(q => questionIds.Contains(q.QuestionId) && !q.DeletedAt.HasValue)
+                    .ToListAsync();
 
-                // Validate bank exists
-                if (bank == null)
+                // Validate all questions exist
+                if (questions.Count != questionIds.Count)
                 {
+                    List<Guid> foundIds = questions.Select(q => q.QuestionId).ToList();
+                    List<Guid> missingIds = questionIds.Except(foundIds).ToList();
+
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
-                        $"Bank with ID {bankId} not found.");
+                        $"The following question IDs were not found: {string.Join(", ", missingIds)}");
                 }
 
-                // Validate bank has questions
-                if (bank.McqQuestions == null || !bank.McqQuestions.Any())
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Bank {bankId} has no questions to add to the test.");
-                }
-
-                // Create McqTestQuestion entries for each question in the bank with sequential ordering
-                List<McqTestQuestion> testQuestions = bank.McqQuestions
-                    .Select((question, index) => new McqTestQuestion
+                // Create McqTestQuestion entries for each question with sequential ordering
+                List<McqTestQuestion> testQuestions = questionIds
+                    .Select((questionId, index) => new McqTestQuestion
                     {
                         TestId = testId,
-                        QuestionId = question.QuestionId,
+                        QuestionId = questionId,
                         Weight = DEFAULT_WEIGHT,
                         OrderIndex = index + 1
                     })
@@ -116,7 +114,6 @@ namespace BusinessLogic.Services.Mcqs
             }
             catch (Exception ex)
             {
-
                 if (ex is ErrorException)
                 {
                     throw;
@@ -124,7 +121,7 @@ namespace BusinessLogic.Services.Mcqs
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                      ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                     $"Error creating test questions: {ex.Message}"
+                     $"Error adding questions to test: {ex.Message}"
                 );
             }
         }

@@ -605,12 +605,18 @@ namespace BusinessLogic.Services.Mcqs
                         "Page number and page size must be greater than or equal to 1.");
                 }
 
+                // Get user ID from JWT token
+                string userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
                 // Get repository for Bank entities
                 IGenericRepository<Bank> bankRepo = _unitOfWork.GetRepository<Bank>();
 
                 // Build query
                 IQueryable<Bank> query = bankRepo.Entities
-                    .Where(b => b.DeletedAt == null)
+                    .Where(b => b.CreatedBy!.ToLower().Equals(userId) && b.DeletedAt == null)
                     .Include(b => b.McqQuestions.Where(q => q.DeletedAt == null))
                         .ThenInclude(q => q.McqOptions);
 
@@ -709,7 +715,7 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid testId, BankStatusEnum status)
+        public async Task<GetBankWithQuestionsDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid testId)
         {
             var result = new McqImportResultDTO();
 
@@ -763,8 +769,10 @@ namespace BusinessLogic.Services.Mcqs
 
                     await ClearQuestionsInTest(testId);
 
+                    string creatorId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier) ?? "Unknown ID";
+
                     // Create new bank
-                    Bank bank = await CreateNewBankAsync(bankRepo, bankName);
+                    Bank bank = await CreateNewBankAsync(bankRepo, bankName, creatorId);
                     result.BankId = bank.BankId;
 
                     // Process all questions
@@ -812,7 +820,6 @@ namespace BusinessLogic.Services.Mcqs
 
                     // Commit transaction
                     _unitOfWork.CommitTransaction();
-
                 }
                 catch (Exception)
                 {
@@ -821,8 +828,10 @@ namespace BusinessLogic.Services.Mcqs
                     throw;
                 }
 
-                await _mcqTestService.AddQuestionsToTestAsync(testId, result.BankId);
+                // Retrieve and return the created bank with questions
+                PaginatedList<GetBankWithQuestionsDTO> bankResult = await GetPaginatedBanksAsync(1, 1, result.BankId, null);
 
+                return bankResult.Items.First();
             }
             catch (Exception ex)
             {
@@ -874,13 +883,16 @@ namespace BusinessLogic.Services.Mcqs
 
         private static async Task<Bank> CreateNewBankAsync(
             IGenericRepository<Bank> bankRepo,
-            string bankName)
+            string bankName,
+            string creatorId
+            )
         {
             Bank bank = new Bank
             {
                 BankId = Guid.NewGuid(),
                 Name = bankName,
                 CreatedAt = DateTime.UtcNow,
+                CreatedBy = creatorId,
                 DeletedAt = null
             };
 

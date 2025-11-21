@@ -30,7 +30,7 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
-                
+
                 // Map DTO to entity
                 McqQuestion mcqQuestion = _mapper.Map<McqQuestion>(mcqQuestionDTO);
                 mcqQuestion.CreatedAt = DateTime.UtcNow;
@@ -38,10 +38,10 @@ namespace BusinessLogic.Services.Mcqs
                 // Get repository and insert question
                 IGenericRepository<McqQuestion> mcqQuestionRepo = _unitOfWork.GetRepository<McqQuestion>();
                 await mcqQuestionRepo.InsertAsync(mcqQuestion);
-                
+
                 // Save changes
                 await _unitOfWork.SaveAsync();
-                
+
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
@@ -67,28 +67,28 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
-                
+
                 // Get repository
                 IGenericRepository<McqQuestion> mcqQuestionRepo = _unitOfWork.GetRepository<McqQuestion>();
-                
+
                 // Find the entity by ID
                 McqQuestion? mcqQuestion = await mcqQuestionRepo.GetByIdAsync(id);
-                
+
                 // Check if entity exists
                 if (mcqQuestion == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"Question {id} not found");
                 }
-                
+
                 // Apply soft delete
                 mcqQuestion.DeletedAt = DateTime.UtcNow;
-                
+
                 // Update the entity
                 await mcqQuestionRepo.UpdateAsync(mcqQuestion);
-                
+
                 // Save changes
                 await _unitOfWork.SaveAsync();
-                
+
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
@@ -160,7 +160,7 @@ namespace BusinessLogic.Services.Mcqs
                     return mcqQuestionDTO;
                 }).ToList();
 
-                // Create and return paginated list
+                // Return paginated list
                 return new PaginatedList<GetMcqQuestionDTO>(
                     result,
                     resultQuery.TotalCount,
@@ -187,28 +187,28 @@ namespace BusinessLogic.Services.Mcqs
             {
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
-                
+
                 // Get repository
                 IGenericRepository<McqQuestion> mcqQuestionRepo = _unitOfWork.GetRepository<McqQuestion>();
-                
+
                 // Find the entity by ID
                 McqQuestion? mcqQuestion = await mcqQuestionRepo.GetByIdAsync(id);
-                
+
                 // Check if entity exists
                 if (mcqQuestion == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"Question {id} not found");
                 }
-                
+
                 // Map DTO to entity
                 _mapper.Map(mcqQuestionDTO, mcqQuestion);
-                
+
                 // Update the entity
                 await mcqQuestionRepo.UpdateAsync(mcqQuestion);
-                
+
                 // Save changes
                 await _unitOfWork.SaveAsync();
-                
+
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
             }

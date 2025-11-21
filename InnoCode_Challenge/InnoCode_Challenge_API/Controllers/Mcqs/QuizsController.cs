@@ -4,6 +4,7 @@ using BusinessLogic.IServices;
 using BusinessLogic.IServices.Mcqs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
@@ -205,20 +206,19 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// </summary>
         /// <param name="csvFile">CSV file containing questions</param>
         /// <param name="testId">Test ID</param>
-        /// <param name="bankStatus">Public, Private, InviteOnly</param>
         /// <returns>Import result</returns>
         [HttpPost("/api/mcq-tests/{testId}/import-csv")]
         [Authorize(Policy = "RequireOrganizerRole")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ImportMcqQuestionsFromCsv(
             IFormFile csvFile,
-            [FromRoute] Guid testId,
-            [FromQuery] BankStatusEnum bankStatus = BankStatusEnum.Public)
+            [FromRoute] Guid testId)
         {
-            await _quizService.ImportMcqQuestionsFromCsvAsync(csvFile, testId, bankStatus);
+            GetBankWithQuestionsDTO result = await _quizService.ImportMcqQuestionsFromCsvAsync(csvFile, testId);
             return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
+                data: result,
                 message: "Questions imported successfully."
             ));
         }

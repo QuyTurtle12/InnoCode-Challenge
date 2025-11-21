@@ -10,7 +10,7 @@ namespace BusinessLogic.IServices.Mcqs
         Task CreateMcqTestAsync(Guid roundId, CreateMcqTestDTO mcqTestDTO);
         Task UpdateMcqTestAsync(Guid id, UpdateMcqTestDTO mcqTestDTO);
         Task DeleteMcqTestAsync(Guid id);
-        Task AddQuestionsToTestAsync(Guid testId, Guid bankId);
+        Task AddQuestionsToTestAsync(Guid testId, List<Guid> questionIds);
         Task BulkUpdateQuestionWeightsAsync(Guid testId, BulkUpdateQuestionWeightsDTO dto);
 
     }

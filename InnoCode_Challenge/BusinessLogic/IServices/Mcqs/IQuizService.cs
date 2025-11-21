@@ -13,6 +13,6 @@ namespace BusinessLogic.IServices.Mcqs
         Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(int pageNumber, int pageSize, Guid? studentId, Guid? testId, Guid roundId, bool IsForCurrentLoggedInStudent = false);
         Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(int pageNumber, int pageSize, Guid? bankId, string? nameSearch);
         Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId);
-        Task ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid TestId, BankStatusEnum bankStatus);
+        Task<GetBankWithQuestionsDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid TestId);
     }
 }

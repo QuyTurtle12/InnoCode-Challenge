@@ -6,7 +6,6 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.McqTestQuestionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
-using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Mcqs
 {
@@ -23,16 +22,16 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Add questions from question bank to Mcq Test
+        /// Add questions from given list of question to Mcq Test
         /// </summary>
         /// <param name="testId"></param>
-        /// <param name="bankId"></param>
+        /// <param name="questionIds"></param>
         /// <returns></returns>
         [HttpPost("{testId}")]
         [Authorize(Policy = "RequireOrganizerRole")]
-        public async Task<IActionResult> AddQuestionToTest(Guid testId,[Required] Guid bankId)
+        public async Task<IActionResult> AddQuestionToTest(Guid testId,[Required] List<Guid> questionIds)
         {
-            await _mcqTestService.AddQuestionsToTestAsync(testId, bankId);
+            await _mcqTestService.AddQuestionsToTestAsync(testId, questionIds);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status201Created,
                         code: ResponseCodeConstants.SUCCESS,
@@ -73,21 +72,6 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
                         message: "Update Mcq Test successfully."
-                    ));
-        }
-
-        // DELETE: api/mcq-tests/{id}
-        [HttpDelete("{id}")]
-        [ProducesResponseType(StatusCodes.Status204NoContent)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> DeleteMcqTest(Guid id)
-        {
-            await _mcqTestService.DeleteMcqTestAsync(id);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Delete Mcq Test successfully."
                     ));
         }
     }
