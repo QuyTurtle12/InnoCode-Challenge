@@ -1,5 +1,6 @@
-﻿using System.Text.Json;
+﻿using Json.Schema;
 using Repository.IRepositories;
+using System.Text.Json;
 using Utility.ExceptionCustom;
 
 namespace InnoCode_Challenge_API.Middleware
@@ -39,26 +40,45 @@ namespace InnoCode_Challenge_API.Middleware
             {
                 _logger.LogError(ex, ex.Message);
                 context.Response.StatusCode = ex.StatusCode;
-                var result = JsonSerializer.Serialize(new { ex.Code, ex.Message, ex.AdditionalData });
                 context.Response.ContentType = "application/json";
+
+                var result = JsonSerializer.Serialize(new
+                {
+                    errorCode = ex.Code,
+                    errorMessage = ex.Message
+                });
+
                 await context.Response.WriteAsync(result);
             }
             catch (ErrorException ex)
             {
                 _logger.LogError(ex, ex.ErrorDetail.ErrorMessage?.ToString());
                 context.Response.StatusCode = ex.StatusCode;
-                var result = JsonSerializer.Serialize(ex.ErrorDetail);
                 context.Response.ContentType = "application/json";
+
+                var result = JsonSerializer.Serialize(new
+                {
+                    errorCode = ex.ErrorDetail?.ErrorCode ?? "UNKNOWN_ERROR",
+                    errorMessage = ex.ErrorDetail?.ErrorMessage?.ToString() ?? "An error occurred."
+                });
+
                 await context.Response.WriteAsync(result);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An unexpected error occurred.");
                 context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-                var result = JsonSerializer.Serialize(new { error = $"An unexpected error occurred. Detail{ex.Message}" });
                 context.Response.ContentType = "application/json";
+
+                var result = JsonSerializer.Serialize(new
+                {
+                    errorCode = "INTERNAL_SERVER_ERROR",
+                    errorMessage = "An unexpected error occurred."
+                });
+
                 await context.Response.WriteAsync(result);
             }
         }
+
     }
 }
