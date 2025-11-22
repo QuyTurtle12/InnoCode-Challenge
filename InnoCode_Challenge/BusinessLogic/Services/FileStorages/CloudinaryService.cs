@@ -91,11 +91,5 @@ namespace BusinessLogic.Services.FileStorages
             var result = await _cloudinary.DestroyAsync(deleteParams);
             return result.Result == "ok";
         }
-
-        public string GetDownloadUrl(string publicId)
-        {
-            // Cloudinary URLs are already directly downloadable
-            return publicId;
-        }
     }
 }

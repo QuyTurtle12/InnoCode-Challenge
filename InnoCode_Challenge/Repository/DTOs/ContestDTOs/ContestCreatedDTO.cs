@@ -7,7 +7,7 @@
         public string Name { get; set; } = null!;
         public string Status { get; set; } = "draft";
         public DateTime CreatedAt { get; set; }
-
+        public string? imageUrl { get; set; }
         public DateTime? RegistrationStart { get; set; }
         public DateTime? RegistrationEnd { get; set; }
         public int TeamMembersMax { get; set; }

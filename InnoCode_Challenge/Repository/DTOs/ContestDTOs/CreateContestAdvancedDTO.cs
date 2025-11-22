@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.AspNetCore.Http;
+using System;
 using System.ComponentModel.DataAnnotations;
 
 namespace Repository.DTOs.ContestDTOs
@@ -11,8 +12,7 @@ namespace Repository.DTOs.ContestDTOs
         [Required, MaxLength(200)]
         public string Name { get; set; } = null!;
 
-        [MaxLength(200)]
-        public string? ImgUrl { get; set; }
+        public IFormFile? ImageFile { get; set; }
 
         public string? Description { get; set; }
 
@@ -33,8 +33,5 @@ namespace Repository.DTOs.ContestDTOs
         // Free text rewards / notes
         [MaxLength(4000)]
         public string? RewardsText { get; set; }
-
-        // Save as draft only (default true)
-        public bool SaveAsDraft { get; set; } = true;
     }
 }

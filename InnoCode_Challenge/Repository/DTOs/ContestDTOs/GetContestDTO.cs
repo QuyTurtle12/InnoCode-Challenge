@@ -10,6 +10,7 @@ namespace Repository.DTOs.ContestDTOs
         public Guid CreatedById { get; set; }
         public string CreatedByName { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
+        public string ImgUrl { get; set; } = null!;
 
         // Registration timeline
         public DateTime? RegistrationStart { get; set; }

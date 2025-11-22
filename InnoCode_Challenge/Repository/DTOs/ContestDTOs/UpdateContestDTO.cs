@@ -1,15 +1,10 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Serialization;
-using Utility.Enums;
+﻿using Microsoft.AspNetCore.Http;
+using System.ComponentModel.DataAnnotations;
 
 namespace Repository.DTOs.ContestDTOs
 {
     public class UpdateContestDTO : BaseContestDTO
     {
-        //[EnumDataType(typeof(ContestStatusEnum))]
-        //[JsonConverter(typeof(JsonStringEnumConverter))]
-        //public ContestStatusEnum Status { get; set; } = ContestStatusEnum.Draft;
-
         // Registration timeline
         public DateTime? RegistrationStart { get; set; }
         public DateTime? RegistrationEnd { get; set; }
@@ -25,5 +20,7 @@ namespace Repository.DTOs.ContestDTOs
         [MaxLength(4000)]
         public string? RewardsText { get; set; }
 
+        // Image file for contest
+        public IFormFile? ImageFile { get; set; }
     }
 }

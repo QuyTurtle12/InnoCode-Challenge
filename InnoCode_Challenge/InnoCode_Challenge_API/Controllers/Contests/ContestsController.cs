@@ -185,7 +185,8 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="contestDTO"></param>
         /// <returns></returns>
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateContest(Guid id, UpdateContestDTO contestDTO)
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UpdateContest(Guid id,[FromForm] UpdateContestDTO contestDTO)
         {
             GetContestDTO result = await _contestService.UpdateContestAsync(id, contestDTO);
             return Ok(new BaseResponseModel<object>(
@@ -213,8 +214,9 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         [HttpPost("advanced")]
+        [Consumes("multipart/form-data")]
         [Authorize(Policy = "RequireOrganizerRole")]
-        public async Task<IActionResult> CreateAdvanced(CreateContestAdvancedDTO dto)
+        public async Task<IActionResult> CreateAdvanced([FromForm] CreateContestAdvancedDTO dto)
         {
             var created = await _contestService.CreateContestWithPolicyAsync(dto);
             return CreatedAtAction(nameof(CheckPublishReadiness), new { id = created.ContestId },

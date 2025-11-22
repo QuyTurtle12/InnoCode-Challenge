@@ -1,8 +1,8 @@
-﻿using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using AutoMapper;
+﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
+using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
@@ -10,9 +10,12 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Contests
@@ -22,14 +25,18 @@ namespace BusinessLogic.Services.Contests
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ICloudinaryService _cloudinaryService;
+        
         private const int MIN_YEAR = 10;
+        private const string CONTEST_IMAGE_FOLDER = "contest_images";
 
         // Constructor
-        public ContestService(IMapper mapper, IUOW uow, IHttpContextAccessor httpContextAccessor)
+        public ContestService(IMapper mapper, IUOW uow, IHttpContextAccessor httpContextAccessor, ICloudinaryService cloudinaryService)
         {
             _mapper = mapper;
             _unitOfWork = uow;
             _httpContextAccessor = httpContextAccessor;
+            _cloudinaryService = cloudinaryService;
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -671,6 +678,21 @@ namespace BusinessLogic.Services.Contests
                 // Update properties from DTO
                 _mapper.Map(contestDTO, existingContest);
 
+                // Handle image upload if a new image file is provided
+                if (contestDTO.ImageFile != null)
+                {
+                    if (!CloudinaryHelpers.IsImageFile(contestDTO.ImageFile))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Uploaded file is not a valid image. Required .jpeg, .jpg, .png file");
+                    }
+
+                    // Upload image and get URL
+                    string imageUrl = await _cloudinaryService.UploadFileAsync(contestDTO.ImageFile, CONTEST_IMAGE_FOLDER);
+                    existingContest.ImgUrl = imageUrl;
+                }
+
                 // Set contest-specific configurations
                 int teamMembersMax = contestDTO.TeamMembersMax
                                      ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4);
@@ -783,6 +805,21 @@ namespace BusinessLogic.Services.Contests
                     throw ex;
                 }
 
+                string imageUrl = string.Empty;
+
+                if (dto.ImageFile != null)
+                {
+                    if (!CloudinaryHelpers.IsImageFile(dto.ImageFile))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Uploaded file is not a valid image. Required .jpeg, .jpg, .png file");
+                    }
+
+                    // Upload image and get URL
+                    imageUrl = await _cloudinaryService.UploadFileAsync(dto.ImageFile, CONTEST_IMAGE_FOLDER);
+                }
+
                 // Map DTO to entity
                 Contest entity = _mapper.Map<Contest>(dto);
                 entity.ContestId = Guid.NewGuid();
@@ -790,6 +827,7 @@ namespace BusinessLogic.Services.Contests
                 entity.Status = ContestStatusEnum.Draft.ToString();
                 entity.CreatedAt = DateTime.UtcNow;
                 entity.CreatedBy = currentUserId;
+                entity.ImgUrl = imageUrl;
 
                 // Insert the new contest
                 await contestRepo.InsertAsync(entity);
@@ -831,6 +869,7 @@ namespace BusinessLogic.Services.Contests
                 created.RewardsText = dto.RewardsText;
                 created.RegistrationStart = dto.RegistrationStart;
                 created.RegistrationEnd = dto.RegistrationEnd;
+                created.imageUrl = imageUrl;
 
                 // Return the created contest DTO
                 return created;
@@ -968,6 +1007,12 @@ namespace BusinessLogic.Services.Contests
             // Validate team members max presence
             if (string.IsNullOrEmpty(membersMaxContest) && string.IsNullOrEmpty(membersMaxDefault))
                 result.Missing.Add("Team members max not configured (contest or global).");
+
+            // Check for contest image
+            if (string.IsNullOrWhiteSpace(contest.ImgUrl))
+            {
+                result.Missing.Add("Contest image not uploaded.");
+            }
 
             // Final readiness determination
             result.IsReady = result.Missing.Count == 0;

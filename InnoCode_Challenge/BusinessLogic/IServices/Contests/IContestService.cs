@@ -1,4 +1,5 @@
-﻿using Repository.DTOs.ContestDTOs;
+﻿using Microsoft.AspNetCore.Http;
+using Repository.DTOs.ContestDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests
