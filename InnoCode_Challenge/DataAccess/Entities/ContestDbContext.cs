@@ -1112,8 +1112,6 @@ public partial class ContestDbContext : DbContext
 
             entity.HasIndex(e => e.Email, "UQ__users__AB6E61646B3DD2A5").IsUnique();
 
-            entity.HasIndex(e => e.Fullname, "UQ__users__D316D6C188FAE9C9").IsUnique();
-
             entity.Property(e => e.UserId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("user_id");

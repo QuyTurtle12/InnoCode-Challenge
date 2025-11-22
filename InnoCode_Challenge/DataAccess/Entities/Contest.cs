@@ -11,7 +11,7 @@ public partial class Contest
 
     public string Name { get; set; } = null!;
 
-    public string Description { get; set; } = null!;
+    public string? Description { get; set; }
 
     public string ImgUrl { get; set; } = null!;
 

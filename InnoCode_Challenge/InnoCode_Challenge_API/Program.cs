@@ -1,7 +1,9 @@
 using BusinessLogic.Hubs;
+using CloudinaryDotNet.Actions;
 using InnoCode_Challenge_API.DI;
 using InnoCode_Challenge_API.Middleware;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -106,4 +108,6 @@ app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 
 app.MapControllers();
 app.Run();
+
+
       
