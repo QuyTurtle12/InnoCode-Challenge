@@ -5,6 +5,7 @@ using InnoCode_Challenge_API.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
+using Utility.Helpers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,7 +14,12 @@ builder.Services.AddHttpClient();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
+        // Serialize enums as strings
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+
+        // Add custom datetime format globally
+        options.JsonSerializerOptions.Converters.Add(new CustomDateTimeConverter());
+        options.JsonSerializerOptions.Converters.Add(new CustomNullableDateTimeConverter());
     })
     .ConfigureApiBehaviorOptions(options =>
     {

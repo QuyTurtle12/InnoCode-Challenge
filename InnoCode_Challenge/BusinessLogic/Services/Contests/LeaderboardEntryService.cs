@@ -11,6 +11,7 @@ using System.Text.Json;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Contests
@@ -172,7 +173,7 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
-                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();   
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
                 // Validate contest
                 Contest? contest = await contestRepo.Entities
@@ -280,7 +281,6 @@ namespace BusinessLogic.Services.Contests
             }
 
         }
-
 
         public async Task AddTeamToLeaderboardAsync(Guid contestId, Guid teamId)
         {
@@ -539,6 +539,9 @@ namespace BusinessLogic.Services.Contests
                 // Map to DTO
                 GetLeaderboardEntryDTO dto = _mapper.Map<GetLeaderboardEntryDTO>(firstEntry);
 
+                // Convert SnapshotAt from UTC to UTC+7 for response
+                dto.SnapshotAt = DateTimeHelpers.ConvertToUtcPlus7(firstEntry.SnapshotAt);
+
                 // Create team info list from all entries
                 var allTeams = allEntries.Select(entry => new TeamInfo
                 {
@@ -626,7 +629,9 @@ namespace BusinessLogic.Services.Contests
                             {
                                 roundScore = mcqAttempt.Score ?? 0;
                                 roundType = ProblemTypeEnum.McqTest.ToString();
-                                completedAt = config.UpdatedAt;
+                                completedAt = config.UpdatedAt.HasValue
+                                    ? DateTimeHelpers.ConvertToUtcPlus7(config.UpdatedAt.Value)
+                                    : null;
                             }
                             else
                             {
@@ -644,7 +649,9 @@ namespace BusinessLogic.Services.Contests
                                 {
                                     roundScore = submission.Score;
                                     roundType = submission.Problem.Type ?? "Unknown Type";
-                                    completedAt = config.UpdatedAt;
+                                    completedAt = config.UpdatedAt.HasValue
+                                        ? DateTimeHelpers.ConvertToUtcPlus7(config.UpdatedAt.Value)
+                                        : null;
                                 }
                             }
 

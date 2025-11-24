@@ -11,7 +11,7 @@ namespace Repository.DTOs.ContestDTOs
         [Required]
         public string Name { get; set; } = null!;
 
-        public string Description { get; set; } = null!;
+        public string? Description { get; set; }
 
         public DateTime? Start { get; set; }
 
