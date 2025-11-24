@@ -26,7 +26,7 @@ namespace BusinessLogic.Services.Contests
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
-        
+
         private const int MIN_YEAR = 10;
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
 
@@ -68,7 +68,7 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest already deleted.");
                 }
 
-                // Soft delete by setting the DeletedAt property
+                // Soft delete
                 existingContest.DeletedAt = DateTime.UtcNow;
 
                 // Set status to Cancelled
@@ -146,7 +146,7 @@ namespace BusinessLogic.Services.Contests
                     .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
                         .ThenInclude(r => r.Problem)
                     .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
-                        .ThenInclude(r => r.McqTest); ;
+                        .ThenInclude(r => r.McqTest);
 
                 // Get contests where the current logged-in student is a participant
                 if (isMyParticipatedContest)
@@ -196,7 +196,6 @@ namespace BusinessLogic.Services.Contests
                     }
                 }
 
-
                 // Apply filters if provided
                 if (idSearch.HasValue)
                 {
@@ -244,7 +243,7 @@ namespace BusinessLogic.Services.Contests
                 // Extract all contest IDs from the results
                 List<Guid> contestIds = resultQuery.Items.Select(c => c.ContestId).ToList();
 
-                // Load all configs for all contests in one query (performance optimization)
+                // Load all configs for all contests in one query
                 List<Config> configs = await configRepo.Entities
                     .Where(c => contestIds.Any(id => c.Key.Contains(id.ToString())) && c.DeletedAt == null)
                     .ToListAsync();
@@ -307,10 +306,8 @@ namespace BusinessLogic.Services.Contests
                         // Assign additional properties
                         roundDTO.RoundName = r.Name;
                         roundDTO.ContestName = item.Name;
-
-                        // Convert round dates to UTC+7
-                        roundDTO.Start = DateTimeHelpers.ConvertToUtcPlus7(r.Start);
-                        roundDTO.End = DateTimeHelpers.ConvertToUtcPlus7(r.End);
+                        roundDTO.Start = r.Start;
+                        roundDTO.End = r.End;
 
                         // Fetch time limit from config
                         string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(r.RoundId);
@@ -344,10 +341,10 @@ namespace BusinessLogic.Services.Contests
                         ? organizerNames[contestDTO.CreatedById]
                         : "Unknown Organizer";
 
-                    // Convert contest dates to UTC+7
-                    contestDTO.Start = DateTimeHelpers.ConvertToUtcPlus7(item.Start);
-                    contestDTO.End = DateTimeHelpers.ConvertToUtcPlus7(item.End);
-                    contestDTO.CreatedAt = DateTimeHelpers.ConvertToUtcPlus7(item.CreatedAt);
+                    // Map time properties
+                    contestDTO.Start = item.Start;
+                    contestDTO.End = item.End;
+                    contestDTO.CreatedAt = item.CreatedAt;
 
                     // Fetch team members max from config
                     string teamMemberMaxKey = ConfigKeys.ContestTeamMembersMax(item.ContestId);
@@ -365,20 +362,20 @@ namespace BusinessLogic.Services.Contests
                         contestDTO.TeamLimitMax = teamLimitMax;
                     }
 
-                    // Fetch registration start from config and convert to UTC+7
+                    // Fetch registration start from config
                     string regStartKey = ConfigKeys.ContestRegStart(item.ContestId);
                     Config? regStartConfig = configLookup[regStartKey].FirstOrDefault();
                     if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
                     {
-                        contestDTO.RegistrationStart = DateTimeHelpers.ConvertToUtcPlus7(regStart);
+                        contestDTO.RegistrationStart = regStart;
                     }
 
-                    // Fetch registration end from config and convert to UTC+7
+                    // Fetch registration end from config
                     string regEndKey = ConfigKeys.ContestRegEnd(item.ContestId);
                     Config? regEndConfig = configLookup[regEndKey].FirstOrDefault();
                     if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
                     {
-                        contestDTO.RegistrationEnd = DateTimeHelpers.ConvertToUtcPlus7(regEnd);
+                        contestDTO.RegistrationEnd = regEnd;
                     }
 
                     // Fetch rewards text from config
@@ -496,10 +493,8 @@ namespace BusinessLogic.Services.Contests
                     // Assign additional properties
                     roundDTO.RoundName = r.Name;
                     roundDTO.ContestName = contest.Name;
-
-                    // Convert round dates to UTC+7
-                    roundDTO.Start = DateTimeHelpers.ConvertToUtcPlus7(r.Start);
-                    roundDTO.End = DateTimeHelpers.ConvertToUtcPlus7(r.End);
+                    roundDTO.Start = r.Start;
+                    roundDTO.End = r.End;
 
                     // Fetch time limit from config
                     string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(r.RoundId);
@@ -525,17 +520,12 @@ namespace BusinessLogic.Services.Contests
                     return roundDTO;
                 }).ToList();
 
-                // Map creator ID
+                // Map remain values
                 contestDTO.CreatedById = createdById;
-
-                // Map creator name
                 contestDTO.CreatedByName = organizerName;
-
-
-                // Convert contest dates to UTC+7
-                contestDTO.Start = DateTimeHelpers.ConvertToUtcPlus7(contest.Start);
-                contestDTO.End = DateTimeHelpers.ConvertToUtcPlus7(contest.End);
-                contestDTO.CreatedAt = DateTimeHelpers.ConvertToUtcPlus7(contest.CreatedAt);
+                contestDTO.Start = contest.Start;
+                contestDTO.End = contest.End;
+                contestDTO.CreatedAt = contest.CreatedAt;
 
                 // Fetch team members max from config
                 string teamMemberMaxKey = ConfigKeys.ContestTeamMembersMax(contest.ContestId);
@@ -553,20 +543,20 @@ namespace BusinessLogic.Services.Contests
                     contestDTO.TeamLimitMax = teamLimitMax;
                 }
 
-                // Fetch registration start from config and convert to UTC+7
+                // Fetch registration start from config
                 string regStartKey = ConfigKeys.ContestRegStart(contest.ContestId);
                 Config? regStartConfig = configLookup[regStartKey].FirstOrDefault();
                 if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
                 {
-                    contestDTO.RegistrationStart = DateTimeHelpers.ConvertToUtcPlus7(regStart);
+                    contestDTO.RegistrationStart = regStart;
                 }
 
-                // Fetch registration end from config and convert to UTC+7
+                // Fetch registration end from config
                 string regEndKey = ConfigKeys.ContestRegEnd(contest.ContestId);
                 Config? regEndConfig = configLookup[regEndKey].FirstOrDefault();
                 if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
                 {
-                    contestDTO.RegistrationEnd = DateTimeHelpers.ConvertToUtcPlus7(regEnd);
+                    contestDTO.RegistrationEnd = regEnd;
                 }
 
                 // Fetch rewards text from config
@@ -685,12 +675,10 @@ namespace BusinessLogic.Services.Contests
                 // Update properties from DTO
                 _mapper.Map(contestDTO, existingContest);
 
-                // Convert UTC+7 dates to UTC
                 if (contestDTO.Start.HasValue)
-                    existingContest.Start = DateTimeHelpers.ConvertToUtc(contestDTO.Start.Value);
+                    existingContest.Start = contestDTO.Start.Value;
                 if (contestDTO.End.HasValue)
-                    existingContest.End = DateTimeHelpers.ConvertToUtc(contestDTO.End.Value);
-
+                    existingContest.End = contestDTO.End.Value;
 
                 // Handle image upload if a new image file is provided
                 if (contestDTO.ImageFile != null)
@@ -720,18 +708,16 @@ namespace BusinessLogic.Services.Contests
                 if (teamLimitMax.HasValue)
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(existingContest.ContestId), teamLimitMax.Value.ToString());
 
-                // Set registration times - convert to UTC
+                // Set registration times
                 if (contestDTO.RegistrationStart.HasValue)
                 {
-                    DateTime utcRegStart = DateTimeHelpers.ConvertToUtc(contestDTO.RegistrationStart.Value);
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(existingContest.ContestId),
-                        DateTimeHelpers.ToIso8601String(utcRegStart));
+                        DateTimeHelpers.ToIso8601String(contestDTO.RegistrationStart.Value));
                 }
                 if (contestDTO.RegistrationEnd.HasValue)
                 {
-                    DateTime utcRegEnd = DateTimeHelpers.ConvertToUtc(contestDTO.RegistrationEnd.Value);
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(existingContest.ContestId),
-                        DateTimeHelpers.ToIso8601String(utcRegEnd));
+                        DateTimeHelpers.ToIso8601String(contestDTO.RegistrationEnd.Value));
                 }
 
                 // Set rewards text
@@ -852,11 +838,10 @@ namespace BusinessLogic.Services.Contests
                 entity.CreatedBy = currentUserId;
                 entity.ImgUrl = imageUrl;
 
-                // Convert UTC+7 dates to UTC
                 if (dto.Start.HasValue)
-                    entity.Start = DateTimeHelpers.ConvertToUtc(dto.Start.Value);
+                    entity.Start = dto.Start.Value;
                 if (dto.End.HasValue)
-                    entity.End = DateTimeHelpers.ConvertToUtc(dto.End.Value);
+                    entity.End = dto.End.Value;
 
                 // Insert the new contest
                 await contestRepo.InsertAsync(entity);
@@ -875,18 +860,16 @@ namespace BusinessLogic.Services.Contests
                 if (teamLimitMax.HasValue)
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamLimitMax(entity.ContestId), teamLimitMax.Value.ToString());
 
-                // Set registration times, convert to UTC and store in ISO 8601 format
+                // Set registration times
                 if (dto.RegistrationStart.HasValue)
                 {
-                    DateTime utcRegStart = DateTimeHelpers.ConvertToUtc(dto.RegistrationStart.Value);
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(entity.ContestId),
-                        DateTimeHelpers.ToIso8601String(utcRegStart));
+                        DateTimeHelpers.ToIso8601String(dto.RegistrationStart.Value));
                 }
                 if (dto.RegistrationEnd.HasValue)
                 {
-                    DateTime utcRegEnd = DateTimeHelpers.ConvertToUtc(dto.RegistrationEnd.Value);
                     await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(entity.ContestId),
-                        DateTimeHelpers.ToIso8601String(utcRegEnd));
+                        DateTimeHelpers.ToIso8601String(dto.RegistrationEnd.Value));
                 }
 
                 // Set rewards text
@@ -904,11 +887,11 @@ namespace BusinessLogic.Services.Contests
                 created.TeamMembersMax = teamMembersMax;
                 created.TeamLimitMax = teamLimitMax;
                 created.RewardsText = dto.RewardsText;
-                created.RegistrationStart = DateTimeHelpers.ConvertToUtcPlus7(dto.RegistrationStart);
-                created.RegistrationEnd = DateTimeHelpers.ConvertToUtcPlus7(dto.RegistrationEnd);
-                created.Start = DateTimeHelpers.ConvertToUtcPlus7(entity.Start);
-                created.End = DateTimeHelpers.ConvertToUtcPlus7(entity.End);
-                created.CreatedAt = DateTimeHelpers.ConvertToUtcPlus7(entity.CreatedAt);
+                created.RegistrationStart = dto.RegistrationStart;
+                created.RegistrationEnd = dto.RegistrationEnd;
+                created.Start = entity.Start;
+                created.End = entity.End;
+                created.CreatedAt = entity.CreatedAt;
                 created.imageUrl = imageUrl;
 
                 // Return the created contest DTO
@@ -1105,7 +1088,7 @@ namespace BusinessLogic.Services.Contests
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Contests: {ex.Message}");
+                    $"Error publishing Contest: {ex.Message}");
             }
         }
 
@@ -1266,6 +1249,7 @@ namespace BusinessLogic.Services.Contests
 
             return candidate;
         }
+
         private static async Task<int> GetGlobalIntOrDefaultAsync(IGenericRepository<Config> repo, string key, int @default)
         {
             // Fetch the config value
@@ -1326,7 +1310,7 @@ namespace BusinessLogic.Services.Contests
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Contests: {ex.Message}");
+                    $"Error cancelling Contest: {ex.Message}");
             }
         }
     }

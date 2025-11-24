@@ -66,12 +66,8 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
                 }
 
-                // Convert UTC+7 to UTC for validation and storage
-                DateTime utcStart = DateTimeHelpers.ConvertToUtc(roundDTO.Start);
-                DateTime utcEnd = DateTimeHelpers.ConvertToUtc(roundDTO.End);
-
                 // Validate against contest dates and other rounds
-                await ValidateRoundDatesAsync(contestId, utcStart, utcEnd, null);
+                await ValidateRoundDatesAsync(contestId, roundDTO.Start, roundDTO.End, null);
 
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
@@ -80,9 +76,9 @@ namespace BusinessLogic.Services.Contests
                 // Map DTO to Entity
                 Round round = _mapper.Map<Round>(roundDTO);
 
-                // Store UTC times in database
-                round.Start = utcStart;
-                round.End = utcEnd;
+                // Store times in database
+                round.Start = roundDTO.Start;
+                round.End = roundDTO.End;
 
                 // Assign contest ID
                 round.ContestId = contestId;
@@ -297,10 +293,8 @@ namespace BusinessLogic.Services.Contests
 
                 roundDTO.ContestName = round.Contest?.Name ?? "N/A";
                 roundDTO.RoundName = round.Name;
-
-                // Convert UTC to UTC+7 for response
-                roundDTO.Start = DateTimeHelpers.ConvertToUtcPlus7(round.Start);
-                roundDTO.End = DateTimeHelpers.ConvertToUtcPlus7(round.End);
+                roundDTO.Start = round.Start;
+                roundDTO.End = round.End;
 
                 // Map time limit from config
                 if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
@@ -346,10 +340,6 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
                 }
 
-                // Convert UTC+7 filter dates to UTC if provided
-                DateTime? utcStartDate = DateTimeHelpers.ConvertToUtc(startDate);
-                DateTime? utcEndDate = DateTimeHelpers.ConvertToUtc(endDate);
-
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
@@ -381,14 +371,14 @@ namespace BusinessLogic.Services.Contests
                     query = query.Where(r => r.Contest.Name.Contains(contestNameSearch));
                 }
 
-                if (utcStartDate.HasValue)
+                if (startDate.HasValue)
                 {
-                    query = query.Where(r => r.Start >= utcStartDate.Value);
+                    query = query.Where(r => r.Start >= startDate.Value);
                 }
 
-                if (utcEndDate.HasValue)
+                if (endDate.HasValue)
                 {
-                    query = query.Where(r => r.End <= utcEndDate.Value);
+                    query = query.Where(r => r.End <= endDate.Value);
                 }
 
                 // Change to paginated list to facilitate mapping process
@@ -415,10 +405,8 @@ namespace BusinessLogic.Services.Contests
 
                     roundDTO.ContestName = item.Contest?.Name ?? "N/A";
                     roundDTO.RoundName = item.Name;
-
-                    // Convert UTC to UTC+7 for response
-                    roundDTO.Start = DateTimeHelpers.ConvertToUtcPlus7(item.Start);
-                    roundDTO.End = DateTimeHelpers.ConvertToUtcPlus7(item.End);
+                    roundDTO.Start = item.Start;
+                    roundDTO.End = item.End;
 
                     // Map time limit from config
                     string tlKey = ConfigKeys.RoundTimeLimitSeconds(item.RoundId);
@@ -513,19 +501,16 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
                 }
 
-                // Convert UTC+7 to UTC for validation and storage
-                DateTime utcStart = DateTimeHelpers.ConvertToUtc(roundDTO.Start);
-                DateTime utcEnd = DateTimeHelpers.ConvertToUtc(roundDTO.End);
 
                 // Validate against contest dates and other rounds (excluding current round)
-                await ValidateRoundDatesAsync(round.ContestId, utcStart, utcEnd, round.RoundId);
+                await ValidateRoundDatesAsync(round.ContestId, roundDTO.Start, roundDTO.End, round.RoundId);
 
                 // Update round properties
                 _mapper.Map(roundDTO, round);
 
-                // Store UTC times in database
-                round.Start = utcStart;
-                round.End = utcEnd;
+                // Store times in database
+                round.Start = roundDTO.Start;
+                round.End = roundDTO.End;
 
                 // Handle problem type specific logic
                 switch (roundDTO.ProblemType)
@@ -598,16 +583,14 @@ namespace BusinessLogic.Services.Contests
             // Validate round dates are within contest dates
             if (contest.Start.HasValue && roundStart < contest.Start.Value)
             {
-                DateTime utcPlus7Start = DateTimeHelpers.ConvertToUtcPlus7(contest.Start.Value);
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
-                    $"Round start date cannot be before contest start date ({DateTimeHelpers.ToIso8601String(utcPlus7Start)}).");
+                    $"Round start date cannot be before contest start date ({DateTimeHelpers.ToIso8601String(contest.Start.Value)}).");
             }
 
             if (contest.End.HasValue && roundEnd > contest.End.Value)
             {
-                DateTime utcPlus7End = DateTimeHelpers.ConvertToUtcPlus7(contest.End.Value);
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
-                    $"Round end date cannot be after contest end date ({DateTimeHelpers.ToIso8601String(utcPlus7End)}).");
+                    $"Round end date cannot be after contest end date ({DateTimeHelpers.ToIso8601String(contest.End.Value)}).");
             }
 
             // Get Round Repository
@@ -630,10 +613,8 @@ namespace BusinessLogic.Services.Contests
                 // Check if dates overlap
                 if (roundStart <= existingRound.End && roundEnd >= existingRound.Start)
                 {
-                    DateTime utcPlus7Start = DateTimeHelpers.ConvertToUtcPlus7(existingRound.Start);
-                    DateTime utcPlus7End = DateTimeHelpers.ConvertToUtcPlus7(existingRound.End);
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
-                        $"Round dates conflict with existing round '{existingRound.Name}' ({DateTimeHelpers.ToIso8601String(utcPlus7Start)} - {DateTimeHelpers.ToIso8601String(utcPlus7End)}).");
+                        $"Round dates conflict with existing round '{existingRound.Name}' ({DateTimeHelpers.ToIso8601String(existingRound.Start)} - {DateTimeHelpers.ToIso8601String(existingRound.End)}).");
                 }
             }
         }

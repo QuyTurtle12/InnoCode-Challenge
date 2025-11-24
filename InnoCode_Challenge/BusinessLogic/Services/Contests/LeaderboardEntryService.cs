@@ -539,8 +539,8 @@ namespace BusinessLogic.Services.Contests
                 // Map to DTO
                 GetLeaderboardEntryDTO dto = _mapper.Map<GetLeaderboardEntryDTO>(firstEntry);
 
-                // Convert SnapshotAt from UTC to UTC+7 for response
-                dto.SnapshotAt = DateTimeHelpers.ConvertToUtcPlus7(firstEntry.SnapshotAt);
+                // Set snapshot time
+                dto.SnapshotAt = firstEntry.SnapshotAt;
 
                 // Create team info list from all entries
                 var allTeams = allEntries.Select(entry => new TeamInfo
@@ -629,9 +629,7 @@ namespace BusinessLogic.Services.Contests
                             {
                                 roundScore = mcqAttempt.Score ?? 0;
                                 roundType = ProblemTypeEnum.McqTest.ToString();
-                                completedAt = config.UpdatedAt.HasValue
-                                    ? DateTimeHelpers.ConvertToUtcPlus7(config.UpdatedAt.Value)
-                                    : null;
+                                completedAt = config.UpdatedAt;
                             }
                             else
                             {
@@ -649,9 +647,7 @@ namespace BusinessLogic.Services.Contests
                                 {
                                     roundScore = submission.Score;
                                     roundType = submission.Problem.Type ?? "Unknown Type";
-                                    completedAt = config.UpdatedAt.HasValue
-                                        ? DateTimeHelpers.ConvertToUtcPlus7(config.UpdatedAt.Value)
-                                        : null;
+                                    completedAt = config.UpdatedAt;
                                 }
                             }
 
@@ -720,6 +716,8 @@ namespace BusinessLogic.Services.Contests
                 // Update score
                 entry.Score = newScore;
                 entry.SnapshotAt = DateTime.UtcNow;
+
+                // Save changes
                 await leaderboardRepo.UpdateAsync(entry);
                 await _unitOfWork.SaveAsync();
 
@@ -770,7 +768,7 @@ namespace BusinessLogic.Services.Contests
                 entry.Score = (entry.Score ?? 0) + scoreToAdd;
                 entry.SnapshotAt = DateTime.UtcNow;
 
-                // Update the entry in the repository
+                // Save changes
                 leaderboardRepo.Update(entry);
                 await _unitOfWork.SaveAsync();
 
@@ -852,6 +850,7 @@ namespace BusinessLogic.Services.Contests
                     $"Error recalculating ranks: {ex.Message}");
             }
         }
+
         private async Task ValidateTeamNotEliminatedAsync(Guid contestId, Guid teamId)
         {
             var teamRepo = _unitOfWork.GetRepository<Team>();
