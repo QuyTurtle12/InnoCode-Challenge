@@ -60,14 +60,8 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round name is required.");
                 }
 
-                // Validate date range
-                if (roundDTO.Start > roundDTO.End)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
-                }
-
-                // Validate against contest dates and other rounds
-                await ValidateRoundDatesAsync(contestId, roundDTO.Start, roundDTO.End, null);
+                // Validate rounds
+                await ValidateRoundInputAsync(contestId, roundDTO, null);
 
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
@@ -503,7 +497,7 @@ namespace BusinessLogic.Services.Contests
 
 
                 // Validate against contest dates and other rounds (excluding current round)
-                await ValidateRoundDatesAsync(round.ContestId, roundDTO.Start, roundDTO.End, round.RoundId);
+                await ValidateRoundInputAsync(round.ContestId, roundDTO, round.RoundId);
 
                 // Update round properties
                 _mapper.Map(roundDTO, round);
@@ -566,7 +560,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        private async Task ValidateRoundDatesAsync(Guid contestId, DateTime roundStart, DateTime roundEnd, Guid? excludeRoundId)
+        private async Task ValidateRoundInputAsync(Guid contestId, BaseRoundDTO roundDTO, Guid? excludeRoundId)
         {
             // Get Contest Repository
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
@@ -580,17 +574,41 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
             }
 
+            // Validate date range
+            if (roundDTO.Start > roundDTO.End)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
+            }
+
             // Validate round dates are within contest dates
-            if (contest.Start.HasValue && roundStart < contest.Start.Value)
+            if (contest.Start.HasValue && roundDTO.Start < contest.Start.Value)
             {
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
                     $"Round start date cannot be before contest start date ({DateTimeHelpers.ToIso8601String(contest.Start.Value)}).");
             }
 
-            if (contest.End.HasValue && roundEnd > contest.End.Value)
+            if (contest.End.HasValue && roundDTO.End > contest.End.Value)
             {
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
                     $"Round end date cannot be after contest end date ({DateTimeHelpers.ToIso8601String(contest.End.Value)}).");
+            }
+
+            // Validate time limit seconds
+            if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value < 0)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                    "Time limit seconds cannot be negative.");
+            }
+
+            // Validate time limit does not exceed round duration
+            if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
+            {
+                TimeSpan roundDuration = roundDTO.End - roundDTO.Start;
+                if (roundDTO.TimeLimitSeconds.Value > roundDuration.TotalSeconds)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                        "Time limit seconds cannot exceed the total duration of the round.");
+                }
             }
 
             // Get Round Repository
@@ -611,7 +629,7 @@ namespace BusinessLogic.Services.Contests
             foreach (Round existingRound in existingRounds)
             {
                 // Check if dates overlap
-                if (roundStart <= existingRound.End && roundEnd >= existingRound.Start)
+                if (roundDTO.Start <= existingRound.End && roundDTO.End >= existingRound.Start)
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
                         $"Round dates conflict with existing round '{existingRound.Name}' ({DateTimeHelpers.ToIso8601String(existingRound.Start)} - {DateTimeHelpers.ToIso8601String(existingRound.End)}).");

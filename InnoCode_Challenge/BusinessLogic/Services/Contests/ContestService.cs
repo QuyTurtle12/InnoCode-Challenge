@@ -963,6 +963,43 @@ namespace BusinessLogic.Services.Contests
             // Extract round IDs
             List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
 
+            // Check for time limit configuration on all rounds
+            List<Config> timeLimitConfigs = await configRepo.Entities
+                .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                            && c.Key.Contains("time_limit_seconds")
+                            && c.DeletedAt == null)
+                .ToListAsync();
+
+            // Create a set of round IDs that have time limit configured
+            HashSet<Guid> roundsWithTimeLimit = new HashSet<Guid>();
+            foreach (Config config in timeLimitConfigs)
+            {
+                // Extract round ID from key and validate the value
+                if (!string.IsNullOrEmpty(config.Value) && int.TryParse(config.Value, out int timeLimit))
+                {
+                    foreach (Guid roundId in roundIds)
+                    {
+                        if (config.Key.Contains(roundId.ToString()))
+                        {
+                            roundsWithTimeLimit.Add(roundId);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Find rounds without time limit
+            List<Round> roundsWithoutTimeLimit = rounds
+                .Where(r => !roundsWithTimeLimit.Contains(r.RoundId))
+                .ToList();
+
+            // Report rounds missing time limit
+            if (roundsWithoutTimeLimit.Any())
+            {
+                string roundNames = string.Join(", ", roundsWithoutTimeLimit.Select(r => $"'{r.Name}'"));
+                result.Missing.Add($"Round(s) {roundNames} missing time limit configuration.");
+            }
+
             // Check for problems and MCQ tests in each round
             List<Problem> problems = await problemRepo.Entities
                 .Where(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null)
