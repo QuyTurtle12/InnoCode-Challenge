@@ -134,6 +134,17 @@ namespace BusinessLogic.Services.Students
                 throw new ErrorException(StatusCodes.Status400BadRequest, "NAME_EXISTS",
                     "A team with this name already exists in the contest.");
 
+            bool mentorAlreadyHasActive = await teamRepository.Entities.AnyAsync(t =>
+            t.ContestId == dto.ContestId &&
+            t.MentorId == meAsMentor.MentorId &&
+            t.DeletedAt == null &&
+            t.Status == TeamStatusConstants.Active);
+
+            if (mentorAlreadyHasActive)
+                throw new ErrorException(StatusCodes.Status409Conflict,
+                    TeamErrorCodeConstants.MentorContestLimit,
+                    "A mentor can have only one active team in the same contest.");
+
             var now = DateTime.UtcNow;
             var team = new Team
             {
@@ -207,8 +218,11 @@ namespace BusinessLogic.Services.Students
                     throw new ErrorException(StatusCodes.Status404NotFound, "MENTOR_NOT_FOUND",
                         $"No mentor with ID={targetMentorId}");
                 
-                if (mentor.SchoolId != dto.SchoolId) throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL", "This mentor is not belong to this school.");
-                
+                if (mentor.SchoolId != targetSchoolId)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL",
+                        "This mentor does not belong to the selected school.");
+
+
                 team.MentorId = targetMentorId;
             }
 
@@ -226,6 +240,23 @@ namespace BusinessLogic.Services.Students
 
                 team.Name = newName;
             }
+
+            bool isActive = string.Equals(team.Status, TeamStatusConstants.Active, StringComparison.OrdinalIgnoreCase);
+            if (isActive)
+            {
+                bool existsOtherActive = await teamRepository.Entities.AnyAsync(t =>
+                    t.TeamId != id &&
+                    t.ContestId == targetContestId &&
+                    t.MentorId == targetMentorId &&
+                    t.DeletedAt == null &&
+                    t.Status == TeamStatusConstants.Active);
+
+                if (existsOtherActive)
+                    throw new ErrorException(StatusCodes.Status409Conflict,
+                        TeamErrorCodeConstants.MentorContestLimit,
+                        "A mentor can have only one active team in the same contest.");
+            }
+
 
             teamRepository.Update(team);
             await _unitOfWork.SaveAsync();
