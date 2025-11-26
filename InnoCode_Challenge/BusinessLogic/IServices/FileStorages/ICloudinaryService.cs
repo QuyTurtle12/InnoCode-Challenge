@@ -6,5 +6,8 @@ namespace BusinessLogic.IServices.FileStorages
     {
         Task<string> UploadFileAsync(IFormFile file, string folder = "others");
         Task<bool> DeleteFileAsync(string publicId);
+        string GetDownloadUrl(string publicId);
+        Task<string> UploadImageAsync(Stream imageStream, string folder = "certificates", string fileName = "image.png");
+
     }
 }

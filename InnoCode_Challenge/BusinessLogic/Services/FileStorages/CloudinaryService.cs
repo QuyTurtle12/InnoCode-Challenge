@@ -91,5 +91,36 @@ namespace BusinessLogic.Services.FileStorages
             var result = await _cloudinary.DestroyAsync(deleteParams);
             return result.Result == "ok";
         }
+
+        public string GetDownloadUrl(string publicId)
+        {
+            return publicId;
+        }
+
+        public async Task<string> UploadImageAsync(Stream imageStream, string folder = "certificates", string fileName = "image.png")
+        {
+            if (imageStream == null || !imageStream.CanRead)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "No image stream provided");
+
+            imageStream.Position = 0;
+
+            var uploadParams = new ImageUploadParams
+            {
+                File = new FileDescription(fileName, imageStream),
+                Folder = folder,
+                UseFilename = true,
+                UniqueFilename = true,
+                Overwrite = true,
+                Format = "png" 
+            };
+
+            var res = await _cloudinary.UploadAsync(uploadParams);
+            if (res.Error != null)
+                throw new ErrorException(StatusCodes.Status500InternalServerError, ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Cloudinary upload error: {res.Error.Message}");
+
+            return res.SecureUrl?.ToString() ?? res.Url?.ToString() ?? string.Empty;
+        }
+
     }
 }

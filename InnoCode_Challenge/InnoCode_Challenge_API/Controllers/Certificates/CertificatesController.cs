@@ -1,8 +1,9 @@
-﻿using System.ComponentModel.DataAnnotations;
-using BusinessLogic.IServices.Certificates;
+﻿using BusinessLogic.IServices.Certificates;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.CertificateDTOs;
 using Repository.ResponseModel;
+using System.ComponentModel.DataAnnotations;
 using Utility.Constant;
 using Utility.PaginatedList;
 
@@ -14,151 +15,51 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
     {
         private readonly ICertificateService _certificateService;
 
-        // Constructor
+        
         public CertificatesController(ICertificateService certificateService)
         {
             _certificateService = certificateService;
         }
 
-        /// <summary>
-        /// Get paginated list of certificates with optional search parameters
-        /// </summary>
-        /// <param name="contestId"></param>
-        /// <param name="pageNumber"></param>
-        /// <param name="pageSize"></param>
-        /// <param name="idSearch"></param>
-        /// <param name="teamIdSearch"></param>
-        /// <param name="studentIdSearch"></param>
-        /// <param name="certificateNameSearch"></param>
-        /// <param name="teamName"></param>
-        /// <param name="studentNameSearch"></param>
-        /// <returns></returns>
-        [HttpGet("{contestId}")]
-        public async Task<IActionResult> GetCertificates(
-            [Required] Guid contestId,
-            int pageNumber = 1,
-            int pageSize = 10,
-            Guid? idSearch = null,
-            Guid? teamIdSearch = null,
-            Guid? studentIdSearch = null,
-            string? certificateNameSearch = null,
-            string? teamName = null,
-            string? studentNameSearch = null
-            )
+        [HttpPost("issue")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> Issue([FromBody] IssueCertificatesDTO dto)
         {
-            PaginatedList<GetAllTeamCertificateDTO> result = await _certificateService.GetPaginatedCertificateAsync(
-                pageNumber,
-                pageSize,
-                idSearch,
-                contestId,
-                teamIdSearch,
-                studentIdSearch,
-                certificateNameSearch,
-                teamName,
-                studentNameSearch);
-
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
-
+            var result = await _certificateService.IssueAsync(dto);
             return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Certificate retrieved successfully."
-                    ));
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                result,
+                "Certificates issued."));
         }
 
-        [HttpGet("me")]
-        public async Task<IActionResult> GetMyCertificates(
-            int pageNumber = 1,
-            int pageSize = 10,
-            Guid? idSearch = null,
-            Guid? contestIdSearch = null,
-            string? contestNameSearch = null
-            )
+        [HttpGet("{id:guid}")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> GetById(Guid id)
         {
-            PaginatedList<GetMyCertificateDTO> result = await _certificateService.GetMyPaginatedCertificateAsync(
-                pageNumber,
-                pageSize,
-                idSearch,
-                contestIdSearch,
-                contestNameSearch
-                );
-
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
-
+            var dto = await _certificateService.GetByIdAsync(id);
             return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Certificate retrieved successfully."
-                    ));
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                dto,
+                "OK"));
         }
 
-        ///// <summary>
-        ///// Create a new certificate
-        ///// </summary>
-        ///// <param name="certificate"></param>
-        ///// <returns></returns>
-        //[HttpPost]
-        //public async Task<IActionResult> CreateCertificate(CreateCertificateDTO certificate)
-        //{
-        //    await _certificateService.CreateCertificateAsync(certificate);
-        //    return Ok(new BaseResponseModel(
-        //                statusCode: StatusCodes.Status201Created,
-        //                code: ResponseCodeConstants.SUCCESS,
-        //                message: "Create Certificate successfully."
-        //            ));
-        //}
-
-        /// <summary>
-        /// Delete a certificate by ID
-        /// </summary>
-        /// <param name="id"></param>
-        /// <returns></returns>
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteCertificate(Guid id)
+        [HttpGet]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> Get([FromQuery] Guid? contestId, [FromQuery] Guid? templateId,
+            [FromQuery] Guid? teamId, [FromQuery] Guid? studentId,
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+            [FromQuery] string? sortBy = "issuedAt", [FromQuery] bool desc = true)
         {
-            await _certificateService.DeleteCertificateAsync(id);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Delete Certificat successfully."
-                    ));
-        }
-
-        /// <summary>
-        /// Award certificates to teams
-        /// </summary>
-        /// <param name="dto"></param>
-        /// <returns></returns>
-        [HttpPost]
-        [Route("award")]
-        public async Task<IActionResult> AwardCertificate(AwardCertificateDTO dto)
-        {
-            await _certificateService.AwardCertificateAsync(dto);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Award Certificate successfully."
-                    ));
+            var paged = await _certificateService.GetAsync(contestId, templateId, teamId, studentId, page, pageSize, sortBy, desc);
+            var paging = new { paged.PageNumber, paged.PageSize, paged.TotalPages, paged.TotalCount, paged.HasPreviousPage, paged.HasNextPage };
+            return Ok(new BaseResponseModel<object>(
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                paged.Items,
+                paging,
+                "OK"));
         }
     }
 }

@@ -6,9 +6,8 @@ namespace BusinessLogic.IServices.Certificates
 {
     public interface ICertificateTemplateService
     {
-        Task<PaginatedList<GetCertificateTemplateDTO>> GetPaginatedCertificateTemplateAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? templateNameSearch, string? contestNameSearch);
-        Task CreateCertificateTemplateAsync(IFormFile file, CreateCertificateTemplateDTO templateDTO);
-        Task UpdateCertificateTemplateAsync(Guid id, IFormFile? file, UpdateCertificateTemplateDTO templateDTO);
-        Task DeleteCertificateTemplateAsync(Guid id);
+        Task<CertificateTemplateDTO> CreateAsync(CreateCertificateTemplateDTO dto);
+        Task<CertificateTemplateDTO> GetByIdAsync(Guid id);
+        Task<PaginatedList<CertificateTemplateDTO>> GetAsync(Guid? contestId, string? search, int page, int pageSize, string? sortBy, bool desc);
     }
 }

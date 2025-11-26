@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.Certificates;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.CertificateTemplateDTOs;
 using Repository.ResponseModel;
@@ -13,105 +14,49 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
     {
         private readonly ICertificateTemplateService _certificateTemplateService;
 
-        // Constructor
         public CertificateTemplatesController(ICertificateTemplateService certificateTemplateService)
         {
             _certificateTemplateService = certificateTemplateService;
         }
-
-        /// <summary>
-        /// Gets a paginated list of certificate templates
-        /// </summary>
-        [HttpGet]
-        public async Task<IActionResult> GetCertificateTemplates(
-            int pageNumber = 1,
-            int pageSize = 10,
-            Guid? idSearch = null,
-            Guid? contestIdSearch = null,
-            string? templateNameSearch = null,
-            string? contestNameSearch = null)
-        {
-            PaginatedList<GetCertificateTemplateDTO> result = await _certificateTemplateService.GetPaginatedCertificateTemplateAsync(
-                pageNumber, pageSize, idSearch, contestIdSearch, templateNameSearch, contestNameSearch);
-
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
-
-            return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Certificate templates retrieved successfully."
-                    ));
-        }
-
-        /// <summary>
-        /// Creates a new certificate template
-        /// </summary>
         [HttpPost]
-        public async Task<IActionResult> CreateCertificateTemplate(
-            IFormFile file,
-            [FromForm] Guid contestId,
-            [FromForm] string name
-            )
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> Create([FromBody] CreateCertificateTemplateDTO dto)
         {
-            var templateDTO = new CreateCertificateTemplateDTO
-            {
-                ContestId = contestId,
-                Name = name
-            };
-
-            await _certificateTemplateService.CreateCertificateTemplateAsync(file, templateDTO);
-
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status201Created,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Create Certificat template successfully."
-                    ));
+            var created = await _certificateTemplateService.CreateAsync(dto);
+            return CreatedAtAction(nameof(GetById), new { id = created.TemplateId },
+                new BaseResponseModel<object>(
+                    StatusCodes.Status201Created,
+                    ResponseCodeConstants.SUCCESS,
+                    created,
+                    "Certificate template created."));
         }
 
-        /// <summary>
-        /// Updates an existing certificate template
-        /// </summary>
-        [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateCertificateTemplate(
-            Guid id,
-            IFormFile? file,
-            [FromForm] string? name)
+        [HttpGet("{id:guid}")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> GetById(Guid id)
         {
-            UpdateCertificateTemplateDTO templateDTO = new UpdateCertificateTemplateDTO
-            {
-                Name = name!
-            };
-
-            await _certificateTemplateService.UpdateCertificateTemplateAsync(id, file, templateDTO);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Update Certificat template successfully."
-                    ));
+            var dto = await _certificateTemplateService.GetByIdAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                dto,
+                "OK"));
         }
 
-        /// <summary>
-        /// Deletes a certificate template
-        /// </summary>
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteCertificateTemplate(Guid id)
+        [HttpGet]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> Get([FromQuery] Guid? contestId, [FromQuery] string? search,
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+            [FromQuery] string? sortBy = "createdAt", [FromQuery] bool desc = true)
         {
-            await _certificateTemplateService.DeleteCertificateTemplateAsync(id);
-            return Ok(new BaseResponseModel(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        message: "Delete Certificat template successfully."
-                    ));
+            var paged = await _certificateTemplateService.GetAsync(contestId, search, page, pageSize, sortBy, desc);
+            var paging = new { paged.PageNumber, paged.PageSize, paged.TotalPages, paged.TotalCount, paged.HasPreviousPage, paged.HasNextPage };
+            return Ok(new BaseResponseModel<object>(
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                paged.Items,
+                paging,
+                "OK"));
         }
     }
 }

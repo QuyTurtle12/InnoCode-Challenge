@@ -5,10 +5,8 @@ namespace BusinessLogic.IServices.Certificates
 {
     public interface ICertificateService
     {
-        Task<PaginatedList<GetAllTeamCertificateDTO>> GetPaginatedCertificateAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, Guid? teamIdSearch, Guid? studentIdSearch, string? certificateNameSearch, string? teamName, string? studentNameSearch);
-        Task<PaginatedList<GetMyCertificateDTO>> GetMyPaginatedCertificateAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? contestNameSearch);
-        Task CreateCertificateAsync(CreateCertificateDTO DTO);
-        Task DeleteCertificateAsync(Guid id);
-        Task AwardCertificateAsync(AwardCertificateDTO dto);
+        Task<IReadOnlyList<IssuedCertificateDTO>> IssueAsync(IssueCertificatesDTO dto);
+        Task<CertificateDTO> GetByIdAsync(Guid id);
+        Task<PaginatedList<CertificateDTO>> GetAsync(Guid? contestId, Guid? templateId, Guid? teamId, Guid? studentId, int page, int pageSize, string? sortBy, bool desc);
     }
 }
