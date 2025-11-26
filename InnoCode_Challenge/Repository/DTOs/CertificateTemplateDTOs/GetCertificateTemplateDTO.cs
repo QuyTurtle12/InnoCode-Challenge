@@ -1,6 +1,6 @@
 ﻿namespace Repository.DTOs.CertificateTemplateDTOs
 {
-    public class GetCertificateTemplateDTO : BaseCertificateTemplateDTO
+    public class GetCertificateTemplateDTO : CertificateTemplateDTO
     {
         public Guid TemplateId { get; set; }
 

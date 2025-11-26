@@ -1,12 +1,15 @@
-﻿using System.Security.Claims;
-using AutoMapper;
+﻿using AutoMapper;
 using BusinessLogic.IServices.Certificates;
+using BusinessLogic.IServices.FileStorages;
 using CloudinaryDotNet;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.CertificateDTOs;
 using Repository.IRepositories;
+using Repository.Repositories;
+using System.Security.Claims;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
@@ -17,417 +20,247 @@ namespace BusinessLogic.Services.Certificates
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
-        private readonly IHttpContextAccessor _httpContextAccessor;
-        // Constructor
-        public CertificateService(IMapper mapper, IUOW unitOfWork, IHttpContextAccessor httpContextAccessor)
+        private readonly ICloudinaryService _cloud;
+        private readonly IHttpClientFactory _httpClientFactory;
+        private readonly ILogger<CertificateService> _logger;
+        public CertificateService(IMapper mapper, IUOW unitOfWork, ICloudinaryService cloud, IHttpClientFactory httpClientFactory, ILogger<CertificateService> logger)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
-            _httpContextAccessor = httpContextAccessor;
+            _cloud = cloud;
+            _httpClientFactory = httpClientFactory;
+            _logger = logger;
         }
 
-        public async Task AwardCertificateAsync(AwardCertificateDTO dto)
+        public async Task<IReadOnlyList<IssuedCertificateDTO>> IssueAsync(IssueCertificatesDTO dto)
         {
-            try
+            var tplRepo = _unitOfWork.GetRepository<CertificateTemplate>();
+            var certRepo = _unitOfWork.GetRepository<Certificate>();
+            var studentRepo = _unitOfWork.GetRepository<Student>();
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+
+            var tpl = await tplRepo.Entities.Include(t => t.Contest).FirstOrDefaultAsync(t => t.TemplateId == dto.TemplateId);
+            if (tpl == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, CertificateErrorCodeConstants.TemplateNotFound, $"No template with ID={dto.TemplateId}");
+
+            var http = _httpClientFactory.CreateClient();
+            var bytes = await http.GetByteArrayAsync(tpl.FileUrl!);
+            using var templateStream = new MemoryStream(bytes);
+
+            var results = new List<IssuedCertificateDTO>();
+
+            foreach (var r in dto.Recipients)
             {
-                // Validate input
-                if (dto == null)
+                var isStudent = r.StudentId.HasValue;
+                var isTeam = r.TeamId.HasValue;
+                if (isStudent == isTeam)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, "RECIPIENT_INVALID",
+                        "Specify exactly one of studentId or teamId.");
+
+                string recipientName;
+                Guid? studentId = null; Guid? teamId = null;
+
+                if (isStudent)
                 {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Award certificate data cannot be null.");
+                    var stu = await studentRepo.Entities.Include(s => s.User)
+                        .FirstOrDefaultAsync(s => s.StudentId == r.StudentId && s.DeletedAt == null);
+                    if (stu == null)
+                        throw new ErrorException(StatusCodes.Status404NotFound,
+                            CertificateErrorCodeConstants.StudentNotFound,
+                            $"No student with ID={r.StudentId}");
+                    studentId = stu.StudentId;
+                    recipientName = r.DisplayName?.Trim() ?? (stu.User?.Fullname ?? "Student");
+                }
+                else
+                {
+                    var tm = await teamRepo.Entities.FirstOrDefaultAsync(t => t.TeamId == r.TeamId && t.DeletedAt == null);
+                    if (tm == null)
+                        throw new ErrorException(StatusCodes.Status404NotFound,
+                            CertificateErrorCodeConstants.TeamNotFound,
+                            $"No team with ID={r.TeamId}");
+                    teamId = tm.TeamId;
+                    recipientName = r.DisplayName?.Trim() ?? tm.Name;
                 }
 
-                if (dto.templateId == Guid.Empty)
+                if (!dto.Reissue)
                 {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Template ID is required.");
+                    bool exists = await certRepo.Entities.AnyAsync(c =>
+                        c.TemplateId == tpl.TemplateId &&
+                        c.StudentId == studentId &&
+                        c.TeamId == teamId &&
+                        c.DeletedAt == null);
+                    if (exists)
+                        throw new ErrorException(StatusCodes.Status409Conflict, CertificateErrorCodeConstants.DuplicateCertificate, "Certificate already exists for this recipient and template.");
                 }
 
-                if (dto.teamIdList == null || !dto.teamIdList.Any())
+                var layout = new Repository.DTOs.CertificateTemplateDTOs.TextLayoutDTO();
+                var pngBytes = ImageDrawHelper.RenderTextOnImage(
+                    template: templateStream,
+                    displayText: recipientName,
+                    fontFamily: layout.FontFamily,
+                    fontSize: layout.FontSize,
+                    colorHex: layout.ColorHex,
+                    x: layout.X, y: layout.Y, maxWidth: layout.MaxWidth, align: layout.Align);
+                templateStream.Position = 0;
+
+                var fileName = $"cert_{tpl.TemplateId}_{studentId?.ToString() ?? teamId!.ToString()}_{DateTime.UtcNow:yyyyMMddHHmmss}.png";
+
+                string url;
+                try
                 {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "At least one team must be selected.");
+                    using var mem = new MemoryStream(pngBytes);
+                    url = await _cloud.UploadImageAsync(mem, "certificates", fileName); // 🔸 use image upload
+                }
+                catch (ErrorException ex)
+                {
+                    _logger.LogError(ex, "Cloudinary upload failed for {FileName}", fileName); // 🔸 log provider error
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        CertificateErrorCodeConstants.StorageUploadFailed,
+                        "Failed to upload certificate file.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error when uploading {FileName}", fileName);
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        CertificateErrorCodeConstants.StorageUploadFailed,
+                        "Failed to upload certificate file.");
                 }
 
-                // Start a transaction
-                _unitOfWork.BeginTransaction();
 
-                // Get repositories
-                IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
-                IGenericRepository<CertificateTemplate> templateRepo = _unitOfWork.GetRepository<CertificateTemplate>();
-                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
-                // Verify template exists
-                CertificateTemplate? template = await templateRepo.GetByIdAsync(dto.templateId);
-                if (template == null)
+                Certificate entity;
+                if (dto.Reissue)
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Certificate template with ID {dto.templateId} not found.");
-                }
+                    entity = await certRepo.Entities.FirstOrDefaultAsync(c =>
+                        c.TemplateId == tpl.TemplateId && c.StudentId == studentId && c.TeamId == teamId && c.DeletedAt == null);
 
-                // Get all team members for the selected teams
-                IList<Team> teams = await teamRepo.Entities
-                    .Where(t => dto.teamIdList.Contains(t.TeamId))
-                    .Include(t => t.TeamMembers)
-                    .ToListAsync();
-
-                // Verify all teams exist
-                if (teams.Count != dto.teamIdList.Count)
-                {
-                    List<Guid> foundTeamIds = teams.Select(t => t.TeamId).ToList();
-                    List<Guid> missingTeamIds = dto.teamIdList.Except(foundTeamIds).ToList();
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Teams not found: {string.Join(", ", missingTeamIds)}");
-                }
-
-                // Prepare list to hold new certificates
-                List<Certificate> certificates = new List<Certificate>();
-
-                // Current timestamp for issuedAt
-                DateTime issuedAt = DateTime.UtcNow;
-
-                // Iterate through each team
-                foreach (Team team in teams)
-                {
-                    // Create certificates for all team members
-                    foreach (TeamMember member in team.TeamMembers)
+                    if (entity == null)
                     {
-                        Certificate certificate = new Certificate
+                        entity = new Certificate
                         {
                             CertificateId = Guid.NewGuid(),
-                            TemplateId = dto.templateId,
-                            TeamId = team.TeamId,
-                            StudentId = member.StudentId,
-                            FileUrl = template.FileUrl ?? "N/A",
-                            IssuedAt = issuedAt
+                            TemplateId = tpl.TemplateId,
+                            StudentId = studentId,
+                            TeamId = teamId,
+                            FileUrl = url,
+                            IssuedAt = DateTime.UtcNow
                         };
-
-                        // Add to the list
-                        certificates.Add(certificate);
+                        await certRepo.InsertAsync(entity);
+                    }
+                    else
+                    {
+                        entity.FileUrl = url;
+                        entity.IssuedAt = DateTime.UtcNow;
+                        certRepo.Update(entity);
                     }
                 }
-
-                // Insert all certificates at once
-                await certificateRepo.InsertRangeAsync(certificates);
-
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
-
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
+                else
                 {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error awarding certificates: {ex.Message}");
-            }
-        }
-
-        public async Task CreateCertificateAsync(CreateCertificateDTO dto)
-        {
-            try
-            {
-                // Get the repository for Certificate entity
-                IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
-
-                // Map DTO to Entity
-                Certificate certificate = _mapper.Map<Certificate>(dto);
-
-                // Set additional properties if needed
-                certificate.IssuedAt = DateTime.UtcNow;
-
-                // Insert the new certificate
-                await certificateRepo.InsertAsync(certificate);
-
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
-            }
-            catch (Exception ex)
-            {
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error creating Certificate: {ex.Message}");
-            }
-        }
-
-        public async Task DeleteCertificateAsync(Guid id)
-        {
-            try
-            {
-                // Start a transaction
-                _unitOfWork.BeginTransaction();
-
-                // Get the repository for Certificate entity
-                IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
-
-                // Find the certificate by id
-                var certificate = await certificateRepo.GetByIdAsync(id);
-
-                // If certificate not found, throw an exception
-                if (certificate == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Certificate with ID {id} not found.");
-                }
-
-                // Delete the certificate
-                await certificateRepo.DeleteAsync(certificate);
-
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
-
-                // Commit the transaction
-                _unitOfWork.CommitTransaction();
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error deleting Certificate: {ex.Message}");
-            }
-        }
-
-        public async Task<PaginatedList<GetAllTeamCertificateDTO>> GetPaginatedCertificateAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, Guid? teamIdSearch, Guid? studentIdSearch, string? certificateNameSearch, string? teamName, string? studentNameSearch)
-        {
-            try
-            {
-                // Validate pageNumber and pageSize
-                if (pageNumber < 1 || pageSize < 1)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Page number and page size must be greater than or equal to 1.");
-                }
-
-                // Get the repository for Certificate entity
-                IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
-
-                // Build query with all necessary includes
-                IQueryable<Certificate> query = certificateRepo
-                    .Entities
-                    .Include(c => c.Template)
-                        .ThenInclude(t => t.Contest)
-                    .Include(c => c.Team)
-                        .ThenInclude(t => t!.TeamMembers)
-                            .ThenInclude(tm => tm.Student)
-                                .ThenInclude(s => s!.User)
-                    .Include(c => c.Student)
-                        .ThenInclude(s => s!.User);
-
-                // Apply contest filter
-                if (contestIdSearch.HasValue)
-                {
-                    query = query.Where(c => c.Template.ContestId == contestIdSearch.Value);
-                }
-
-                // Apply filters
-                if (idSearch.HasValue)
-                {
-                    query = query.Where(c => c.CertificateId == idSearch.Value);
-                }
-
-                if (teamIdSearch.HasValue)
-                {
-                    query = query.Where(c => c.TeamId == teamIdSearch.Value);
-                }
-
-                if (studentIdSearch.HasValue)
-                {
-                    query = query.Where(c => c.StudentId == studentIdSearch.Value);
-                }
-
-                if (!string.IsNullOrWhiteSpace(teamName))
-                {
-                    query = query.Where(c => c.Team != null && c.Team.Name.Contains(teamName));
-                }
-
-                if (!string.IsNullOrWhiteSpace(studentNameSearch))
-                {
-                    query = query.Where(c => c.Student != null && c.Student.User.Fullname.Contains(studentNameSearch));
-                }
-
-                if (!string.IsNullOrWhiteSpace(certificateNameSearch))
-                {
-                    query = query.Where(c => c.Template.Name.Contains(certificateNameSearch));
-                }
-
-                // Order by issued date
-                query = query.OrderByDescending(c => c.IssuedAt);
-
-                // Execute query to get all matching certificates
-                List<Certificate> allCertificates = await query.ToListAsync();
-
-                // Group by TemplateId and TeamId
-                var groupedCertificates = allCertificates
-                    .GroupBy(c => new { c.TemplateId, c.TeamId })
-                    .Select(group =>
+                    entity = new Certificate
                     {
-                        // Get the first certificate to extract common information
-                        Certificate firstCert = group.First();
-
-                        // Create DTO with grouped data
-                        GetAllTeamCertificateDTO dto = new GetAllTeamCertificateDTO
-                        {
-                            TemplateId = firstCert.TemplateId,
-                            TemplateName = firstCert.Template.Name,
-                            ContestId = firstCert.Template?.ContestId ?? Guid.Empty,
-                            ContestName = firstCert.Template?.Contest?.Name ?? "N/A",
-                            TeamId = firstCert.TeamId ?? Guid.Empty,
-                            TeamName = firstCert.Team?.Name ?? "N/A",
-                            FileUrl = firstCert.FileUrl,
-                            IssuedAt = firstCert.IssuedAt,
-
-                            // Collect all team members from this group
-                            TeamDetails = group.Select(cert => new TeamDetailDTO
-                            {
-                                CertificateId = cert.CertificateId,
-                                StudentId = cert.StudentId ?? Guid.Empty,
-                                StudentName = cert.Student?.User?.Fullname ?? "N/A",
-                            }).ToList()
-                        };
-
-                        return dto;
-                    })
-                    .ToList();
-
-                // Apply pagination to grouped results
-                int totalCount = groupedCertificates.Count;
-                var paginatedGroups = groupedCertificates
-                    .Skip((pageNumber - 1) * pageSize)
-                    .Take(pageSize)
-                    .ToList();
-
-                // Create and return paginated list
-                return new PaginatedList<GetAllTeamCertificateDTO>(
-                    paginatedGroups,
-                    totalCount,
-                    pageNumber,
-                    pageSize
-                );
-            }
-            catch (Exception ex)
-            {
-                if (ex is ErrorException)
-                {
-                    throw;
+                        CertificateId = Guid.NewGuid(),
+                        TemplateId = tpl.TemplateId,
+                        StudentId = studentId,
+                        TeamId = teamId,
+                        FileUrl = url,
+                        IssuedAt = DateTime.UtcNow
+                    };
+                    await certRepo.InsertAsync(entity);
                 }
 
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error fetching Certificates: {ex.Message}");
+                await _unitOfWork.SaveAsync();
+
+                results.Add(new IssuedCertificateDTO
+                {
+                    CertificateId = entity.CertificateId,
+                    TemplateId = entity.TemplateId,
+                    TeamId = entity.TeamId,
+                    StudentId = entity.StudentId,
+                    RecipientName = recipientName,
+                    FileUrl = entity.FileUrl,
+                    IssuedAt = entity.IssuedAt
+                });
+
+                templateStream.Position = 0;
             }
+
+            return results;
+
         }
 
-        public async Task<PaginatedList<GetMyCertificateDTO>> GetMyPaginatedCertificateAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? contestNameSearch)
+        public async Task<CertificateDTO> GetByIdAsync(Guid id)
         {
-            try
+            var repo = _unitOfWork.GetRepository<Certificate>();
+            var c = await repo.Entities
+                .Include(x => x.Template).ThenInclude(t => t.Contest)
+                .Include(x => x.Team)
+                .Include(x => x.Student).ThenInclude(s => s.User)
+                .FirstOrDefaultAsync(x => x.CertificateId == id && x.DeletedAt == null);
+            if (c == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CERTIFICATE_NOT_FOUND", $"No certificate with ID={id}");
+
+            return new CertificateDTO
             {
-                // Get the repository for Certificate entity
-                IGenericRepository<Certificate> certificateRepo = _unitOfWork.GetRepository<Certificate>();
-
-                IQueryable<Certificate> query;
-
-                // Get user ID from JWT token
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Null User Id");
-
-                // Get student ID from user ID
-                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
-                    .Select(s => s.StudentId)
-                    .FirstOrDefault();
-
-                // Get certificates for the logged in student
-                query = certificateRepo
-                    .Entities
-                    .Where(c => c.StudentId == studentId)
-                    .Include(c => c.Template)
-                        .ThenInclude(c => c.Contest)
-                    .Include(c => c.Team);
-
-                // Apply filters if provided
-                if (idSearch.HasValue)
-                {
-                    query = query.Where(c => c.CertificateId == idSearch.Value);
-                }
-
-                if (contestIdSearch.HasValue)
-                {
-                    query = query.Where(c => c.Template.ContestId == contestIdSearch.Value);
-                }
-
-                if (!string.IsNullOrWhiteSpace(contestNameSearch))
-                {
-                    query = query.Where(c => c.Template.Contest.Name.Contains(contestNameSearch));
-                }
-
-                query = query.OrderByDescending(c => c.IssuedAt);
-
-                PaginatedList<Certificate> resultQuery = await certificateRepo.GetPagingAsync(query, pageNumber, pageSize);
-
-                // Project to DTO
-                IReadOnlyCollection<GetMyCertificateDTO> result = resultQuery.Items.Select(items =>
-                {
-                    // Map basic properties
-                    GetMyCertificateDTO certificateDTO = _mapper.Map<GetMyCertificateDTO>(items);
-
-                    // Map additional properties
-                    certificateDTO.ContestId = items.Template.ContestId;
-                    certificateDTO.ContestName = items.Template.Contest != null ? items.Template.Contest.Name : "N/A";
-                    certificateDTO.TemplateName = items.Template.Name;
-
-                    return certificateDTO;
-                }).ToList();
-
-                // Create and return paginated list
-                return new PaginatedList<GetMyCertificateDTO>(
-                    result,
-                    resultQuery.TotalCount,
-                    resultQuery.PageNumber,
-                    resultQuery.PageSize
-                );
-            }
-            catch (Exception ex)
-            {
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error fetching Certificates: {ex.Message}");
-            }
+                CertificateId = c.CertificateId,
+                TemplateId = c.TemplateId,
+                TemplateName = c.Template.Name,
+                ContestId = c.Template.ContestId,
+                TeamId = c.TeamId,
+                TeamName = c.Team?.Name,
+                StudentId = c.StudentId,
+                StudentName = c.Student?.User?.Fullname,
+                FileUrl = c.FileUrl,
+                IssuedAt = c.IssuedAt
+            };
         }
+
+        public async Task<PaginatedList<CertificateDTO>> GetAsync(Guid? contestId, Guid? templateId, Guid? teamId, Guid? studentId, int page, int pageSize, string? sortBy, bool desc)
+        {
+            var repo = _unitOfWork.GetRepository<Certificate>();
+            var q = repo.Entities
+                .Where(c => c.DeletedAt == null)
+                .Include(c => c.Template).ThenInclude(t => t.Contest)
+                .Include(c => c.Team)
+                .Include(c => c.Student).ThenInclude(s => s.User)
+                .AsNoTracking();
+
+            if (templateId.HasValue) q = q.Where(c => c.TemplateId == templateId.Value);
+            if (contestId.HasValue) q = q.Where(c => c.Template.ContestId == contestId.Value);
+            if (teamId.HasValue) q = q.Where(c => c.TeamId == teamId.Value);
+            if (studentId.HasValue) q = q.Where(c => c.StudentId == studentId.Value);
+
+            q = (sortBy?.ToLowerInvariant()) switch
+            {
+                "issuedat" => desc ? q.OrderByDescending(c => c.IssuedAt) : q.OrderBy(c => c.IssuedAt),
+                _ => desc ? q.OrderByDescending(c => c.IssuedAt) : q.OrderBy(c => c.IssuedAt)
+            };
+
+            var pageData = await repo.GetPagingAsync(q, page, pageSize);
+            var items = pageData.Items.Select(c => new CertificateDTO
+            {
+                CertificateId = c.CertificateId,
+                TemplateId = c.TemplateId,
+                TemplateName = c.Template.Name,
+                ContestId = c.Template.ContestId,
+                TeamId = c.TeamId,
+                TeamName = c.Team?.Name,
+                StudentId = c.StudentId,
+                StudentName = c.Student?.User?.Fullname,
+                FileUrl = c.FileUrl,
+                IssuedAt = c.IssuedAt
+            }).ToList();
+
+            return new PaginatedList<CertificateDTO>(items, pageData.TotalCount, pageData.PageNumber, pageData.PageSize);
+        }
+        private static IFormFile ToFormFile(byte[] data, string fileName, string contentType)
+        {
+            var stream = new MemoryStream(data); 
+            return new FormFile(stream, 0, data.Length, "file", fileName)
+            {
+                Headers = new HeaderDictionary(),
+                ContentType = contentType
+            };
+        }
+
     }
 }
