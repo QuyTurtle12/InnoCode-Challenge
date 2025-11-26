@@ -13,7 +13,7 @@ using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Mcqs
 {
-    [Route("api/quizzes")]
+    [Route("api/")]
     [ApiController]
     public class QuizsController : ControllerBase
     {
@@ -27,13 +27,13 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get quiz (MCQ Test) by round ID with pagination
+        /// Get MCQ Test by round ID with pagination
         /// </summary>
         /// <param name="roundId"></param>
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
         /// <returns></returns>
-        [HttpGet("rounds/{roundId}/quiz")]
+        [HttpGet("rounds/{roundId}/mcq-test")]
         public async Task<IActionResult> GetQuiz(
             Guid roundId,
             int pageNumber = 1,
@@ -41,21 +41,32 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         {
             GetQuizDTO quiz = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId);
 
+            var paging = new
+            {
+                quiz.McqTest?.CurrentPage,
+                quiz.McqTest?.PageSize,
+                quiz.McqTest?.TotalPages,
+                TotalCount = quiz.McqTest?.TotalQuestions ?? 0,
+                HasPreviousPage = (quiz.McqTest?.CurrentPage ?? 1) > 1,
+                HasNextPage = (quiz.McqTest?.CurrentPage ?? 1) < (quiz.McqTest?.TotalPages ?? 0)
+            };
+
             return Ok(new BaseResponseModel<GetQuizDTO>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: quiz,
+                additionalData: paging,
                 message: "Quiz retrieved successfully."
             ));
         }
 
         /// <summary>
-        /// Submit answers for a quiz
+        /// Submit answers for a MCQ Test
         /// </summary>
         /// <param name="roundId">Round Id</param>
-        /// <param name="submissionDTO">Quiz submission data</param>
-        /// <returns>Quiz results</returns>
-        [HttpPost("{roundId}/submit")]
+        /// <param name="submissionDTO">MCQ Test submission data</param>
+        /// <returns>MCQ Test results</returns>
+        [HttpPost("rounds/{roundId}/mcq-test/submit")]
         [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> SubmitQuiz(Guid roundId, CreateQuizSubmissionDTO submissionDTO)
         {
@@ -70,11 +81,11 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get detailed results of a specific quiz attempt
+        /// Get detailed results of a specific MCQ Test's attempt
         /// </summary>
-        /// <param name="attemptId">ID of the quiz attempt</param>
-        /// <returns>Detailed quiz results including answers</returns>
-        [HttpGet("attempts/{attemptId}")]
+        /// <param name="attemptId">ID of the MCQ Test attempt</param>
+        /// <returns>Detailed MCQ Test results including answers</returns>
+        [HttpGet("rounds/mcq-test/attempts/{attemptId}")]
         public async Task<IActionResult> GetQuizAttemptResult(Guid attemptId)
         {
             QuizResultDTO result = await _quizService.GetQuizAttemptResultAsync(attemptId);
@@ -88,15 +99,15 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get paginated list of all quiz attempts
+        /// Get paginated list of all MCQ Test attempts
         /// </summary>
         /// <param name="roundId">Required Round Id filter</param>
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
         /// <param name="studentId">Optional student ID filter</param>
         /// <param name="testId">Optional test ID filter</param>
-        /// <returns>Paginated list of quiz attempt summaries</returns>
-        [HttpGet("{roundId}/attempts")]
+        /// <returns>Paginated list of MCQ Test attempt summaries</returns>
+        [HttpGet("rounds/{roundId}/attempts")]
         public async Task<IActionResult> GetQuizAttempts(
             [Required] Guid roundId,
             int pageNumber = 1,
@@ -128,14 +139,14 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         }
 
         /// <summary>
-        /// Get all quiz attempts for the current student
+        /// Get all MCQ Test attempts for the current student
         /// </summary>
         /// <param name="roundId">Required Round Id filter</param>
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
         /// <param name="testId">Optional test ID filter</param>
-        /// <returns>Paginated list of quiz attempt summaries</returns>
-        [HttpGet("{roundId}/attempts/me")]
+        /// <returns>Paginated list of MCQ Test attempt summaries</returns>
+        [HttpGet("rounds/{roundId}/attempts/my-attempt")]
         [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> GetMyQuizAttempts(
             [Required] Guid roundId,
@@ -207,7 +218,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <param name="csvFile">CSV file containing questions</param>
         /// <param name="testId">Test ID</param>
         /// <returns>Import result</returns>
-        [HttpPost("/api/mcq-tests/{testId}/import-csv")]
+        [HttpPost("mcq-tests/{testId}/import-csv")]
         [Authorize(Policy = "RequireOrganizerRole")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ImportMcqQuestionsFromCsv(
@@ -227,7 +238,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// Download MCQ import template
         /// </summary>
         /// <returns></returns>
-        [HttpGet("/api/mcq-tests/template")]
+        [HttpGet("mcq-tests/template")]
         public async Task<IActionResult> DownloadMcqImportTemplate()
         {
             string url = await _configService.DownloadImportTemplate(ImportTemplateEnum.McqTemplate);
