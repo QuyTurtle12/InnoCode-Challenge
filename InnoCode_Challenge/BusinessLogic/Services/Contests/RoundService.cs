@@ -67,7 +67,7 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
-                // Map DTO to Entity
+                // Map DTO to Entity    
                 Round round = _mapper.Map<Round>(roundDTO);
 
                 // Store times in database

@@ -105,19 +105,17 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
         /// <param name="studentId">Optional student ID filter</param>
-        /// <param name="testId">Optional test ID filter</param>
         /// <returns>Paginated list of MCQ Test attempt summaries</returns>
         [HttpGet("rounds/{roundId}/attempts")]
         public async Task<IActionResult> GetQuizAttempts(
             [Required] Guid roundId,
             int pageNumber = 1,
             int pageSize = 10,
-            Guid? studentId = null,
-            Guid? testId = null
+            Guid? studentId = null
             )
         {
                 PaginatedList<QuizAttemptSummaryDTO> result = await _quizService.GetStudentQuizAttemptsAsync(
-                    pageNumber, pageSize, studentId, testId, roundId, false);
+                    pageNumber, pageSize, studentId, null, roundId, false);
 
                 var paging = new
                 {
@@ -144,18 +142,16 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <param name="roundId">Required Round Id filter</param>
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Number of items per page</param>
-        /// <param name="testId">Optional test ID filter</param>
         /// <returns>Paginated list of MCQ Test attempt summaries</returns>
         [HttpGet("rounds/{roundId}/attempts/my-attempt")]
         [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> GetMyQuizAttempts(
             [Required] Guid roundId,
             int pageNumber = 1,
-            int pageSize = 10,
-            Guid? testId = null)
+            int pageSize = 10)
         {
             PaginatedList<QuizAttemptSummaryDTO> result = await _quizService.GetStudentQuizAttemptsAsync(
-                pageNumber, pageSize, null, testId, roundId, true);
+                pageNumber, pageSize, null, null, roundId, true);
 
             var paging = new
             {

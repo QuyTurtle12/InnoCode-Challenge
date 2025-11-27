@@ -263,7 +263,7 @@ namespace BusinessLogic.Services.Mcqs
                 IGenericRepository<McqAttempt> attemptRepo = _unitOfWork.GetRepository<McqAttempt>();
                 McqAttempt? attempt = await attemptRepo
                     .Entities
-                    .Where(a => a.AttemptId == attemptId)
+                    .Where(a => a.AttemptId == attemptId && a.DeletedAt == null)
                     .Include(a => a.Student)
                         .ThenInclude(a => a.User)
                     .FirstOrDefaultAsync();
@@ -348,7 +348,7 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Start with base query
                 IQueryable<McqAttempt> query = attemptRepo.Entities
-                    .Where(a => a.RoundId == roundId)
+                    .Where(a => a.RoundId == roundId && a.DeletedAt == null)
                     .Include(a => a.Student)
                         .ThenInclude(s => s.User)
                     .Include(a => a.Test);

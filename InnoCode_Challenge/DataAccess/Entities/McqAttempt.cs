@@ -19,6 +19,8 @@ public partial class McqAttempt
 
     public double? Score { get; set; }
 
+    public DateTime? DeletedAt { get; set; }
+
     public virtual ICollection<McqAttemptItem> McqAttemptItems { get; set; } = new List<McqAttemptItem>();
 
     public virtual Round Round { get; set; } = null!;

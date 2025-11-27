@@ -1,14 +1,24 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Serialization;
-using Utility.Enums;
+﻿using Microsoft.AspNetCore.Http;
+using Repository.DTOs.AppealEvidenceDTOs;
+using System.ComponentModel.DataAnnotations;
 
 namespace Repository.DTOs.AppealDTOs
 {
-    public class CreateAppealDTO : BaseAppealDTO
+    public class CreateAppealDTO
     {
-        [Required]
-        [EnumDataType(typeof(AppealStateEnum))]
-        [JsonConverter(typeof(JsonStringEnumConverter))]
-        public AppealStateEnum State { get; set; } = AppealStateEnum.Open!;
+        [Required(ErrorMessage = "Round ID is required")]
+        public Guid RoundId { get; set; }
+
+        [Required(ErrorMessage = "Team ID is required")]
+        public Guid TeamId { get; set; }
+
+        [Required(ErrorMessage = "Student ID is required")]
+        public Guid StudentId { get; set; }
+
+        [Required(ErrorMessage = "Reason is required")]
+        [MaxLength(1000, ErrorMessage = "Reason cannot exceed 1000 characters")]
+        public string Reason { get; set; } = null!;
+
+        public List<AppealEvidenceFileDTO>? Evidences { get; set; }
     }
 }

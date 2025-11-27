@@ -11,7 +11,7 @@ public partial class Appeal
 
     public string TargetType { get; set; } = null!;
 
-    public string TargetId { get; set; } = null!;
+    public Guid TargetId { get; set; }
 
     public Guid OwnerId { get; set; }
 
@@ -25,9 +25,15 @@ public partial class Appeal
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? CreatedBy { get; set; }
+
+    public string? DecisionReason { get; set; }
+
     public virtual ICollection<AppealEvidence> AppealEvidences { get; set; } = new List<AppealEvidence>();
 
     public virtual User Owner { get; set; } = null!;
+
+    public virtual Round Target { get; set; } = null!;
 
     public virtual Team Team { get; set; } = null!;
 }

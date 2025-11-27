@@ -9,7 +9,7 @@ namespace Repository.DTOs.AppealDTOs
         [Required]
         [EnumDataType(typeof(AppealStateEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]
-        public AppealStateEnum State { get; set; } = AppealStateEnum.Open!;
+        public AppealStateEnum State { get; set; } = AppealStateEnum.Opened!;
         public string? Decision { get; set; }
 
     }

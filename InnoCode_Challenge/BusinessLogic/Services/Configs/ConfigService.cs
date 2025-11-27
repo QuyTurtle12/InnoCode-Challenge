@@ -321,6 +321,14 @@ namespace BusinessLogic.Services
 
         public async Task<bool> IsStudentFinishedRoundAsync(Guid roundId, Guid studentId)
         {
+            //bool hasApprovedAppeal = await HasApprovedAppealForRoundAsync(roundId, studentId);
+
+            //// If there's an approved appeal, student can retake the round
+            //if (hasApprovedAppeal)
+            //{
+            //    return false;
+            //}
+
             // Get repository
             IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
 
@@ -337,6 +345,41 @@ namespace BusinessLogic.Services
 
             return true;
         }
+
+        //private async Task<bool> HasApprovedAppealForRoundAsync(Guid roundId, Guid studentId)
+        //{
+        //    try
+        //    {
+        //        IGenericRepository<TeamMember> teamMemberRepo = _uow.GetRepository<TeamMember>();
+        //        IGenericRepository<Appeal> appealRepo = _uow.GetRepository<Appeal>();
+
+        //        // Get student's team ID
+        //        Guid? teamId = await teamMemberRepo.Entities
+        //            .Where(tm => tm.StudentId == studentId)
+        //            .Select(tm => tm.TeamId)
+        //            .FirstOrDefaultAsync();
+
+        //        if (!teamId.HasValue)
+        //        {
+        //            return false;
+        //        }
+
+        //        // Check if there's an approved appeal for this round and team
+        //        bool hasApprovedAppeal = await appealRepo.Entities
+        //            .AnyAsync(a => a.TeamId == teamId.Value
+        //                        && a.TargetId == roundId
+        //                        && a.State == AppealStateEnum.Closed.ToString()
+        //                        && a.Decision != null
+        //                        && a.Decision.StartsWith(AppealDecisionEnum.Approved.ToString())
+        //                        && a.DeletedAt == null);
+
+        //        return hasApprovedAppeal;
+        //    }
+        //    catch
+        //    {
+        //        return false;
+        //    }
+        //}
 
         public async Task MarkFinishedSubmissionAsync(Guid roundId, Guid studentId)
         {

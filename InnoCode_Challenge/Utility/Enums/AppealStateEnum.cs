@@ -2,7 +2,7 @@
 {
     public enum AppealStateEnum
     {
-        Open = 0,
-        Closed = 1
+        Opened,
+        Closed
     }
 }

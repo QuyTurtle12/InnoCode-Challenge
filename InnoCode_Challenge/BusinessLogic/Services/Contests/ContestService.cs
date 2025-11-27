@@ -232,7 +232,7 @@ namespace BusinessLogic.Services.Contests
                     query = query.Where(c => c.End <= endDate.Value);
                 }
 
-                // Order by creation date (newest first)
+                // Order contest by creation date (newest first)
                 query = query.OrderByDescending(c => c.CreatedAt);
 
                 // Change to paginated list to facilitate mapping process
@@ -331,7 +331,8 @@ namespace BusinessLogic.Services.Contests
                         }
 
                         return roundDTO;
-                    }).ToList();
+                    })
+                    .OrderBy(r => r.Start).ToList();
 
                     // Map creator ID
                     contestDTO.CreatedById = Guid.Parse(item.CreatedBy!);
@@ -518,7 +519,8 @@ namespace BusinessLogic.Services.Contests
                     }
 
                     return roundDTO;
-                }).ToList();
+                })
+                .OrderBy(r => r.Start).ToList();
 
                 // Map remain values
                 contestDTO.CreatedById = createdById;
