@@ -8,7 +8,8 @@ namespace BusinessLogic.MappingProfiles.Contests
     {
         public TestCaseProfile() 
         {
-            CreateMap<GetTestCaseDTO, TestCase>().ReverseMap();
+            CreateMap<TestCase, GetTestCaseDTO>()
+                .ForMember(dest => dest.RoundId, opt => opt.MapFrom(src => src.Problem.Round.RoundId));
             CreateMap<CreateTestCaseDTO, TestCase>().ReverseMap();
             CreateMap<UpdateTestCaseDTO, TestCase>().ReverseMap();
         }

@@ -60,6 +60,23 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
+        /// Get a test case by id
+        /// </summary>
+        /// <param name="id">test case id</param>
+        /// <returns></returns>
+        [HttpGet("test-cases/{id}")]
+        public async Task<IActionResult> GetTestCaseById(Guid id)
+        {
+            GetTestCaseDTO result = await _testCaseService.GetTestCaseByIdAsync(id);
+            return Ok(new BaseResponseModel<GetTestCaseDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Test case retrieved successfully."
+            ));
+        }
+
+        /// <summary>
         /// Create a new test case for a round
         /// </summary>
         /// <param name="roundId"></param>

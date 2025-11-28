@@ -313,6 +313,68 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                // Basic request validation
+                if (createRubricDTO == null)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Payload cannot be null.");
+                }
+
+                if (createRubricDTO.Criteria == null || !createRubricDTO.Criteria.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "At least one rubric criterion is required.");
+                }
+
+                // Validate each criterion and collect errors
+                List<string> errors = new List<string>();
+                HashSet<string> seenDescriptions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int index = 0;
+                foreach (var c in createRubricDTO.Criteria)
+                {
+                    index++;
+                    if (c == null)
+                    {
+                        errors.Add($"Criterion at index {index} is null.");
+                        continue;
+                    }
+
+                    c.Description = c.Description?.Trim();
+
+                    // Validate description
+                    if (string.IsNullOrWhiteSpace(c.Description))
+                    {
+                        errors.Add($"Row {index}: Description is required.");
+                    }
+                    // Validate description length
+                    else if (c.Description.Length > 255)
+                    {
+                        errors.Add($"Row {index}: Description cannot exceed 255 characters.");
+                    }
+
+                    // Check for duplicate descriptions
+                    if (!seenDescriptions.Add(c.Description ?? string.Empty))
+                    {
+                        errors.Add($"Row {index}: Duplicate criterion description '{c.Description}'.");
+                    }
+
+                    // Validate max score
+                    if (c.MaxScore <= 0)
+                    {
+                        errors.Add($"Row {index}: MaxScore must be a positive number.");
+                    }
+                }
+
+                // If there are validation errors, throw an exception
+                if (errors.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Validation errors: {string.Join(" | ", errors)}");
+                }
+
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
@@ -326,7 +388,6 @@ namespace BusinessLogic.Services.Contests
                     .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
                     .FirstOrDefaultAsync();
 
-                // Check if round exists
                 if (round == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
@@ -355,12 +416,15 @@ namespace BusinessLogic.Services.Contests
                         "Rubric can only be created for manual problem types");
                 }
 
-                // Get the last order index
-                int lastOrderIndex = await testCaseRepo.Entities
+                // Determine starting order index
+                int maxIndex = await testCaseRepo.Entities
                     .Where(tc => tc.ProblemId == problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeleteAt.HasValue)
-                    .MaxAsync(tc => tc.OrderIndex) ?? 1;
+                                 && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                                 && !tc.DeleteAt.HasValue)
+                    .Select(tc => (int?)tc.OrderIndex)
+                    .MaxAsync() ?? 0;
+
+                int orderIndex = maxIndex + 1;
 
                 List<TestCase> createdCriteria = new List<TestCase>();
 
@@ -371,10 +435,10 @@ namespace BusinessLogic.Services.Contests
                     {
                         TestCaseId = Guid.NewGuid(),
                         ProblemId = problem.ProblemId,
-                        Description = criterion.Description,
+                        Description = criterion.Description?.Trim(),
                         Type = TestCaseTypeEnum.Manual.ToString(),
                         Weight = criterion.MaxScore,
-                        OrderIndex = lastOrderIndex,
+                        OrderIndex = orderIndex++,
                         Input = null,
                         ExpectedOutput = null,
                         TimeLimitMs = null,

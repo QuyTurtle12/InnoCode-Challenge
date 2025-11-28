@@ -423,8 +423,12 @@ namespace BusinessLogic.Services.Contests
 
                 // Map to DTOs
                 IReadOnlyCollection<GetTestCaseDTO> testCaseDTOs = paginatedTestCases.Items
-                    .Select(tc => _mapper.Map<GetTestCaseDTO>(tc))
-                    .ToList();
+                    .Select(tc =>
+                    {
+                        GetTestCaseDTO dto = _mapper.Map<GetTestCaseDTO>(tc);
+                        dto.RoundId = round.RoundId;
+                        return dto;
+                    }).ToList();
 
                 // Return paginated list with DTOs
                 return new PaginatedList<GetTestCaseDTO>(
@@ -778,6 +782,81 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
                     $"Cannot {operationName}. Round {round.Name} has already ended. End time: {round.End:yyyy-MM-dd HH:mm:ss} UTC");
+            }
+        }
+
+        public async Task<GetTestCaseDTO> GetTestCaseByIdAsync(Guid id)
+        {
+            try
+            {
+                // Validate input
+                if (id == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test case ID cannot be empty.");
+                }
+
+                // Get TestCase Repository
+                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+                // Load test case with its problem and round for validations
+                TestCase? testCase = await testCaseRepo.Entities
+                    .Where(tc => tc.TestCaseId == id && !tc.DeleteAt.HasValue)
+                    .Include(tc => tc.Problem)
+                        .ThenInclude(p => p.Round)
+                    .FirstOrDefaultAsync();
+
+                // Check if test case exists
+                if (testCase == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Test case not found.");
+                }
+
+                // Validate associated problem
+                Problem? problem = testCase.Problem;
+                if (problem == null || problem.DeletedAt.HasValue)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Related problem not found.");
+                }
+
+                // Validate associated round
+                Round? round = problem.Round;
+                if (round == null || round.DeletedAt.HasValue)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Related round not found.");
+                }
+
+                // Only allow test cases for AutoEvaluation problems of type TestCase
+                if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString()
+                    || testCase.Type != TestCaseTypeEnum.TestCase.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Test case not available for this problem/round type.");
+                }
+
+                // Map to DTO and return
+                GetTestCaseDTO dto = _mapper.Map<GetTestCaseDTO>(testCase);
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving test cases: {ex.Message}");
             }
         }
     }
