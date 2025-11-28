@@ -18,7 +18,7 @@ namespace BusinessLogic.Services
 
         private const string Pending = "pending";
         private const string Accepted = "accepted";
-        private const string Declined = "declined";
+        private const string Declined = "cancelled";
         private const string Revoked = "revoked";
         private const string Expired = "expired";
 
@@ -107,7 +107,7 @@ namespace BusinessLogic.Services
                 if (student == null)
                     throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", $"No student with ID={dto.StudentId}");
 
-                inviteeEmail = student.User.Email;
+                inviteeEmail = student.User.Email.Trim().ToLowerInvariant(); 
                 studentId = student.StudentId;
             }
             else
@@ -175,7 +175,7 @@ namespace BusinessLogic.Services
                 InviteId = Guid.NewGuid(),
                 TeamId = teamId,
                 StudentId = studentId,
-                InviteeEmail = studentId == null ? inviteeEmail : null,
+                InviteeEmail = inviteeEmail,
                 Token = Guid.NewGuid().ToString("N"),
                 ExpiresAt = newExp,
                 Status = Pending,
@@ -436,9 +436,13 @@ namespace BusinessLogic.Services
                 .Where(c => (c.Key == startKey || c.Key == endKey) && c.DeletedAt == null)
                 .ToListAsync();
 
-            var now = DateTime.UtcNow;
+            // Now to UTC +7
+            var now = DateTime.UtcNow.AddHours(7);
+
             var startOk = true;
             var endOk = true;
+
+            var nowStr = now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
 
             var startStr = cfg.FirstOrDefault(c => c.Key == startKey)?.Value;
             var endStr = cfg.FirstOrDefault(c => c.Key == endKey)?.Value;
