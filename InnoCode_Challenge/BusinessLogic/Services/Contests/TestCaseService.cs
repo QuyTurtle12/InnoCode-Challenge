@@ -39,10 +39,8 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Validate input data
                 if (testCaseDTO == null)
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
@@ -50,7 +48,54 @@ namespace BusinessLogic.Services.Contests
                         "Test case data cannot be null.");
                 }
 
-                // Validate round and get problem
+                // Trim inputs early
+                testCaseDTO.Description = testCaseDTO.Description?.Trim();
+                testCaseDTO.Input = testCaseDTO.Input?.Trim();
+                testCaseDTO.ExpectedOutput = testCaseDTO.ExpectedOutput?.Trim();
+
+                // Validate expected output
+                if (string.IsNullOrWhiteSpace(testCaseDTO.ExpectedOutput))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Expected output is required.");
+                }
+
+                // Validate weight
+                if (testCaseDTO.Weight <= 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Weight must be greater than 0.");
+                }
+
+                // Validate string lengths
+                if (testCaseDTO.Description?.Length > 255 ||
+                    testCaseDTO.Input?.Length > 255 ||
+                    testCaseDTO.ExpectedOutput?.Length > 255)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Description, Input and ExpectedOutput must be 255 characters or less.");
+                }
+
+                // Validate time and memory limits
+                if (testCaseDTO.TimeLimitMs.HasValue && testCaseDTO.TimeLimitMs.Value <= 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "TimeLimitMs must be a positive integer if provided.");
+                }
+
+                // Validate memory limit
+                if (testCaseDTO.MemoryKb.HasValue && testCaseDTO.MemoryKb.Value <= 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "MemoryKb must be a positive integer if provided.");
+                }
+
+                // Validate round and problem
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 Round? round = await roundRepo.Entities
                     .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
@@ -71,7 +116,6 @@ namespace BusinessLogic.Services.Contests
                         "Problem not found for this round.");
                 }
 
-                // Validate problem type
                 if (round.Problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
@@ -79,33 +123,39 @@ namespace BusinessLogic.Services.Contests
                         "Test cases can only be created for AutoEvaluation problems.");
                 }
 
-                // Get TestCase Repository
+                // Prepare TestCase entity
                 IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
 
-                // Map DTO to Entity
                 TestCase testCase = _mapper.Map<TestCase>(testCaseDTO);
                 testCase.TestCaseId = Guid.NewGuid();
                 testCase.ProblemId = round.Problem.ProblemId;
                 testCase.Type = TestCaseTypeEnum.TestCase.ToString();
 
-                // Insert new test case
+                // Ensure DeleteAt is null
+                testCase.DeleteAt = null;
+
+                // Assign Order Index
+                if (!testCase.OrderIndex.HasValue)
+                {
+                    int maxIndex = await testCaseRepo.Entities
+                        .Where(tc => tc.ProblemId == testCase.ProblemId && tc.Type == TestCaseTypeEnum.TestCase.ToString() && !tc.DeleteAt.HasValue)
+                        .Select(tc => (int?)tc.OrderIndex)
+                        .MaxAsync() ?? 0;
+
+                    testCase.OrderIndex = maxIndex + 1;
+                }
+
+                // Insert to database
                 await testCaseRepo.InsertAsync(testCase);
-
-                // Save changes
                 await _unitOfWork.SaveAsync();
-
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
             }
             catch (Exception ex)
             {
-                // Roll back transaction on error
                 _unitOfWork.RollBack();
 
                 if (ex is ErrorException)
-                {
                     throw;
-                }
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
