@@ -315,7 +315,14 @@ namespace BusinessLogic.Services.Appeals
                 if (isMyAppeals)
                 {
                     string currentUserId = GetCurrentUserIdOrThrow();
-                    query = query.Where(a => a.Owner.UserId.ToString() == currentUserId);
+
+                    IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                    string? currentMentorId = await mentorRepo.Entities
+                        .Where(m => m.UserId.ToString() == currentUserId && m.DeletedAt == null)
+                        .Select(m => m.MentorId.ToString().ToLower())
+                        .FirstOrDefaultAsync();
+
+                    query = query.Where(a => a.CreatedBy!.ToLower() == currentMentorId);
                 }
 
                 // Apply filters

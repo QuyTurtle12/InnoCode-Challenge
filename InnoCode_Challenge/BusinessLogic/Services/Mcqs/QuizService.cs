@@ -1,7 +1,4 @@
-﻿using System.Globalization;
-using System.Security.Claims;
-using System.Text;
-using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Mcqs;
 using CsvHelper;
@@ -12,11 +9,17 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
 using Repository.IRepositories;
+using System.Collections.Concurrent;
+using System.Collections.Immutable;
+using System.Globalization;
+using System.Security.Claims;
+using System.Text;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace BusinessLogic.Services.Mcqs
 {
@@ -25,16 +28,17 @@ namespace BusinessLogic.Services.Mcqs
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ILeaderboardEntryService _leaderboardService;
-        private readonly IMcqTestService _mcqTestService;
         private readonly IConfigService _configService;
 
-        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService, IMcqTestService mcqTestService, IConfigService configService)
+        private readonly IMemoryCache _memoryCache;
+
+        public QuizService(IUOW unitOfWork, IHttpContextAccessor httpContextAccessor, ILeaderboardEntryService leaderboardService, IConfigService configService, IMemoryCache memoryCache)
         {
             _unitOfWork = unitOfWork;
             _httpContextAccessor = httpContextAccessor;
             _leaderboardService = leaderboardService;
-            _mcqTestService = mcqTestService;
             _configService = configService;
+            _memoryCache = memoryCache;
         }
 
         public async Task<QuizResultDTO> ProcessQuizSubmissionAsync(Guid roundId, CreateQuizSubmissionDTO quizSubmissionDTO)
@@ -110,9 +114,9 @@ namespace BusinessLogic.Services.Mcqs
                 IGenericRepository<McqOption> optionRepo = _unitOfWork.GetRepository<McqOption>();
                 IGenericRepository<McqAttemptItem> attemptItemRepo = _unitOfWork.GetRepository<McqAttemptItem>();
 
-                int totalQuestions = quizSubmissionDTO.Answers.Count;
+                int totalQuestions = questionWeights.Count;
                 int correctAnswers = 0;
-                double totalPossibleWeight = 0;
+                double totalPossibleWeight = questionWeights.Values.Sum();
                 double earnedWeight = 0;
                 List<QuizAnswerResultDTO> answerResults = new List<QuizAnswerResultDTO>();
 
@@ -134,7 +138,6 @@ namespace BusinessLogic.Services.Mcqs
 
                     // Get the weight for this question
                     double questionWeight = questionWeights.TryGetValue(option.QuestionId, out double weight) ? weight : 1.0;
-                    totalPossibleWeight += questionWeight;
 
                     // Check if the answer is correct
                     bool isCorrect = option.IsCorrect;
@@ -227,6 +230,7 @@ namespace BusinessLogic.Services.Mcqs
                     SubmittedAt = DateTime.UtcNow,
                     TotalQuestions = totalQuestions,
                     CorrectAnswers = correctAnswers,
+                    TotalPossibleScore = totalPossibleWeight,
                     Score = score,
                     AnswerResults = answerResults
                 };
@@ -236,6 +240,10 @@ namespace BusinessLogic.Services.Mcqs
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
+
+                // Remove any stored current answers snapshot
+                string snapshotKey = ConfigKeys.RoundStudent(roundId, studentId);
+                _memoryCache.Remove(snapshotKey);
 
                 return result;
             }
@@ -295,6 +303,12 @@ namespace BusinessLogic.Services.Mcqs
                         $"MCQ Test with ID {attempt.TestId} not found");
                 }
 
+                // Compute total possible weight for this test
+                IGenericRepository<McqTestQuestion> testQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+                double totalPossibleWeight = await testQuestionRepo.Entities
+                    .Where(tq => tq.TestId == attempt.TestId)
+                    .SumAsync(tq => (double?)tq.Weight) ?? 0;
+
                 // Calculate results
                 int totalQuestions = attemptItems.Count;
                 int correctAnswers = attemptItems.Count(ai => ai.Correct);
@@ -319,6 +333,7 @@ namespace BusinessLogic.Services.Mcqs
                     SubmittedAt = attempt.End ?? attempt.Start,
                     TotalQuestions = totalQuestions,
                     CorrectAnswers = correctAnswers,
+                    TotalPossibleScore = totalPossibleWeight,
                     Score = attempt.Score ?? 0,
                     AnswerResults = answerResults,
                     TestName = test.Name ?? "Unknown Test"
@@ -396,6 +411,17 @@ namespace BusinessLogic.Services.Mcqs
                     .Include(ai => ai.SelectedOption)
                     .ToListAsync();
 
+                // Get distinct test IDs from the attempts
+                List<Guid> testIds = resultQuery.Items.Select(i => i.TestId).Distinct().ToList();
+
+                IGenericRepository<McqTestQuestion> testQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+
+                // Precompute total possible score by test ID
+                Dictionary<Guid, double> totalPossibleByTest = await testQuestionRepo.Entities
+                    .Where(tq => testIds.Contains(tq.TestId))
+                    .GroupBy(tq => tq.TestId)
+                    .ToDictionaryAsync(g => g.Key, g => g.Sum(tq => tq.Weight));
+
                 // Group attempt items by attempt ID for efficient lookup
                 Dictionary<Guid, List<McqAttemptItem>> attemptItemsGrouped = allAttemptItems
                     .GroupBy(ai => ai.AttemptId)
@@ -429,6 +455,7 @@ namespace BusinessLogic.Services.Mcqs
                         StartTime = item.Start,
                         EndTime = item.End,
                         Score = item.Score ?? 0,
+                        TotalPossibleScore = totalPossibleByTest.ContainsKey(item.TestId) ? totalPossibleByTest[item.TestId] : 0,
                         AnswerResults = answerResults
                     };
                 }).ToList();
@@ -557,8 +584,7 @@ namespace BusinessLogic.Services.Mcqs
                                 IsCorrect = o.IsCorrect
                             })
                             .ToList() ?? new List<OptionDTO>()
-                    })
-                    .ToList();
+                    }).ToList();
 
                 // Get time limit from config
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -1055,5 +1081,212 @@ namespace BusinessLogic.Services.Mcqs
 
             return false;
         }
+
+        public async Task<McqStartDTO> GetMcqStartDetailsAsync(Guid roundId)
+        {
+            try
+            {
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get studentId
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = await studentRepo.Entities
+                    .Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefaultAsync();
+
+                if (studentId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Student for user {userId} not found");
+                }
+
+                // Create key
+                string key = ConfigKeys.RoundStudent(roundId, studentId);
+
+                // Get time limit from config
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                Config? timeLimitConfig = await configRepo.Entities
+                    .Where(c => c.Key == ConfigKeys.RoundTimeLimitSeconds(roundId) && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                int timeLimitInSeconds = timeLimitConfig != null && int.TryParse(timeLimitConfig.Value, out int limit)
+                    ? limit
+                    : 0;
+
+                // Initialize empty answers in IMemoryCache
+                _memoryCache.Set(key, ImmutableArray<CurrentAnswerDTO>.Empty, _cacheOptions);
+
+                McqStartDTO dto = new McqStartDTO
+                {
+                    key = key,
+                    startTime = DateTime.UtcNow,
+                    TimeLimitInSeconds = timeLimitInSeconds
+                };
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error getting MCQ start details: {ex.Message}");
+            }
+        }
+
+        public Task SaveAnswerAsync(string key, List<CurrentAnswerDTO> saveAnswerDTO)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Key is required");
+                }
+
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get studentId
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = studentRepo.Entities
+                    .Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefault();
+
+                if (studentId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Student for user {userId} not found");
+                }
+
+                // Ensure the key belongs to the logged-in student
+                string expectedSuffix = $":student:{studentId}";
+                if (!key.EndsWith(expectedSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Key does not belong to the current student");
+                }
+
+                // Create immutable snapshot and store in IMemoryCache
+                var snapshot = ImmutableArray.CreateRange(saveAnswerDTO ?? Enumerable.Empty<CurrentAnswerDTO>());
+                _memoryCache.Set(key, snapshot, _cacheOptions);
+
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error saving current answers: {ex.Message}");
+            }
+        }
+
+        public async Task<SaveAnswerDTO> GetCurrentAnswerAsync(string key, Guid roundId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Key is required");
+                }
+
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get studentId
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = await studentRepo.Entities
+                    .Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefaultAsync();
+
+                if (studentId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Student for user {userId} not found");
+                }
+
+                // Ensure the key belongs to the logged-in student
+                string expectedSuffix = $":student:{studentId}";
+                if (!key.EndsWith(expectedSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Key does not belong to the current student");
+                }
+
+                // Get time limit from config
+                int timeLimitInSeconds = 0;
+                if (roundId != Guid.Empty)
+                {
+                    IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                    Config? timeLimitConfig = await configRepo.Entities
+                        .Where(c => c.Key == ConfigKeys.RoundTimeLimitSeconds(roundId) && c.DeletedAt == null)
+                        .FirstOrDefaultAsync();
+
+                    timeLimitInSeconds = timeLimitConfig != null && int.TryParse(timeLimitConfig.Value, out int limit)
+                        ? limit
+                        : 0;
+                }
+
+                // Retrieve saved answers from IMemoryCache
+                List<CurrentAnswerDTO> answers;
+                if (_memoryCache.TryGetValue(key, out ImmutableArray<CurrentAnswerDTO> snapshot))
+                {
+                    answers = snapshot.ToList();
+                }
+                else
+                {
+                    answers = new List<CurrentAnswerDTO>();
+                }
+
+                SaveAnswerDTO result = new SaveAnswerDTO
+                {
+                    Key = key,
+                    TimeLimitSeconds = timeLimitInSeconds,
+                    Answers = answers
+                };
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving current answers: {ex.Message}");
+            }
+        }
+
+        private static readonly MemoryCacheEntryOptions _cacheOptions = new()
+        {
+            SlidingExpiration = TimeSpan.FromMinutes(30)
+        };
     }
 }

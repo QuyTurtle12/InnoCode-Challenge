@@ -114,26 +114,26 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
             Guid? studentId = null
             )
         {
-                PaginatedList<QuizAttemptSummaryDTO> result = await _quizService.GetStudentQuizAttemptsAsync(
-                    pageNumber, pageSize, studentId, null, roundId, false);
+            PaginatedList<QuizAttemptSummaryDTO> result = await _quizService.GetStudentQuizAttemptsAsync(
+                pageNumber, pageSize, studentId, null, roundId, false);
 
-                var paging = new
-                {
-                    result.PageNumber,
-                    result.PageSize,
-                    result.TotalPages,
-                    result.TotalCount,
-                    result.HasPreviousPage,
-                    result.HasNextPage
-                };
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
 
-                return Ok(new BaseResponseModel<object>(
-                    statusCode: StatusCodes.Status200OK,
-                    code: ResponseCodeConstants.SUCCESS,
-                    data: result.Items,
-                    additionalData: paging,
-                    message: "Quiz attempts retrieved successfully."
-                ));
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result.Items,
+                additionalData: paging,
+                message: "Quiz attempts retrieved successfully."
+            ));
         }
 
         /// <summary>
@@ -244,6 +244,64 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                 code: ResponseCodeConstants.SUCCESS,
                 data: url,
                 message: "Template downloaded successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get MCQ Test start details by round ID
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpGet("rounds/{roundId}/mcq-test/start-detail")]
+        public async Task<IActionResult> GetMcqStartDetails(Guid roundId)
+        {
+            McqStartDTO result = await _quizService.GetMcqStartDetailsAsync(roundId);
+            return Ok(new BaseResponseModel<McqStartDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "MCQ start details retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Save current answers for MCQ Test
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="key"></param>
+        /// <param name="saveAnswerDTO"></param>
+        /// <returns></returns>
+        [HttpPost("rounds/{roundId}/mcq-test/save-answer")]
+        public async Task<IActionResult> SaveAnswers(
+            Guid roundId,
+            string key,
+            List<CurrentAnswerDTO> saveAnswerDTO)
+        {
+            await _quizService.SaveAnswerAsync(key, saveAnswerDTO);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Answers saved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get current answers for MCQ Test
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        [HttpGet("rounds/{roundId}/mcq-test/current-answer")]
+        public async Task<IActionResult> GetCurrentAnswers(
+            Guid roundId,
+            string key)
+        {
+            SaveAnswerDTO result = await _quizService.GetCurrentAnswerAsync(key, roundId);
+            return Ok(new BaseResponseModel<SaveAnswerDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Current answers retrieved successfully."
             ));
         }
     }

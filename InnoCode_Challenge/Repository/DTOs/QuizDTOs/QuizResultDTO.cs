@@ -10,6 +10,7 @@
         public DateTime SubmittedAt { get; set; }
         public int TotalQuestions { get; set; }
         public int CorrectAnswers { get; set; }
+        public double TotalPossibleScore { get; set; }
         public double Score { get; set; }
         public List<QuizAnswerResultDTO> AnswerResults { get; set; } = new List<QuizAnswerResultDTO>();
     }
@@ -32,6 +33,7 @@
         public string StudentName { get; set; } = string.Empty;
         public DateTime StartTime { get; set; }
         public DateTime? EndTime { get; set; }
+        public double TotalPossibleScore { get; set; }
         public double Score { get; set; }
         public List<QuizAnswerResultDTO> AnswerResults { get; set; } = new List<QuizAnswerResultDTO>();
     }

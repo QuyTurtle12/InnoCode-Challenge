@@ -52,6 +52,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddSignalR();
             services.AddServices();
             services.AddBackgroundServices();
+            services.AddMemoryCache();
         }
         /// <summary>
         /// 

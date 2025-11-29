@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.BankDTOs;
 using Repository.DTOs.QuizDTOs;
-using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Mcqs
@@ -14,5 +13,8 @@ namespace BusinessLogic.IServices.Mcqs
         Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(int pageNumber, int pageSize, Guid? bankId, string? nameSearch);
         Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId);
         Task<GetBankWithQuestionsDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid TestId);
+        Task<McqStartDTO> GetMcqStartDetailsAsync(Guid roundId);
+        Task SaveAnswerAsync(string key, List<CurrentAnswerDTO> saveAnswerDTO);
+        Task<SaveAnswerDTO> GetCurrentAnswerAsync(string key, Guid roundId);
     }
 }
