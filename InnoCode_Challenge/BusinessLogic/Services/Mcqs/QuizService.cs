@@ -560,12 +560,25 @@ namespace BusinessLogic.Services.Mcqs
                     })
                     .ToList();
 
+                // Get time limit from config
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                Config? timeLimitConfig = await configRepo.Entities
+                    .Where(c => c.Key == ConfigKeys.RoundTimeLimitSeconds(roundId) && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                // Parse time limit value
+                int timeLimitInSeconds = timeLimitConfig != null && int.TryParse(timeLimitConfig.Value, out int limit)
+                    ? limit
+                    : 0;
+
                 // Create the quiz DTO
                 GetQuizDTO quizDTO = new GetQuizDTO
                 {
                     RoundId = round.RoundId,
                     RoundName = round.Name,
                     RoundStatus = round.Status ?? RoundStatusEnum.Closed.ToString(),
+                    TimeLimitInSeconds = timeLimitInSeconds,
                     McqTest = new McqTestDTO
                     {
                         TestId = round.McqTest.TestId,

@@ -7,6 +7,7 @@ namespace Repository.DTOs.QuizDTOs
         public Guid RoundId { get; set; }
         public string RoundName { get; set; } = string.Empty;
         public string RoundStatus { get; set; } = string.Empty;
+        public int TimeLimitInSeconds { get; set; }
         public McqTestDTO? McqTest { get; set; } = new();
     }
 
