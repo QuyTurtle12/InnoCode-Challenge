@@ -42,6 +42,7 @@ namespace InnoCode_Challenge_API.Controllers
                 "Invites retrieved."));
         }
 
+        // POST: api/teams/{teamId}/invites
         [HttpPost]
         [Authorize] // mentor owner, or staff/admin
         public async Task<IActionResult> Create(Guid teamId, [FromBody] CreateTeamInviteDTO dto)
