@@ -437,7 +437,8 @@ namespace BusinessLogic.Services
                 .ToListAsync();
 
             // Now to UTC +7
-            var now = DateTime.UtcNow.AddHours(7);
+            //var now = DateTime.UtcNow.AddHours(7);
+            var now = DateTime.UtcNow;
 
             var startOk = true;
             var endOk = true;
@@ -447,8 +448,8 @@ namespace BusinessLogic.Services
             var startStr = cfg.FirstOrDefault(c => c.Key == startKey)?.Value;
             var endStr = cfg.FirstOrDefault(c => c.Key == endKey)?.Value;
 
-            if (DateTime.TryParse(startStr, out var start) && now < start) startOk = false;
-            if (DateTime.TryParse(endStr, out var end) && now > end) endOk = false;
+            if (TryParseUtc(startStr, out var start) && now < start) startOk = false;
+            if (TryParseUtc(endStr, out var end) && now > end) endOk = false;
 
             if (!startOk || !endOk)
                 throw new ErrorException(StatusCodes.Status409Conflict, "REG_CLOSED", "Registration window is closed.");
@@ -472,6 +473,19 @@ namespace BusinessLogic.Services
 
             return 4;
         }
+
+        private static bool TryParseUtc(string? str, out DateTime result)
+        {
+            result = DateTime.MinValue;
+            if (string.IsNullOrWhiteSpace(str)) return false;
+            if (DateTime.TryParse(str, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var dt))
+            {
+                result = dt;
+                return true;
+            }
+            return false;
+        }
+
 
         private static async Task<int> GetInviteTtlDaysAsync(IGenericRepository<Config> configRepo, Guid contestId)
         {
