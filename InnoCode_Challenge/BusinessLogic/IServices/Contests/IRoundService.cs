@@ -12,11 +12,8 @@ namespace BusinessLogic.IServices.Contests
         Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO);
         Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO);
         Task DeleteRoundAsync(Guid id);
-
         Task DistributeSubmissionsToJudgesAsync(Guid roundId);
-        Task<PaginatedList<SubmissionDistributionDTO>> GetManualTypeSubmissionsByRoundId(int pageNumber, int pageSize, Guid roundId, SubmissionStatusEnum? statusFilter = null);
         Task<int?> GetRoundTimeLimitSecondsAsync(Guid roundId);
-
         Task MarkFinishFinishRoundAsync(Guid roundId);
     }
 }

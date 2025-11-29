@@ -1661,5 +1661,153 @@ namespace BusinessLogic.Services.Submissions
                     $"Error retrieving auto test results: {ex.Message}");
             }
         }
+
+        public async Task<PaginatedList<SubmissionDistributionDTO>> GetSubmissionsByJudgeByAsync(
+            int pageNumber,
+            int pageSize,
+            Guid? contestIdSearch,
+            string? contestName,
+            Guid? roundIdSearch,
+            string? roundName,
+            Guid? teamIdSearch,
+            string? teamName,
+            Guid? studentIdSearch,
+            string? studentName,
+            SubmissionStatusEnum? statusFilter = null)
+        {
+            try
+            {
+                // Validate pagination
+                if (pageNumber < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Page number and page size must be greater than or equal to 1.");
+                }
+
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Get judge ID
+                string judgeId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "User ID not found");
+
+                // Build base query with necessary includes
+                IQueryable<Submission> query = submissionRepo.Entities
+                    .Where(s => s.JudgedBy != null &&
+                                s.JudgedBy.ToLower() == judgeId &&
+                                s.DeletedAt == null)
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                            .ThenInclude(r => r.Contest)
+                    .Include(s => s.Team)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User);
+
+                // Apply filters
+                if (contestIdSearch.HasValue)
+                {
+                    query = query.Where(s => s.Problem != null
+                                             && s.Problem.Round != null
+                                             && s.Problem.Round.ContestId == contestIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(contestName))
+                {
+                    var k = contestName.Trim();
+                    query = query.Where(s => s.Problem != null
+                                             && s.Problem.Round != null
+                                             && s.Problem.Round.Contest != null
+                                             && s.Problem.Round.Contest.Name.Contains(k));
+                }
+
+                if (roundIdSearch.HasValue)
+                {
+                    query = query.Where(s => s.Problem != null && s.Problem.RoundId == roundIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(roundName))
+                {
+                    var k = roundName.Trim();
+                    query = query.Where(s => s.Problem != null
+                                             && s.Problem.Round != null
+                                             && s.Problem.Round.Name.Contains(k));
+                }
+
+                if (teamIdSearch.HasValue)
+                {
+                    query = query.Where(s => s.TeamId == teamIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(teamName))
+                {
+                    var k = teamName.Trim();
+                    query = query.Where(s => s.Team != null && s.Team.Name.Contains(k));
+                }
+
+                if (studentIdSearch.HasValue)
+                {
+                    query = query.Where(s => s.SubmittedByStudentId == studentIdSearch.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(studentName))
+                {
+                    var k = studentName.Trim();
+                    query = query.Where(s => s.SubmittedByStudent != null && s.SubmittedByStudent.User != null && s.SubmittedByStudent.User.Fullname.Contains(k));
+                }
+
+                if (statusFilter.HasValue)
+                {
+                    string statusString = statusFilter.Value.ToString();
+                    query = query.Where(s => s.Status == statusString);
+                }
+
+                // Order newest first
+                query = query.OrderByDescending(s => s.CreatedAt);
+
+                // Get paginated submissions
+                PaginatedList<Submission> paged = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+                // Get judge email
+                string judgeEmail = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Email) ?? string.Empty;
+
+                // Convert judgeId to Guid
+                Guid judgeGuid = Guid.Parse(judgeId);
+
+
+                // Map to DTOs
+                List<SubmissionDistributionDTO> items = paged.Items.Select(s =>
+                {
+                    var dto = new SubmissionDistributionDTO
+                    {
+                        SubmissionId = s.SubmissionId,
+                        ContestId = s.Problem?.Round?.ContestId ?? Guid.Empty,
+                        ContestName = s.Problem?.Round?.Contest?.Name ?? string.Empty,
+                        RoundId = s.Problem?.RoundId ?? Guid.Empty,
+                        RoundName = s.Problem?.Round?.Name ?? string.Empty,
+                        TeamId = s.TeamId,
+                        TeamName = s.Team?.Name ?? string.Empty,
+                        SubmittedByStudentId = s.SubmittedByStudentId,
+                        SubmitedByStudentName = s.SubmittedByStudent?.User?.Fullname ?? string.Empty,
+                        JudgeUserId = judgeGuid,
+                        JudgeEmail = judgeEmail,
+                        Status = s.Status ?? string.Empty
+                    };
+
+                    return dto;
+                }).ToList();
+
+                return new PaginatedList<SubmissionDistributionDTO>(items, paged.TotalCount, paged.PageNumber, paged.PageSize);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException) throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving submissions distribution: {ex.Message}");
+            }
+        }
     }
 }

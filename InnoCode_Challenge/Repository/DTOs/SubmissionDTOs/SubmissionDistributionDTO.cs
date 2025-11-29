@@ -3,6 +3,10 @@
     public class SubmissionDistributionDTO
     {
         public Guid SubmissionId { get; set; }
+        public Guid ContestId { get; set; }
+        public string ContestName { get; set; } = string.Empty;
+        public Guid RoundId { get; set; }
+        public string RoundName { get; set; } = string.Empty;
         public Guid TeamId { get; set; }
         public string TeamName { get; set; } = string.Empty;
         public Guid SubmittedByStudentId { get; set; }

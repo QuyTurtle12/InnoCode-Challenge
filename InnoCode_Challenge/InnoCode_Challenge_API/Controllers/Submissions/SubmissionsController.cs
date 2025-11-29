@@ -7,6 +7,7 @@ using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Submissions
@@ -138,68 +139,53 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
             ));
         }
 
-        /// <summary>
-        /// Get my manual test submission result (Student only)
-        /// </summary>
-        /// <param name="roundId">Round ID</param>
-        /// <returns>Manual test evaluation result for the logged-in student</returns>
-        [HttpGet("rounds/{roundId}/manual-test/my-result")]
-        [Authorize(Policy = "RequireStudentRole")]
-        public async Task<IActionResult> GetMyManualTestResult(Guid roundId)
-        {
-            RubricEvaluationResultDTO result = await _submissionService.GetMyManualTestResultAsync(roundId);
-
-            return Ok(new BaseResponseModel<RubricEvaluationResultDTO>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: result,
-                message: "Manual test result retrieved successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Get all manual test results for a round with pagination and optional filters (Organizer only)
-        /// </summary>
-        /// <param name="roundId"></param>
-        /// <param name="pageNumber"></param>
-        /// <param name="pageSize"></param>
-        /// <param name="studentIdSearch"></param>
-        /// <param name="teamIdSearch"></param>
-        /// <param name="studentNameSearch"></param>
-        /// <param name="teamNameSearch"></param>
-        /// <returns></returns>
-        [HttpGet("rounds/{roundId}/manual-test/results")]
-        //[Authorize(Policy = "RequireOrganizerRole")]
-        public async Task<IActionResult> GetAllManualTestResults(
-            Guid roundId,
+        [HttpGet()]
+        [Authorize(Policy = "RequireJudgeRole")]
+        public async Task<IActionResult> GetSubmissionsTest(
             int pageNumber = 1,
             int pageSize = 10,
-            Guid? studentIdSearch = null,
+            Guid? contestIdSearch = null,
+            string? contestName = null,
+            Guid? roundIdSearch = null,
+            string? roundName = null,
             Guid? teamIdSearch = null,
-            string? studentNameSearch = null,
-            string? teamNameSearch = null)
+            string? teamName = null,
+            Guid? studentIdSearch = null,
+            string? studentName = null,
+            SubmissionStatusEnum? statusFilter = null
+            )
         {
-            PaginatedList<RubricEvaluationResultDTO> results = await _submissionService
-                .GetAllManualTestResultsByRoundAsync(roundId, pageNumber, pageSize, studentIdSearch, teamIdSearch, studentNameSearch, teamNameSearch);
+            var result = await _submissionService.GetSubmissionsByJudgeByAsync(
+                pageNumber,
+                pageSize,
+                contestIdSearch,
+                contestName,
+                roundIdSearch,
+                roundName,
+                teamIdSearch,
+                teamName,
+                studentIdSearch,
+                studentName,
+                statusFilter
+                );
 
-            var paging = new
+            var paging = new 
             {
-                results.PageNumber,
-                results.PageSize,
-                results.TotalPages,
-                results.TotalCount,
-                results.HasPreviousPage,
-                results.HasNextPage
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
             };
 
             return Ok(new BaseResponseModel<object>(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                data: results.Items,
-                additionalData: paging,
-                message: "Manual test results retrieved successfully."
-            ));
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: result.Items,
+                        additionalData: paging,
+                        message: "Submission retrieved successfully."
+                    ));
         }
-
     }
 }

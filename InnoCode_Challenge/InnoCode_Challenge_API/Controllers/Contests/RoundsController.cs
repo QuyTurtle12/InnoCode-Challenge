@@ -122,43 +122,10 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
-        /// Get manual type submissions by round id with pagination and optional status filter
+        /// Get round time limit in seconds
         /// </summary>
-        /// <param name="roundId"></param>
-        /// <param name="pageNumber"></param>
-        /// <param name="pageSize"></param>
-        /// <param name="statusFilter">Pending, Finished, Cancelled</param>
+        /// <param name="id"></param>
         /// <returns></returns>
-        [HttpGet("{roundId}/submissions/manual-type")]
-        public async Task<IActionResult> GetManualTypeSubmissionsByRoundId(
-            Guid roundId,
-            int pageNumber = 1,
-            int pageSize = 10,
-            SubmissionStatusEnum? statusFilter = SubmissionStatusEnum.Pending
-            )
-        {
-            var submissions = await _roundService.GetManualTypeSubmissionsByRoundId(pageNumber, pageSize, roundId, statusFilter);
-
-            var paging = new
-            {
-                submissions.PageNumber,
-                submissions.PageSize,
-                submissions.TotalPages,
-                submissions.TotalCount,
-                submissions.HasPreviousPage,
-                submissions.HasNextPage
-            };
-
-            return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: submissions.Items,
-                        additionalData: paging,
-                        message: "Manual type submissions retrieved successfully."
-                    ));
-        }
-
-
         [HttpGet("{id}/time-limit")]
         public async Task<IActionResult> GetRoundTimeLimit(Guid id)
         {
