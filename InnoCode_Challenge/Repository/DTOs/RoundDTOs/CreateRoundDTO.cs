@@ -14,8 +14,6 @@ namespace Repository.DTOs.RoundDTOs
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public ProblemTypeEnum ProblemType { get; set; }
 
-        public IFormFile? TemplateUrl { get; set; }
-
         public CreateMcqTestDTO? McqTestConfig { get; set; }
 
         public CreateProblemDTO? ProblemConfig { get; set; }

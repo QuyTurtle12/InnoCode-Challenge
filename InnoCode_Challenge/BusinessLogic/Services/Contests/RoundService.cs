@@ -1,7 +1,7 @@
-﻿using System.Security.Claims;
-using AutoMapper;
+﻿using AutoMapper;
 using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -10,8 +10,8 @@ using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
-using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
+using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -29,8 +29,18 @@ namespace BusinessLogic.Services.Contests
         private readonly IContestJudgeService _contestJudgeService;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IConfigService _configService;
+        private readonly ICloudinaryService _cloudinaryService;
+        private readonly IProblemService _problem_service;
 
-        public RoundService(IMapper mapper, IUOW unitOfWork, IMcqTestService mcqTestService, IProblemService problemService, IContestJudgeService contestJudgeService, IHttpContextAccessor httpContextAccessor, IConfigService configService)
+        public RoundService(
+            IMapper mapper,
+            IUOW unitOfWork,
+            IMcqTestService mcqTestService,
+            IProblemService problemService,
+            IContestJudgeService contestJudgeService,
+            IHttpContextAccessor httpContextAccessor,
+            IConfigService configService,
+            ICloudinaryService cloudinaryService)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
@@ -39,6 +49,7 @@ namespace BusinessLogic.Services.Contests
             _contestJudgeService = contestJudgeService;
             _httpContextAccessor = httpContextAccessor;
             _configService = configService;
+            _cloudinaryService = cloudinaryService;
         }
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
@@ -92,7 +103,7 @@ namespace BusinessLogic.Services.Contests
                 // Insert new round
                 await roundRepo.InsertAsync(round);
 
-                // Save changes
+                // Save changes so that RoundId exists for related Problem creation
                 await _unitOfWork.SaveAsync();
 
                 // Store time limit in config
@@ -124,6 +135,27 @@ namespace BusinessLogic.Services.Contests
                             Language = roundDTO.ProblemConfig?.Language ?? "python3",
                             PenaltyRate = roundDTO.ProblemConfig?.PenaltyRate ?? 0
                         });
+                            
+                        // If template file provided, upload it
+                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
+                        {
+                            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+
+                            // upload new template
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+
+                            // load the created problem and set TemplateUrl
+                            Problem? createdProblem = await problemRepo.Entities
+                                .Where(p => p.RoundId == round.RoundId && p.DeletedAt == null)
+                                .FirstOrDefaultAsync();
+
+                            if (createdProblem != null)
+                            {
+                                createdProblem.TemplateUrl = uploadedUrl;
+                                await problemRepo.UpdateAsync(createdProblem);
+                            }
+                        }
+
                         break;
 
                     case ProblemTypeEnum.Manual:
@@ -134,13 +166,30 @@ namespace BusinessLogic.Services.Contests
                             Language = roundDTO.ProblemConfig?.Language ?? "python3",
                             PenaltyRate = roundDTO.ProblemConfig?.PenaltyRate ?? 0
                         });
+
+                        // Optional template for manual problems
+                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
+                        {
+                            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+
+                            Problem? createdProblem = await problemRepo.Entities
+                                .Where(p => p.RoundId == round.RoundId && p.DeletedAt == null)
+                                .FirstOrDefaultAsync();
+
+                            if (createdProblem != null)
+                            {
+                                createdProblem.TemplateUrl = uploadedUrl;
+                                await problemRepo.UpdateAsync(createdProblem);
+                            }
+                        }
                         break;
 
                     default:
                         throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
                 }
 
-                // Save all changes
+                // Save all changes (including TemplateUrl updates)
                 await _unitOfWork.SaveAsync();
 
                 // Commit transaction
@@ -190,13 +239,13 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
                 }
 
-                // Delete related Problem and its child entities using ProblemService
+                // Delete related Problem and its child entities
                 if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
                 {
-                    await _problemService.DeleteProblemAsync(round.Problem.ProblemId);
+                    await _problem_service.DeleteProblemAsync(round.Problem.ProblemId);
                 }
 
-                // Delete related McqTest and its child entities using McqTestService
+                // Delete related McqTest and its child entities
                 if (round.McqTest != null && !round.McqTest.DeletedAt.HasValue)
                 {
                     await _mcqTestService.DeleteMcqTestAsync(round.McqTest.TestId);
@@ -512,17 +561,78 @@ namespace BusinessLogic.Services.Contests
                 switch (roundDTO.ProblemType)
                 {
                     case ProblemTypeEnum.McqTest:
+                        // Update MCQ test config
                         await _mcqTestService.UpdateMcqTestAsync(round.McqTest!.TestId, roundDTO.McqTestConfig!);
-                        break;
 
+                        break;
                     case ProblemTypeEnum.AutoEvaluation:
-                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
-                        break;
+                        // Update Auto Evaluation Test config
+                        await _problem_service.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
 
+                        // Handle template upload and old-file deletion
+                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
+                        {
+                            string? oldUrl = round.Problem.TemplateUrl;
+
+                            // upload new template
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+
+                            // set new url on problem
+                            round.Problem.TemplateUrl = uploadedUrl;
+                            await _unitOfWork.GetRepository<Problem>().UpdateAsync(round.Problem);
+
+                            // attempt to delete old file if exists and is different
+                            if (!string.IsNullOrWhiteSpace(oldUrl) && !string.Equals(oldUrl, uploadedUrl, StringComparison.OrdinalIgnoreCase))
+                            {
+                                try
+                                {
+                                    string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(oldUrl);
+                                    if (!string.IsNullOrWhiteSpace(publicId))
+                                    {
+                                        await _cloudinaryService.DeleteFileAsync(publicId);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    // log for debugging
+                                    Console.WriteLine($"Failed to delete old template file: {ex.Message}");
+                                }
+                            }
+                        }
+
+                        break;
                     case ProblemTypeEnum.Manual:
-                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
-                        break;
+                        // Update Manual Test config
+                        await _problem_service.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
 
+                        // optional template upload
+                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
+                        {
+                            string? oldUrl = round.Problem.TemplateUrl;
+
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+
+                            round.Problem.TemplateUrl = uploadedUrl;
+                            await _unitOfWork.GetRepository<Problem>().UpdateAsync(round.Problem);
+
+                            if (!string.IsNullOrWhiteSpace(oldUrl) && !string.Equals(oldUrl, uploadedUrl, StringComparison.OrdinalIgnoreCase))
+                            {
+                                try
+                                {
+                                    string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(oldUrl);
+                                    if (!string.IsNullOrWhiteSpace(publicId))
+                                    {
+                                        await _cloudinaryService.DeleteFileAsync(publicId);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to delete old template file: {ex.Message}");
+                                }
+                            }
+                        }
+
+                        break;
                     default:
                         throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
                 }

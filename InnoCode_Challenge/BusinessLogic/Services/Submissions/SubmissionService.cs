@@ -477,7 +477,6 @@ namespace BusinessLogic.Services.Submissions
         {
             try
             {
-
                 // Begin transaction
                 _unitOfWork.BeginTransaction();
 
@@ -559,13 +558,49 @@ namespace BusinessLogic.Services.Submissions
                                 !s.DeletedAt.HasValue)
                     .ToListAsync();
 
-                // Mark previous submissions as deleted
-                if (previousSubmissions != null)
+                // If there are previous submissions, attempt to delete their uploaded files and mark artifacts deleted
+                if (previousSubmissions != null && previousSubmissions.Any())
                 {
+                    IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+
+                    List<Guid> prevSubmissionIds = previousSubmissions.Select(s => s.SubmissionId).ToList();
+
+                    List<SubmissionArtifact> previousArtifacts = await artifactRepo.Entities
+                        .Where(a => prevSubmissionIds.Contains(a.SubmissionId) && a.Type == "file" && a.DeletedAt == null)
+                        .ToListAsync();
+
+                    foreach (SubmissionArtifact art in previousArtifacts)
+                    {
+                        try
+                        {
+                            string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(art.Url);
+                            if (!string.IsNullOrWhiteSpace(publicId))
+                            {
+                                // Attempt to delete remote file; failures are logged but do not abort operation
+                                try
+                                {
+                                    await _cloudinaryService.DeleteFileAsync(publicId);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"Failed to delete old submission file from Cloudinary (publicId={publicId}): {ex.Message}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Failed to extract/delete previous artifact: {ex.Message}");
+                        }
+
+                        // Mark artifact as deleted
+                        art.DeletedAt = DateTime.UtcNow;
+                        await artifactRepo.UpdateAsync(art);
+                    }
+
+                    // Mark previous submissions as deleted
                     foreach (Submission item in previousSubmissions)
                     {
                         item.DeletedAt = DateTime.UtcNow;
-
                         await submissionRepo.UpdateAsync(item);
                     }
 
@@ -596,8 +631,8 @@ namespace BusinessLogic.Services.Submissions
 
                 await submissionRepo.InsertAsync(submission);
 
-                // Save submission artifact (the file URL)
-                IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+                // Save submission artifact
+                IGenericRepository<SubmissionArtifact> newArtifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
                 SubmissionArtifact artifact = new SubmissionArtifact
                 {
                     ArtifactId = Guid.NewGuid(),
@@ -607,7 +642,7 @@ namespace BusinessLogic.Services.Submissions
                     CreatedAt = DateTime.UtcNow
                 };
 
-                await artifactRepo.InsertAsync(artifact);
+                await newArtifactRepo.InsertAsync(artifact);
 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
@@ -867,7 +902,7 @@ namespace BusinessLogic.Services.Submissions
                 IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
                 IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
 
-                // Get submission and verify it exists - Include Problem.Round for contest ID access
+                // Get submission and verify it exists
                 Submission? submission = await submissionRepo.Entities
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
@@ -892,7 +927,8 @@ namespace BusinessLogic.Services.Submissions
                 // Get all rubric criteria for validation
                 List<TestCase> rubricCriteria = await rubricRepo.Entities
                     .Where(tc => tc.ProblemId == submission.ProblemId
-                        && tc.Type == TestCaseTypeEnum.Manual.ToString())
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeleteAt.HasValue)
                     .ToListAsync();
 
                 if (!rubricCriteria.Any())

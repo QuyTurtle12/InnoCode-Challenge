@@ -83,7 +83,8 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// Create a new round
         /// </summary>
         [HttpPost("{contestId}")]
-        public async Task<IActionResult> CreateRound(Guid contestId, CreateRoundDTO roundDTO)
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> CreateRound(Guid contestId, [FromForm] CreateRoundDTO roundDTO)
         {
             await _roundService.CreateRoundAsync(contestId, roundDTO);
             return Ok(new BaseResponseModel(
@@ -97,7 +98,8 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// Update an existing round
         /// </summary>
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateRound(Guid id, UpdateRoundDTO roundDTO)
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UpdateRound(Guid id, [FromForm] UpdateRoundDTO roundDTO)
         {
             await _roundService.UpdateRoundAsync(id, roundDTO);
             return Ok(new BaseResponseModel(
