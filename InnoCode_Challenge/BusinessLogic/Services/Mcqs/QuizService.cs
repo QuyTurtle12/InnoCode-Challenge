@@ -185,17 +185,19 @@ namespace BusinessLogic.Services.Mcqs
                 await attemptRepo.UpdateAsync(attempt);
                 await _unitOfWork.SaveAsync();
 
-                // Get the team ID from the student
-                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
-                Guid? teamId = await teamMemberRepo.Entities
-                    .Where(tm => tm.StudentId == studentId)
-                    .Select(tm => tm.TeamId)
-                    .FirstOrDefaultAsync();
-
                 // Get contest ID from the round
                 Guid contestId = await _unitOfWork.GetRepository<Round>().Entities
                     .Where(r => r.RoundId == mcqTest.RoundId)
                     .Select(r => r.ContestId)
+                    .FirstOrDefaultAsync();
+
+
+                // Get the team ID from the student
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                Guid? teamId = await teamMemberRepo.Entities
+                    .Include(tm => tm.Team)
+                    .Where(tm => tm.StudentId == studentId && tm.Team.ContestId == contestId)
+                    .Select(tm => tm.TeamId)
                     .FirstOrDefaultAsync();
 
                 // Update team score in leaderboard if team exists
