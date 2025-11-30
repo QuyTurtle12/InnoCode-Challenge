@@ -25,49 +25,6 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         }
 
         /// <summary>
-        /// Gets a paginated list of submissions with optional filters
-        /// </summary>
-        /// <param name="pageNumber"></param>
-        /// <param name="pageSize"></param>
-        /// <param name="idSearch"></param>
-        /// <param name="roundId"></param>
-        /// <param name="studentId"></param>
-        /// <param name="teamName"></param>
-        /// <param name="studentName"></param>
-        /// <returns></returns>
-        [HttpGet("{roundId}")]
-        public async Task<IActionResult> GetSubmissions(
-            Guid roundId,
-            int pageNumber = 1, 
-            int pageSize = 10,
-            Guid? idSearch = null,
-            Guid? studentId = null,
-            string? teamName = null,
-            string? studentName = null)
-        {
-            PaginatedList<GetSubmissionDTO> result = await _submissionService.GetPaginatedSubmissionAsync(
-                pageNumber, pageSize, idSearch, roundId, studentId, teamName, studentName);
-
-            var paging = new
-            {
-                result.PageNumber,
-                result.PageSize,
-                result.TotalPages,
-                result.TotalCount,
-                result.HasPreviousPage,
-                result.HasNextPage
-            };
-
-            return Ok(new BaseResponseModel<object>(
-                        statusCode: StatusCodes.Status200OK,
-                        code: ResponseCodeConstants.SUCCESS,
-                        data: result.Items,
-                        additionalData: paging,
-                        message: "Submission retrieved successfully."
-                    ));
-        }
-
-        /// <summary>
         /// Updates an existing submission
         /// </summary>
         /// <param name="id"></param>
@@ -184,6 +141,23 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                         code: ResponseCodeConstants.SUCCESS,
                         data: result.Items,
                         additionalData: paging,
+                        message: "Submission retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Gets submission details by ID
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetSubmissionById(Guid id)
+        {
+            SubmissionDistributionDTO result = await _submissionService.GetSubmissionByIdAsync(id);
+            return Ok(new BaseResponseModel<SubmissionDistributionDTO>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: result,
                         message: "Submission retrieved successfully."
                     ));
         }

@@ -60,118 +60,6 @@ namespace BusinessLogic.Services.Submissions
             _configService = configService;
         }
 
-        public async Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(
-            int pageNumber, int pageSize, Guid? idSearch, Guid? roundIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName)
-        {
-            try
-            {
-                // Get the submission repository
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-
-                // Start with base query
-                IQueryable<Submission> query = submissionRepo
-                    .Entities
-                    .Where(s => !s.DeletedAt.HasValue)
-                    .Include(s => s.Team)
-                    .Include(s => s.SubmittedByStudent)
-                        .ThenInclude(st => st!.User)
-                    .Include(s => s.SubmissionDetails)
-                    .Include(s => s.SubmissionArtifacts);
-
-                // Apply filters if provided
-                if (idSearch.HasValue)
-                {
-                    query = query.Where(s => s.SubmissionId == idSearch.Value);
-                }
-
-                if (roundIdSearch.HasValue)
-                {
-                    query = query.Where(s => s.Problem.RoundId == roundIdSearch.Value);
-                }
-
-                if (SubmittedByStudentId.HasValue)
-                {
-                    query = query.Where(s => s.SubmittedByStudentId == SubmittedByStudentId.Value);
-                }
-
-                if (!string.IsNullOrWhiteSpace(teamName))
-                {
-                    query = query.Where(s => s.SubmittedByStudent!.User.Fullname.Contains(teamName));
-                }
-
-                if (!string.IsNullOrWhiteSpace(teamName))
-                {
-                    query = query.Where(s => s.Team.Name.Contains(teamName));
-                }
-
-                // Order by creation date descending
-                query = query.OrderByDescending(s => s.CreatedAt);
-
-                // Get paginated data
-                PaginatedList<Submission> resultQuery = await submissionRepo.GetPagingAsync(query, pageNumber, pageSize);
-
-                // Fetch all relevant submissions for attempt number calculation
-                List<Guid> problemIds = resultQuery.Items.Select(x => x.ProblemId).Distinct().ToList();
-
-                var allRelevantSubmissions = await submissionRepo.Entities
-                    .Where(s => problemIds.Contains(s.ProblemId))
-                    .Select(s => new { s.SubmissionId, s.ProblemId, s.SubmittedByStudentId, s.CreatedAt })
-                    .ToListAsync();
-
-                // Calculate attempt numbers
-                var attemptLookup = allRelevantSubmissions
-                    .GroupBy(s => new { s.ProblemId, s.SubmittedByStudentId })
-                    .SelectMany(g => g.OrderBy(x => x.CreatedAt)
-                                      .Select((sub, index) => new { sub.SubmissionId, AttemptNumber = index + 1 }))
-                    .ToDictionary(x => x.SubmissionId, x => x.AttemptNumber);
-
-                // Map to DTOs
-                IReadOnlyCollection<GetSubmissionDTO> result = resultQuery.Items.Select(item =>
-                {
-                    // Map basic submission info
-                    GetSubmissionDTO? dto = _mapper.Map<GetSubmissionDTO>(item);
-
-                    dto.TeamName = item.Team?.Name ?? string.Empty;
-
-                    dto.SubmittedByStudentName = item.SubmittedByStudent?.User.Fullname!;
-
-                    dto.submissionAttemptNumber = attemptLookup.TryGetValue(item.SubmissionId, out int attemptNum)
-                        ? attemptNum
-                        : 1;
-
-                    // Map Testcase details to DTOs
-                    dto.Details = item.SubmissionDetails?
-                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
-                        .ToList();
-
-                    // Map Artifacts to DTOs
-                    dto.Artifacts = item.SubmissionArtifacts?
-                        .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
-                        .ToList();
-
-                    return dto;
-                }).ToList();
-
-                // Create new paginated list with mapped DTOs
-                return new PaginatedList<GetSubmissionDTO>(
-                    result,
-                    resultQuery.TotalCount,
-                    resultQuery.PageNumber,
-                    resultQuery.PageSize);
-            }
-            catch (Exception ex)
-            {
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error retrieving paginated Submissions: {ex.Message}");
-            }
-        }
-
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
         {
             try
@@ -1807,6 +1695,74 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving submissions distribution: {ex.Message}");
+            }
+        }
+
+        public async Task<SubmissionDistributionDTO> GetSubmissionByIdAsync(Guid submissionId)
+        {
+            try
+            {
+                // Get submission repository
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Get submission
+                Submission? submission = await submissionRepo.Entities
+                    .Where(x => x.SubmissionId == submissionId && x.DeletedAt == null)
+                    .Include(x => x.Problem)
+                        .ThenInclude(p => p.Round)
+                            .ThenInclude(r => r.Contest)
+                    .Include(x => x.Team)
+                    .Include(x => x.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .FirstOrDefaultAsync();
+
+                // Check if submission exists
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Submission with ID {submissionId} not found");
+                }
+
+                // Get judge email and judge id
+                string judgeEmail = string.Empty;
+                Guid judgeUserId = Guid.Empty;
+                if (!string.IsNullOrWhiteSpace(submission.JudgedBy) && Guid.TryParse(submission.JudgedBy, out Guid parsedJudgeId))
+                {
+                    judgeUserId = parsedJudgeId;
+                    IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                    judgeEmail = await userRepo.Entities
+                        .Where(u => u.UserId == parsedJudgeId)
+                        .Select(u => u.Email)
+                        .FirstOrDefaultAsync() ?? string.Empty;
+                }
+
+                // Map to DTO
+                SubmissionDistributionDTO dto = new SubmissionDistributionDTO
+                {
+                    SubmissionId = submission.SubmissionId,
+                    ContestId = submission.Problem?.Round?.ContestId ?? Guid.Empty,
+                    ContestName = submission.Problem?.Round?.Contest?.Name ?? string.Empty,
+                    RoundId = submission.Problem?.RoundId ?? Guid.Empty,
+                    RoundName = submission.Problem?.Round?.Name ?? string.Empty,
+                    TeamId = submission.TeamId,
+                    TeamName = submission.Team?.Name ?? string.Empty,
+                    SubmittedByStudentId = submission.SubmittedByStudentId,
+                    SubmitedByStudentName = submission.SubmittedByStudent?.User?.Fullname ?? string.Empty,
+                    JudgeUserId = judgeUserId,
+                    JudgeEmail = judgeEmail,
+                    Status = submission.Status ?? string.Empty
+                };
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException) throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving submission: {ex.Message}");
             }
         }
     }

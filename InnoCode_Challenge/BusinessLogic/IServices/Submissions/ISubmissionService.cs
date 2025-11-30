@@ -9,7 +9,6 @@ namespace BusinessLogic.IServices.Submissions
 {
     public interface ISubmissionService
     {
-        Task<PaginatedList<GetSubmissionDTO>> GetPaginatedSubmissionAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? roundIdSearch, Guid? SubmittedByStudentId, string? teamName, string? studentName);
         Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO SubmissionDTO);
         Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO, TestCaseEvaluationTypeEnum evaluationType);
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
@@ -22,5 +21,6 @@ namespace BusinessLogic.IServices.Submissions
         Task<GetSubmissionDTO> GetMyAutoTestResultAsync(Guid roundId);
         Task<PaginatedList<GetSubmissionDTO>> GetAllAutoTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
         Task<PaginatedList<SubmissionDistributionDTO>> GetSubmissionsByJudgeByAsync(int pageNumber, int pageSize, Guid? contestIdSearch, string? contestName, Guid? roundIdSearch, string? roundName, Guid? teamIdSearch, string? teamName, Guid? studentIdSearch, string? studentName, SubmissionStatusEnum? statusFilter = null);
+        Task<SubmissionDistributionDTO> GetSubmissionByIdAsync(Guid submissionId);
     }
 }
