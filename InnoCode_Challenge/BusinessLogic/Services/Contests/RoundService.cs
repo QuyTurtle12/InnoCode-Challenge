@@ -30,7 +30,6 @@ namespace BusinessLogic.Services.Contests
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IConfigService _configService;
         private readonly ICloudinaryService _cloudinaryService;
-        private readonly IProblemService _problem_service;
 
         public RoundService(
             IMapper mapper,
@@ -242,7 +241,7 @@ namespace BusinessLogic.Services.Contests
                 // Delete related Problem and its child entities
                 if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
                 {
-                    await _problem_service.DeleteProblemAsync(round.Problem.ProblemId);
+                    await _problemService.DeleteProblemAsync(round.Problem.ProblemId);
                 }
 
                 // Delete related McqTest and its child entities
@@ -567,7 +566,7 @@ namespace BusinessLogic.Services.Contests
                         break;
                     case ProblemTypeEnum.AutoEvaluation:
                         // Update Auto Evaluation Test config
-                        await _problem_service.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
+                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
 
                         // Handle template upload and old-file deletion
                         if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
@@ -603,7 +602,7 @@ namespace BusinessLogic.Services.Contests
                         break;
                     case ProblemTypeEnum.Manual:
                         // Update Manual Test config
-                        await _problem_service.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
+                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
 
                         // optional template upload
                         if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
