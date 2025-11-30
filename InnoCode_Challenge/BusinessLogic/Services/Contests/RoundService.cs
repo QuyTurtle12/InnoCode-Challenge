@@ -301,6 +301,7 @@ namespace BusinessLogic.Services.Contests
                 {
                     roundDTO.ProblemType = round.Problem.Type;
                     roundDTO.Problem = _mapper.Map<GetProblemDTO>(round.Problem);
+                    roundDTO.Problem.TemplateUrl = round.Problem.TemplateUrl;
                 }
                 // Map MCQ test information if exists
                 else if (round.McqTest != null && round.McqTest.DeletedAt == null)
@@ -415,6 +416,7 @@ namespace BusinessLogic.Services.Contests
                     {
                         roundDTO.ProblemType = item.Problem.Type;
                         roundDTO.Problem = _mapper.Map<GetProblemDTO>(item.Problem);
+                        roundDTO.Problem.TemplateUrl = item.Problem.TemplateUrl;
                     }
                     // Map MCQ test information if exists
                     else if (item.McqTest != null)

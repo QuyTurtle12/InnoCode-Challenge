@@ -718,6 +718,10 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("language");
             entity.Property(e => e.PenaltyRate).HasColumnName("penalty_rate");
             entity.Property(e => e.RoundId).HasColumnName("round_id");
+            entity.Property(e => e.TemplateUrl)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("template_url");
             entity.Property(e => e.Type)
                 .HasMaxLength(20)
                 .IsUnicode(false)

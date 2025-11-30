@@ -1,7 +1,8 @@
-﻿using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Serialization;
+﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 using Utility.Enums;
 
 namespace Repository.DTOs.RoundDTOs
@@ -12,6 +13,8 @@ namespace Repository.DTOs.RoundDTOs
         [EnumDataType(typeof(ProblemTypeEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public ProblemTypeEnum ProblemType { get; set; }
+
+        public IFormFile? TemplateUrl { get; set; }
 
         public UpdateMcqTestDTO? McqTestConfig { get; set; }
 

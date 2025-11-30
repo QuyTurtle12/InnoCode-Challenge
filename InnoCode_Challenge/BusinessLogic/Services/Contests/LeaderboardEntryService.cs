@@ -913,5 +913,211 @@ namespace BusinessLogic.Services.Contests
                     "Elimination rule policy is not a valid JSON map of roundIndex -> topN.");
             }
         }
+
+        public async Task<PaginatedList<TeamInfo>> GetAllTeamsInContestAsync(int pageNumber, int pageSize, Guid contestIdSearch)
+        {
+            try
+            {
+                // Validate page params
+                if (pageNumber < 1 || pageSize < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
+
+                // Get current user info
+                string? userIdClaim = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+                string? userRole = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Role);
+
+                Guid? currentUserId = null;
+                if (Guid.TryParse(userIdClaim, out Guid parsedUserId))
+                    currentUserId = parsedUserId;
+
+                // Repositories
+                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+                // Determine user's team if student or mentor
+                Guid? userTeamId = null;
+                if (currentUserId.HasValue)
+                {
+                    if (userRole == RoleConstants.Student)
+                    {
+                        Student? student = await studentRepo.Entities
+                            .FirstOrDefaultAsync(s => s.UserId == currentUserId.Value && s.DeletedAt == null);
+
+                        if (student != null)
+                        {
+                            TeamMember? teamMember = await teamMemberRepo.Entities
+                                .Include(tm => tm.Team)
+                                .FirstOrDefaultAsync(tm => tm.StudentId == student.StudentId
+                                                           && tm.Team.ContestId == contestIdSearch
+                                                           && tm.Team.DeletedAt == null);
+                            userTeamId = teamMember?.TeamId;
+                        }
+                    }
+                    else if (userRole == RoleConstants.Mentor)
+                    {
+                        Mentor? mentor = await mentorRepo.Entities
+                            .FirstOrDefaultAsync(m => m.UserId == currentUserId.Value && m.DeletedAt == null);
+
+                        if (mentor != null)
+                        {
+                            Team? team = await teamRepo.Entities
+                                .FirstOrDefaultAsync(t => t.MentorId == mentor.MentorId
+                                                          && t.ContestId == contestIdSearch
+                                                          && t.DeletedAt == null);
+                            userTeamId = team?.TeamId;
+                        }
+                    }
+                }
+
+                // Load all leaderboard entries for contest ordered by Rank
+                List<LeaderboardEntry> allEntries = await leaderboardRepo.Entities
+                    .Where(l => l.ContestId == contestIdSearch)
+                    .Include(l => l.Team)
+                    .OrderBy(l => l.Rank)
+                    .ToListAsync();
+
+                if (!allEntries.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "No leaderboard entries found for the specified contest.");
+                }
+
+                // Map to TeamInfo
+                List<TeamInfo> allTeams = allEntries.Select(entry => new TeamInfo
+                {
+                    TeamId = entry.TeamId,
+                    TeamName = entry.Team?.Name ?? string.Empty,
+                    Rank = entry.Rank ?? 0,
+                    Score = entry.Score ?? 0,
+                    Members = new List<MemberInfo>()
+                }).ToList();
+
+                int totalTeamCount = allTeams.Count;
+
+                // Apply pagination
+                List<TeamInfo> paginatedTeams = allTeams
+                    .Skip((pageNumber - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                // Decide whether to show all members
+                bool showAllMembers = userRole != RoleConstants.Student && userRole != RoleConstants.Mentor;
+
+                // Load rounds for contest
+                List<Round> rounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestIdSearch && !r.DeletedAt.HasValue)
+                    .OrderBy(r => r.Start)
+                    .ToListAsync();
+
+                // Populate member details for paginated teams only
+                foreach (var teamData in paginatedTeams)
+                {
+                    bool isUserTeam = userTeamId.HasValue && userTeamId.Value == teamData.TeamId;
+
+                    if (!showAllMembers && !isUserTeam)
+                        continue;
+
+                    // Get team members
+                    List<TeamMember> teamMembers = await teamMemberRepo.Entities
+                        .Include(tm => tm.Student)
+                            .ThenInclude(s => s.User)
+                        .Where(tm => tm.TeamId == teamData.TeamId)
+                        .ToListAsync();
+
+                    foreach (TeamMember teamMember in teamMembers)
+                    {
+                        MemberInfo memberInfo = new MemberInfo
+                        {
+                            MemberId = teamMember.StudentId,
+                            MemberName = teamMember.Student.User.Fullname,
+                            MemberRole = teamMember.MemberRole,
+                            TotalScore = 0,
+                            RoundScores = new List<RoundScoreDetail>()
+                        };
+
+                        foreach (Round round in rounds)
+                        {
+                            double roundScore = 0;
+                            string roundType = string.Empty;
+                            DateTime? completedAt = null;
+
+                            // Check finished flag in config
+                            string key = ConfigKeys.RoundStudent(round.RoundId, teamMember.StudentId);
+                            Config? config = await configRepo.GetByIdAsync(key);
+
+                            if (config == null || config.DeletedAt != null)
+                            {
+                                continue;
+                            }
+
+                            // Check MCQ attempt
+                            McqAttempt? mcqAttempt = await mcqAttemptRepo.Entities
+                                .Where(ma => ma.RoundId == round.RoundId
+                                             && ma.StudentId == teamMember.StudentId
+                                             && ma.End.HasValue)
+                                .OrderByDescending(ma => ma.End)
+                                .FirstOrDefaultAsync();
+
+                            if (mcqAttempt != null)
+                            {
+                                roundScore = mcqAttempt.Score ?? 0;
+                                roundType = ProblemTypeEnum.McqTest.ToString();
+                                completedAt = config.UpdatedAt;
+                            }
+                            else
+                            {
+                                // Check submission
+                                Submission? submission = await submissionRepo.Entities
+                                    .Include(s => s.Problem)
+                                    .Where(s => s.Problem.RoundId == round.RoundId
+                                                && s.SubmittedByStudentId == teamMember.StudentId
+                                                && s.TeamId == teamData.TeamId
+                                                && s.Status == SubmissionStatusEnum.Finished.ToString())
+                                    .OrderByDescending(s => s.CreatedAt)
+                                    .FirstOrDefaultAsync();
+
+                                if (submission != null)
+                                {
+                                    roundScore = submission.Score;
+                                    roundType = submission.Problem.Type ?? "Unknown Type";
+                                    completedAt = config.UpdatedAt;
+                                }
+                            }
+
+                            memberInfo.RoundScores.Add(new RoundScoreDetail
+                            {
+                                RoundId = round.RoundId,
+                                RoundName = round.Name,
+                                Score = roundScore,
+                                RoundType = roundType,
+                                CompletedAt = completedAt
+                            });
+
+                            memberInfo.TotalScore += roundScore;
+                        }
+
+                        teamData.Members.Add(memberInfo);
+                    }
+                }
+
+                return new PaginatedList<TeamInfo>(paginatedTeams, totalTeamCount, pageNumber, pageSize);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException) throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving team list in leaderboard: {ex.Message}");
+            }
+        }
     }
 }

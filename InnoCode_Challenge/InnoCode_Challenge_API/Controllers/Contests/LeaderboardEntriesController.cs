@@ -57,35 +57,34 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
-        ///// <summary>
-        ///// Create initial leaderboard
-        ///// </summary>
-        //[HttpPost]
-        //[Authorize(Policy = "RequireStaffOrAdmin")]
-        //public async Task<IActionResult> CreateLeaderboard(CreateLeaderboardEntryDTO dto)
-        //{
-        //    await _leaderboardService.CreateLeaderboardAsync(dto);
-        //    return Ok(new BaseResponseModel(
-        //        statusCode: StatusCodes.Status201Created,
-        //        code: ResponseCodeConstants.SUCCESS,
-        //        message: "Leaderboard created successfully."
-        //    ));
-        //}
 
-        ///// <summary>
-        ///// Update leaderboard rankings
-        ///// </summary>
-        //[HttpPost("{contestId}/recalculate")]
-        //[Authorize(Policy = "RequireStaffOrAdmin")]
-        //public async Task<IActionResult> UpdateLeaderboard(Guid contestId)
-        //{
-        //    await _leaderboardService.UpdateLeaderboardAsync(contestId);
-        //    return Ok(new BaseResponseModel(
-        //        statusCode: StatusCodes.Status200OK,
-        //        code: ResponseCodeConstants.SUCCESS,
-        //        message: "Leaderboard updated successfully."
-        //    ));
-        //}
+        [HttpGet("contests/{contestId}/teams")]
+        public async Task<IActionResult> GetAllTeamsInContest(
+            Guid contestId,
+            int pageNumber = 1,
+            int pageSize = 10
+            )
+        {
+            var teams = await _leaderboardService.GetAllTeamsInContestAsync(pageNumber, pageSize, contestId);
+
+            var paging = new
+            {
+                PageNumber = teams.PageNumber,
+                PageSize = teams.PageSize,
+                TotalPages = teams.TotalPages,
+                TotalCount = teams.TotalCount,
+                HasPreviousPage = teams.HasPreviousPage,
+                HasNextPage = teams.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: teams.Items,
+                additionalData: paging,
+                message: "Teams retrieved successfully."
+            ));
+        }
 
         /// <summary>
         /// Toggle leaderboard freeze status (Ongoing -> Paused or Paused -> Ongoing)
