@@ -1100,6 +1100,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Get contest repository
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
                 // Fetch the contest
                 Contest? contest = await contestRepo.GetByIdAsync(contestId);
@@ -1108,8 +1109,69 @@ namespace BusinessLogic.Services.Contests
                 if (contest == null || contest.DeletedAt != null)
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
 
-                // Update contest status to Published
-                contest.Status = ContestStatusEnum.Published.ToString();
+                // Get current time
+                DateTime now = DateTime.UtcNow;
+
+                // Fetch registration start from config
+                string regStartKey = ConfigKeys.ContestRegStart(contestId);
+                Config? regStartConfig = await configRepo.Entities
+                    .Where(c => c.Key == regStartKey && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                // Fetch registration end from config
+                string regEndKey = ConfigKeys.ContestRegEnd(contestId);
+                Config? regEndConfig = await configRepo.Entities
+                    .Where(c => c.Key == regEndKey && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                DateTime? registrationStart = null;
+                DateTime? registrationEnd = null;
+
+                if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
+                {
+                    registrationStart = regStart;
+                }
+
+                if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
+                {
+                    registrationEnd = regEnd;
+                }
+
+                // Determine contest status based on time and registration windows
+                string newStatus;
+
+                // Priority 1: Check if contest has ended (terminal state)
+                if (contest.End.HasValue && now >= contest.End.Value)
+                {
+                    newStatus = ContestStatusEnum.Completed.ToString();
+                }
+                // Priority 2: Check if contest is ongoing
+                else if (contest.Start.HasValue && now >= contest.Start.Value && now < contest.End)
+                {
+                    newStatus = ContestStatusEnum.Ongoing.ToString();
+                }
+                // Priority 3: Check if registration has closed but contest hasn't started
+                else if (registrationEnd.HasValue && now >= registrationEnd.Value
+                    && contest.Start.HasValue && now < contest.Start.Value
+                    && contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+                {
+                    newStatus = ContestStatusEnum.RegistrationClosed.ToString();
+                }
+                // Priority 4: Check if registration is open
+                else if (registrationStart.HasValue && registrationEnd.HasValue
+                    && now >= registrationStart.Value && now < registrationEnd.Value
+                    && contest.Status == ContestStatusEnum.Published.ToString())
+                {
+                    newStatus = ContestStatusEnum.RegistrationOpen.ToString();
+                }
+                // Default: Published (before registration starts)
+                else
+                {
+                    newStatus = ContestStatusEnum.Published.ToString();
+                }
+
+                // Update contest status
+                contest.Status = newStatus;
                 await contestRepo.UpdateAsync(contest);
                 await _unitOfWork.SaveAsync();
             }
