@@ -13,7 +13,7 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly ILogger<ContestStateBackgroundService> _logger;
         private readonly IServiceProvider _serviceProvider;
-        private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(5); // Check every 5 minutes
+        private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(1); // Check every 1 minutes
 
         public ContestStateBackgroundService(
             ILogger<ContestStateBackgroundService> logger,
