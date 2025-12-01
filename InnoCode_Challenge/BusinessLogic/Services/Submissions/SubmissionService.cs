@@ -1143,6 +1143,9 @@ namespace BusinessLogic.Services.Submissions
                         && s.SubmittedByStudentId == studentId
                         && s.Problem.Type == ProblemTypeEnum.Manual.ToString()
                         && !s.DeletedAt.HasValue)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.Team)
                     .OrderByDescending(s => s.CreatedAt)
                     .FirstOrDefaultAsync();
 
@@ -1173,12 +1176,12 @@ namespace BusinessLogic.Services.Submissions
                     })
                     .ToList();
 
-                // Get judge email
-                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
-                string? judgeEmail = await userRepo.Entities
-                    .Where(u => u.UserId == Guid.Parse(submission.JudgedBy!))
-                    .Select(u => u.Email)
-                    .FirstOrDefaultAsync() ?? submission.JudgedBy;
+                //// Get judge email
+                //IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                //string? judgeEmail = await userRepo.Entities
+                //    .Where(u => u.UserId == Guid.Parse(submission.JudgedBy!))
+                //    .Select(u => u.Email)
+                //    .FirstOrDefaultAsync() ?? submission.JudgedBy;
 
                 RubricEvaluationResultDTO result = new RubricEvaluationResultDTO
                 {
@@ -1186,7 +1189,8 @@ namespace BusinessLogic.Services.Submissions
                     StudentName = submission.SubmittedByStudent?.User.Fullname ?? "Unknown",
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
-                    JudgedBy = judgeEmail,
+                    //JudgedBy = judgeEmail,
+                    JudgedBy = "unknown judge",
                     TotalScore = submission.Score,
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
@@ -1233,14 +1237,14 @@ namespace BusinessLogic.Services.Submissions
                 // Build query for manual test submissions in the specified round
                 IQueryable<Submission> query = submissionRepo.Entities
                     .Include(s => s.Problem)
+                    .Where(s => s.Problem.RoundId == roundId
+                        && s.Problem.Type == ProblemTypeEnum.Manual.ToString()
+                        && !s.DeletedAt.HasValue)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
                         .ThenInclude(st => st!.User)
                     .Include(s => s.SubmissionDetails)
-                        .ThenInclude(sd => sd.Testcase)
-                    .Where(s => s.Problem.RoundId == roundId
-                        && s.Problem.Type == ProblemTypeEnum.Manual.ToString()
-                        && !s.DeletedAt.HasValue);
+                        .ThenInclude(sd => sd.Testcase);
 
                 // Apply filters
                 if (studentIdSearch.HasValue)
