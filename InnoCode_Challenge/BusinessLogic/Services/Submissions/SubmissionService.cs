@@ -1631,7 +1631,9 @@ namespace BusinessLogic.Services.Submissions
                             .ThenInclude(r => r.Contest)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
-                        .ThenInclude(st => st!.User);
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase);
 
                 // Apply filters
                 if (contestIdSearch.HasValue)
@@ -1643,11 +1645,11 @@ namespace BusinessLogic.Services.Submissions
 
                 if (!string.IsNullOrWhiteSpace(contestName))
                 {
-                    var k = contestName.Trim();
+                    string formattedContestName = contestName.Trim();
                     query = query.Where(s => s.Problem != null
                                              && s.Problem.Round != null
                                              && s.Problem.Round.Contest != null
-                                             && s.Problem.Round.Contest.Name.Contains(k));
+                                             && s.Problem.Round.Contest.Name.Contains(formattedContestName));
                 }
 
                 if (roundIdSearch.HasValue)
@@ -1657,10 +1659,10 @@ namespace BusinessLogic.Services.Submissions
 
                 if (!string.IsNullOrWhiteSpace(roundName))
                 {
-                    var k = roundName.Trim();
+                    string formattedRoundName = roundName.Trim();
                     query = query.Where(s => s.Problem != null
                                              && s.Problem.Round != null
-                                             && s.Problem.Round.Name.Contains(k));
+                                             && s.Problem.Round.Name.Contains(formattedRoundName));
                 }
 
                 if (teamIdSearch.HasValue)
@@ -1670,8 +1672,8 @@ namespace BusinessLogic.Services.Submissions
 
                 if (!string.IsNullOrWhiteSpace(teamName))
                 {
-                    var k = teamName.Trim();
-                    query = query.Where(s => s.Team != null && s.Team.Name.Contains(k));
+                    string formattedTeamName = teamName.Trim();
+                    query = query.Where(s => s.Team != null && s.Team.Name.Contains(formattedTeamName));
                 }
 
                 if (studentIdSearch.HasValue)
@@ -1681,8 +1683,10 @@ namespace BusinessLogic.Services.Submissions
 
                 if (!string.IsNullOrWhiteSpace(studentName))
                 {
-                    var k = studentName.Trim();
-                    query = query.Where(s => s.SubmittedByStudent != null && s.SubmittedByStudent.User != null && s.SubmittedByStudent.User.Fullname.Contains(k));
+                    string formattedStudentName = studentName.Trim();
+                    query = query.Where(s => s.SubmittedByStudent != null 
+                                        && s.SubmittedByStudent.User != null 
+                                        && s.SubmittedByStudent.User.Fullname.Contains(formattedStudentName));
                 }
 
                 if (statusFilter.HasValue)
@@ -1703,11 +1707,18 @@ namespace BusinessLogic.Services.Submissions
                 // Convert judgeId to Guid
                 Guid judgeGuid = Guid.Parse(judgeId);
 
-
                 // Map to DTOs
                 List<SubmissionDistributionDTO> items = paged.Items.Select(s =>
                 {
-                    var dto = new SubmissionDistributionDTO
+                    // Check if all submission details have associated test cases
+                    if (s.SubmissionDetails != null && s.SubmissionDetails.Any(sd => sd.Testcase == null))
+                    {
+                        throw new ErrorException(StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            $"Some submission details are missing associated test cases for submission ID {s.SubmissionId}");
+                    }
+
+                    SubmissionDistributionDTO dto = new SubmissionDistributionDTO
                     {
                         SubmissionId = s.SubmissionId,
                         ContestId = s.Problem?.Round?.ContestId ?? Guid.Empty,
@@ -1720,7 +1731,18 @@ namespace BusinessLogic.Services.Submissions
                         SubmitedByStudentName = s.SubmittedByStudent?.User?.Fullname ?? string.Empty,
                         JudgeUserId = judgeGuid,
                         JudgeEmail = judgeEmail,
-                        Status = s.Status ?? string.Empty
+                        Status = s.Status ?? string.Empty,
+                        CriterionResults = s.SubmissionDetails?
+                            .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeleteAt.HasValue)
+                            .Select(sd => new RubricCriterionResultDTO
+                            {
+                                RubricId = sd.TestcaseId!.Value,
+                                Description = sd.Testcase?.Description ?? sd.Testcase?.Input ?? "Criterion",
+                                MaxScore = sd.Testcase?.Weight ?? 0,
+                                Score = sd.Weight ?? 0,
+                                Note = sd.Note
+                            })
+                            .ToList() ?? new List<RubricCriterionResultDTO>()
                     };
 
                     return dto;
@@ -1754,6 +1776,8 @@ namespace BusinessLogic.Services.Submissions
                     .Include(x => x.Team)
                     .Include(x => x.SubmittedByStudent)
                         .ThenInclude(st => st!.User)
+                    .Include(x => x.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
                     .FirstOrDefaultAsync();
 
                 // Check if submission exists
@@ -1762,6 +1786,14 @@ namespace BusinessLogic.Services.Submissions
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"Submission with ID {submissionId} not found");
+                }
+
+                // Check if all submission details have associated test cases
+                if (submission.SubmissionDetails != null && submission.SubmissionDetails.Any(sd => sd.Testcase == null))
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Some submission details are missing associated test cases for submission ID {submissionId}");
                 }
 
                 // Get judge email and judge id
@@ -1791,7 +1823,18 @@ namespace BusinessLogic.Services.Submissions
                     SubmitedByStudentName = submission.SubmittedByStudent?.User?.Fullname ?? string.Empty,
                     JudgeUserId = judgeUserId,
                     JudgeEmail = judgeEmail,
-                    Status = submission.Status ?? string.Empty
+                    Status = submission.Status ?? string.Empty,
+                    CriterionResults = submission.SubmissionDetails?
+                        .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeleteAt.HasValue)
+                        .Select(sd => new RubricCriterionResultDTO
+                        {
+                            RubricId = sd.TestcaseId!.Value,
+                            Description = sd.Testcase?.Description ?? sd.Testcase?.Input ?? "Criterion",
+                            MaxScore = sd.Testcase?.Weight ?? 0,
+                            Score = sd.Weight ?? 0,
+                            Note = sd.Note
+                        })
+                        .ToList() ?? new List<RubricCriterionResultDTO>()
                 };
 
                 return dto;

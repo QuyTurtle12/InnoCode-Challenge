@@ -1,4 +1,6 @@
-﻿namespace Repository.DTOs.SubmissionDTOs
+﻿using Repository.DTOs.RubricDTOs;
+
+namespace Repository.DTOs.SubmissionDTOs
 {
     public class SubmissionDistributionDTO
     {
@@ -14,5 +16,6 @@
         public Guid? JudgeUserId { get; set; }
         public string? JudgeEmail { get; set; }
         public string Status { get; set; } = string.Empty;
+        public List<RubricCriterionResultDTO>? CriterionResults { get; set; } 
     }
 }
