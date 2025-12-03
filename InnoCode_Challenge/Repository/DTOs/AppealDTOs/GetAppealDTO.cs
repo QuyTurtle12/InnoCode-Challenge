@@ -8,6 +8,8 @@ namespace Repository.DTOs.AppealDTOs
         public Guid AppealId { get; set; }
         public Guid TeamId { get; set; }
         public string TeamName { get; set; } = string.Empty;
+        public Guid ContestId { get; set; }
+        public string ContestName { get; set; } = string.Empty;
         public Guid RoundId { get; set; }
         public string RoundName { get; set; } = string.Empty;
         public string TargetType { get; set; } = string.Empty;

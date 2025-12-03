@@ -286,6 +286,7 @@ namespace BusinessLogic.Services.Appeals
             int pageNumber,
             int pageSize,
             Guid? appealId,
+            Guid? contestId,
             Guid? teamId,
             Guid? roundId,
             AppealStateEnum? state,
@@ -309,6 +310,7 @@ namespace BusinessLogic.Services.Appeals
                     .Include(a => a.Team)
                     .Include(a => a.Owner)
                     .Include(a => a.Target)
+                        .ThenInclude(r => r.Contest)
                     .Include(a => a.AppealEvidences.Where(e => e.DeletedAt == null));
 
                 // Filter by current user's teams if requested
@@ -329,6 +331,11 @@ namespace BusinessLogic.Services.Appeals
                 if (appealId.HasValue)
                 {
                     query = query.Where(a => a.AppealId == appealId.Value);
+                }
+
+                if (contestId.HasValue)
+                {
+                    query = query.Where(a => a.Target.ContestId == contestId.Value);
                 }
 
                 if (teamId.HasValue)

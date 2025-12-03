@@ -14,6 +14,8 @@ namespace BusinessLogic.MappingProfiles.Appeals
                 .ForMember(dest => dest.OwnerName, opt => opt.MapFrom(src => src.Owner.Fullname))
                 .ForMember(dest => dest.RoundId, opt => opt.MapFrom(src => src.TargetId))
                 .ForMember(dest => dest.RoundName, opt => opt.MapFrom(src => src.Target.Name))
+                .ForMember(dest => dest.ContestId, opt => opt.MapFrom(src => src.Target.ContestId))
+                .ForMember(dest => dest.ContestName, opt => opt.MapFrom(src => src.Target.Contest.Name))
                 .ForMember(dest => dest.Evidences, opt => opt.MapFrom(src => src.AppealEvidences));
 
             CreateMap<AppealEvidence, AppealEvidenceDTO>();

@@ -68,6 +68,7 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <param name="appealId">Optional appeal ID filter</param>
         /// <param name="teamId">Optional team ID filter</param>
         /// <param name="roundId">Optional round ID filter</param>
+        /// <param name="contestId">Optional contest ID filter</param>
         /// <param name="state">Optional state filter (Opened/Closed)</param>
         /// <param name="decision">Optional decision filter (Approved/Rejected)</param>
         /// <returns>Paginated list of appeals</returns>
@@ -79,11 +80,12 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
             Guid? appealId = null,
             Guid? teamId = null,
             Guid? roundId = null,
+            Guid? contestId = null,
             AppealStateEnum? state = null,
             AppealDecisionEnum? decision = null)
         {
             PaginatedList<GetAppealDTO> result = await _appealService.GetPaginatedAppealsAsync(
-                pageNumber, pageSize, appealId, teamId, roundId, state, decision, false);
+                pageNumber, pageSize, appealId, contestId, teamId, roundId, state, decision, false);
 
             var paging = new
             {
@@ -110,6 +112,7 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <param name="pageNumber">Page number</param>
         /// <param name="pageSize">Page size</param>
         /// <param name="roundId">Optional round ID filter</param>
+        /// <param name="contestId">Optional contest ID filter</param>
         /// <param name="state">Optional state filter (Opened/Closed)</param>
         /// <param name="decision">Optional decision filter (Approved/Rejected)</param>
         /// <returns>Paginated list of current mentor's appeals</returns>
@@ -119,11 +122,12 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
             int pageNumber = 1,
             int pageSize = 10,
             Guid? roundId = null,
+            Guid? contestId = null,
             AppealStateEnum? state = null,
             AppealDecisionEnum? decision = null)
         {
             PaginatedList<GetAppealDTO> result = await _appealService.GetPaginatedAppealsAsync(
-                pageNumber, pageSize, null, null, roundId, state, decision, true);
+                pageNumber, pageSize, null, contestId, null, roundId, state, decision, true);
 
             var paging = new
             {

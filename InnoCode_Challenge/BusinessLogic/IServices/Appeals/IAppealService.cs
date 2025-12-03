@@ -12,6 +12,7 @@ namespace BusinessLogic.IServices.Appeals
             int pageNumber,
             int pageSize,
             Guid? appealId,
+            Guid? contestId,
             Guid? teamId,
             Guid? roundId,
             AppealStateEnum? state,
