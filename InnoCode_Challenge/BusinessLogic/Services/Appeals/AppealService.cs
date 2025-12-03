@@ -173,6 +173,7 @@ namespace BusinessLogic.Services.Appeals
                     TargetId = targetId,
                     OwnerId = student.UserId,
                     State = AppealStateEnum.Opened.ToString(),
+                    Decision = AppealDecisionEnum.Pending.ToString(),
                     Reason = dto.Reason.Trim(),
                     CreatedAt = DateTime.UtcNow,
                     CreatedBy = currentMentorId
