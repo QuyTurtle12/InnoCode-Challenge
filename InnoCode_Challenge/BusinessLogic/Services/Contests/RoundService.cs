@@ -228,9 +228,10 @@ namespace BusinessLogic.Services.Contests
 
                 // Find round by id with related entities
                 Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == id)
                     .Include(r => r.Problem)
                     .Include(r => r.McqTest)
-                    .FirstOrDefaultAsync(r => r.RoundId == id);
+                    .FirstOrDefaultAsync();
 
                 // Check if round exists
                 if (round == null)

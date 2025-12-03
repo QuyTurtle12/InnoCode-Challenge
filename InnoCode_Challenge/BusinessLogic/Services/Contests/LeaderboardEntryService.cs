@@ -1009,7 +1009,7 @@ namespace BusinessLogic.Services.Contests
                     .ToList();
 
                 // Decide whether to show all members
-                bool showAllMembers = userRole != RoleConstants.Student && userRole != RoleConstants.Mentor && string.IsNullOrWhiteSpace(userIdClaim);
+                bool showAllMembers = userRole != RoleConstants.Student && userRole != RoleConstants.Mentor && !string.IsNullOrWhiteSpace(userIdClaim);
 
                 // Load rounds for contest
                 List<Round> rounds = await roundRepo.Entities

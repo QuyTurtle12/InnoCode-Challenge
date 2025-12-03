@@ -767,26 +767,32 @@ namespace BusinessLogic.Services.Contests
             {
                 _unitOfWork.BeginTransaction();
 
-                // Validate input
+                // Validate input data
                 if (dto == null)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Payload cannot be null.");
 
+                // Validate name
                 if (string.IsNullOrWhiteSpace(dto.Name))
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Name is required.");
 
+                // Validate year
                 int currentYear = DateTime.UtcNow.Year;
                 if (dto.Year < currentYear)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, $"Year must be ≥ {currentYear}.");
 
+                // Validate registration date ranges
                 if (dto.RegistrationStart.HasValue && dto.RegistrationEnd.HasValue && dto.RegistrationStart.Value >= dto.RegistrationEnd.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration start must be before registration end.");
 
+                // Validate contest date ranges
                 if (dto.Start.HasValue && dto.End.HasValue && dto.Start.Value >= dto.End.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest start must be before contest end.");
 
+                // Validate registration dates vs contest dates
                 if (dto.RegistrationStart.HasValue && dto.Start.HasValue && dto.RegistrationStart.Value >= dto.Start.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration start must be before contest start.");
 
+                // Validate registration end vs contest start
                 if (dto.RegistrationEnd.HasValue && dto.Start.HasValue && dto.RegistrationEnd.Value >= dto.Start.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration end must be before contest start.");
 
@@ -820,6 +826,7 @@ namespace BusinessLogic.Services.Contests
 
                 if (dto.ImageFile != null)
                 {
+                    // Validate image file
                     if (!CloudinaryHelpers.IsImageFile(dto.ImageFile))
                     {
                         throw new ErrorException(StatusCodes.Status400BadRequest,

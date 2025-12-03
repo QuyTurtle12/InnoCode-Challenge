@@ -1230,6 +1230,20 @@ namespace BusinessLogic.Services.Submissions
                         "Page number and page size must be greater than or equal to 1.");
                 }
 
+                // Get round to validate existence
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                // Validate round existence
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Round ID {roundId} not found");
+                }
+
                 // Get repositories
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
@@ -1388,6 +1402,20 @@ namespace BusinessLogic.Services.Submissions
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         "Student not found");
+                }
+
+                // Get round to validate existence
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                // Validate round existence
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Round ID {roundId} not found");
                 }
 
                 // Get the submission repository
