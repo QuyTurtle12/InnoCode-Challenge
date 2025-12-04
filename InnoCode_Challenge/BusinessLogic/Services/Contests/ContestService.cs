@@ -935,11 +935,15 @@ namespace BusinessLogic.Services.Contests
             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
             IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+            IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
 
             // Fetch the contest with its rounds
             Contest? contest = await contestRepo.Entities
+                .Where(c => c.ContestId == contestId && c.DeletedAt == null)
                 .Include(c => c.Rounds)
-                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+                    .ThenInclude(r => r.Problem)
+                        .ThenInclude(p => p.TestCases)
+                .FirstOrDefaultAsync();
 
             // Validate contest existence
             if (contest == null)
@@ -947,14 +951,6 @@ namespace BusinessLogic.Services.Contests
 
             // Initialize result DTO
             PublishReadinessDTO result = new PublishReadinessDTO { ContestId = contestId };
-
-            // Check for rounds
-            if (contest.Rounds == null || !contest.Rounds.Any())
-            {
-                result.Missing.Add("No rounds created.");
-                result.IsReady = false;
-                return result;
-            }
 
             // Get rounds
             List<Round> rounds = contest.Rounds
@@ -1009,11 +1005,13 @@ namespace BusinessLogic.Services.Contests
                 result.Missing.Add($"Round(s) {roundNames} missing time limit configuration.");
             }
 
-            // Check for problems and MCQ tests in each round
+            // Store Auto Evaluation, Manual problem in problems list
             List<Problem> problems = await problemRepo.Entities
                 .Where(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null)
+                .Include(p => p.TestCases)
                 .ToListAsync();
 
+            // Get MCQ tests
             List<McqTest> mcqTests = await mcqTestRepo.Entities
                 .Where(t => roundIds.Contains(t.RoundId) && t.DeletedAt == null)
                 .Include(t => t.Round)
@@ -1049,6 +1047,57 @@ namespace BusinessLogic.Services.Contests
                 string testInfo = string.Join(", ", mcqTestsWithoutQuestions.Select(t =>
                     $"'{t.Name ?? "Unnamed"}' in round '{t.Round.Name}'"));
                 result.Missing.Add($"MCQ test(s) {testInfo} have no questions.");
+            }
+
+            // Check if Auto Evaluation problems have rubric
+            List<Problem> autoEvaluationProblems = problems
+                .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString())
+                .ToList();
+
+            if (autoEvaluationProblems.Any())
+            {
+                // Check if Auto Evaluation problems have test cases
+                List<Problem> autoEvalProblemsWithoutTestCases = problems
+                    .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                                && !p.TestCases.Any(tc => tc.DeleteAt == null))
+                    .ToList();
+
+                if (autoEvalProblemsWithoutTestCases.Any())
+                {
+                    string problemInfo = string.Join(", ", autoEvalProblemsWithoutTestCases.Select(p =>
+                    {
+                        Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
+                        return $"'{round?.Name ?? "Unknown Round"}'";
+                    }));
+                    result.Missing.Add($"Auto-evaluation round(s) {problemInfo} missing test cases.");
+                }
+            }
+
+            // Check if Manual evaluation problems have rubric
+            List<Problem> manualProblems = problems
+                .Where(p => p.Type == ProblemTypeEnum.Manual.ToString())
+                .ToList();
+
+            if (manualProblems.Any())
+            {
+                // Get problem IDs for manual evaluation
+                List<Guid> manualProblemIds = manualProblems.Select(p => p.ProblemId).ToList();
+
+                // Check for rubric attachments
+                List<Problem> manualProblemsWithoutRubrics = problems
+                    .Where(p => p.Type == ProblemTypeEnum.Manual.ToString()
+                                && !p.TestCases.Any(tc => tc.DeleteAt == null))
+                    .ToList();
+
+                if (manualProblemsWithoutRubrics.Any())
+                {
+                    string problemInfo = string.Join(", ", manualProblemsWithoutRubrics.Select(p =>
+                    {
+                        Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
+                        return $"'{round?.Name ?? "Unknown Round"}'";
+                    }));
+                    result.Missing.Add($"Manual evaluation round(s) {problemInfo} missing rubric.");
+                }
             }
 
             // Check registration window configuration

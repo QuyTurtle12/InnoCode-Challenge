@@ -68,7 +68,8 @@ namespace InnoCode_Challenge_API.DI
                         builder.WithOrigins(
                                    "http://localhost:5173",
                                    "https://localhost:5173",
-                                   "https://innocode-challenge-api.onrender.com")
+                                   "https://innocode-challenge-api.onrender.com",
+                                   "innocode-fe-kbyi.vercel.app")
                                .AllowAnyHeader()
                                .AllowAnyMethod()
                                .AllowCredentials();

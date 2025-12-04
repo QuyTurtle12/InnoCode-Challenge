@@ -53,6 +53,14 @@ namespace BusinessLogic.Services.Contests
                 testCaseDTO.Input = testCaseDTO.Input?.Trim();
                 testCaseDTO.ExpectedOutput = testCaseDTO.ExpectedOutput?.Trim();
 
+                // Validate input
+                if (string.IsNullOrWhiteSpace(testCaseDTO.Input))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Input is required.");
+                }
+
                 // Validate expected output
                 if (string.IsNullOrWhiteSpace(testCaseDTO.ExpectedOutput))
                 {

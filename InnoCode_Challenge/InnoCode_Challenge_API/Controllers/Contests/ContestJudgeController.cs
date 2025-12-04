@@ -7,7 +7,7 @@ using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {
-    [Route("api/[controller]")]
+    [Route("api/contest-judges")]
     [ApiController]
     public class ContestJudgeController : ControllerBase
     {

@@ -45,7 +45,8 @@ namespace InnoCode_Challenge_API.Middleware
                 var result = JsonSerializer.Serialize(new
                 {
                     errorCode = ex.Code,
-                    errorMessage = ex.Message
+                    errorMessage = ex.Message,
+                    additionalData = ex.AdditionalData
                 });
 
                 await context.Response.WriteAsync(result);
