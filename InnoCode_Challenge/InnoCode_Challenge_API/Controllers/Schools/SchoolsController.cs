@@ -55,7 +55,7 @@ namespace InnoCode_Challenge_API.Controllers.Schools
         }
 
         [HttpPost]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffRole")]
         public async Task<IActionResult> Create([FromBody] CreateSchoolDTO dto)
         {
             var created = await _schoolService.CreateAsync(dto);
@@ -69,7 +69,7 @@ namespace InnoCode_Challenge_API.Controllers.Schools
         }
 
         [HttpPut("{id:guid}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffRole")]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateSchoolDTO dto)
         {
             var updated = await _schoolService.UpdateAsync(id, dto);
@@ -82,7 +82,7 @@ namespace InnoCode_Challenge_API.Controllers.Schools
         }
 
         [HttpDelete("{id:guid}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffRole")]
         public async Task<IActionResult> Delete(Guid id)
         {
             await _schoolService.DeleteAsync(id);

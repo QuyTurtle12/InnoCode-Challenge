@@ -29,6 +29,8 @@ public partial class ContestDbContext : DbContext
 
     public virtual DbSet<Contest> Contests { get; set; }
 
+    public virtual DbSet<JudgeInvite> JudgeInvites { get; set; }
+
     public virtual DbSet<LeaderboardEntry> LeaderboardEntries { get; set; }
 
     public virtual DbSet<McqAttempt> McqAttempts { get; set; }
@@ -356,6 +358,46 @@ public partial class ContestDbContext : DbContext
                 .HasDefaultValue("draft")
                 .HasColumnName("status");
             entity.Property(e => e.Year).HasColumnName("year");
+        });
+
+        modelBuilder.Entity<JudgeInvite>(entity =>
+        {
+            entity.HasKey(e => e.InviteId).HasName("PK__judge_in__32ADC005D8C6C63C");
+
+            entity.ToTable("judge_invites");
+
+            entity.HasIndex(e => e.InviteCode, "UQ__judge_in__C90895D4C6218585").IsUnique();
+
+            entity.Property(e => e.InviteId)
+                .ValueGeneratedNever()
+                .HasColumnName("invite_id");
+            entity.Property(e => e.AcceptedAt).HasColumnName("accepted_at");
+            entity.Property(e => e.ContestId).HasColumnName("contest_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.CreatedBy)
+                .HasMaxLength(255)
+                .HasColumnName("created_by");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
+            entity.Property(e => e.InviteCode)
+                .HasMaxLength(50)
+                .HasColumnName("invite_code");
+            entity.Property(e => e.JudgeId).HasColumnName("judge_id");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasDefaultValue("pending")
+                .HasColumnName("status");
+
+            entity.HasOne(d => d.Contest).WithMany(p => p.JudgeInvites)
+                .HasForeignKey(d => d.ContestId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_judge_invites_contest");
+
+            entity.HasOne(d => d.Judge).WithMany(p => p.JudgeInvites)
+                .HasForeignKey(d => d.JudgeId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_judge_invites_judge");
         });
 
         modelBuilder.Entity<LeaderboardEntry>(entity =>

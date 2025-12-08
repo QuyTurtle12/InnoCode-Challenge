@@ -2,7 +2,6 @@
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
-using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;

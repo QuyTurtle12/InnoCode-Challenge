@@ -29,6 +29,8 @@ public partial class Contest
 
     public virtual ICollection<CertificateTemplate> CertificateTemplates { get; set; } = new List<CertificateTemplate>();
 
+    public virtual ICollection<JudgeInvite> JudgeInvites { get; set; } = new List<JudgeInvite>();
+
     public virtual ICollection<LeaderboardEntry> LeaderboardEntries { get; set; } = new List<LeaderboardEntry>();
 
     public virtual ICollection<Round> Rounds { get; set; } = new List<Round>();

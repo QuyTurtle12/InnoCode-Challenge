@@ -27,6 +27,8 @@ public partial class User
 
     public virtual ICollection<Appeal> Appeals { get; set; } = new List<Appeal>();
 
+    public virtual ICollection<JudgeInvite> JudgeInvites { get; set; } = new List<JudgeInvite>();
+
     public virtual ICollection<MentorRegistration> MentorRegistrations { get; set; } = new List<MentorRegistration>();
 
     public virtual ICollection<Mentor> Mentors { get; set; } = new List<Mentor>();

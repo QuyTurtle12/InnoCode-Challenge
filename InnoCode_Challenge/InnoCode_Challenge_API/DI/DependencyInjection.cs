@@ -140,6 +140,9 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireAdminRole",
                     policy => policy.RequireRole(RoleConstants.Admin));
 
+                options.AddPolicy("RequireStaffRole",
+                    policy => policy.RequireRole(RoleConstants.Staff));
+
                 options.AddPolicy("RequireStaffOrAdmin",
                     policy => policy.RequireRole(RoleConstants.Staff, RoleConstants.Admin));
 
@@ -304,6 +307,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ILeaderboardEntryService, LeaderboardEntryService>();
             services.AddScoped<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
             services.AddScoped<IContestJudgeService, ContestJudgeService>();
+            services.AddScoped<IJudgeInviteService, JudgeInviteService>();
 
         }
     }

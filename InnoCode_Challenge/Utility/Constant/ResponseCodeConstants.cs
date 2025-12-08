@@ -13,5 +13,7 @@
         public const string FORBIDDEN = "FORBIDDEN";
         public const string BADREQUEST = "BADREQUEST";
         public const string INVALID_DATE = "INVALID_DATE";
+        public const string CONFLICT = "CONFLICT";
+        public const string GONE = "GONE";
     }
 }

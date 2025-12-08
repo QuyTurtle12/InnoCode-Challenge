@@ -55,7 +55,7 @@ namespace InnoCode_Challenge_API.Controllers.Schools
         }
 
         [HttpPost]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffRole")]
         public async Task<IActionResult> Create([FromBody] CreateProvinceDTO dto)
         {
             var createdProvince = await _provinceService.CreateAsync(dto);
@@ -69,7 +69,7 @@ namespace InnoCode_Challenge_API.Controllers.Schools
         }
 
         [HttpPut("{id:guid}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffRole")]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateProvinceDTO dto)
         {
             var updatedProvince = await _provinceService.UpdateAsync(id, dto);
@@ -82,7 +82,7 @@ namespace InnoCode_Challenge_API.Controllers.Schools
         }
 
         [HttpDelete("{id:guid}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Policy = "RequireStaffRole")]
         public async Task<IActionResult> Delete(Guid id)
         {
             await _provinceService.DeleteAsync(id);

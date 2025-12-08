@@ -365,6 +365,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="roundId"></param>
         /// <returns></returns>
         [HttpGet("{roundId}/open-code")]
+        [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> GetOpenCode(Guid roundId)
         {
             string openCode = await _roundService.GetOpenCode(roundId);
