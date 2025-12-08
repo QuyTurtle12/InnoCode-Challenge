@@ -22,5 +22,8 @@ namespace BusinessLogic.IServices
 
         Task<bool> IsStudentFinishedRoundAsync(Guid roundId, Guid studentId);
         Task MarkFinishedSubmissionAsync(Guid roundId, Guid studentId);
+
+        Task<bool> HasStudentInputtedOpenCodeAsync(Guid roundId, Guid studentId);
+        Task MarkStudentOpenCodeInputtedAsync(Guid roundId, Guid studentId);
     }
 }

@@ -8,12 +8,15 @@ namespace BusinessLogic.IServices.Contests
     public interface IRoundService
     {
         Task<PaginatedList<GetRoundDTO>> GetPaginatedRoundAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? roundNameSearch, string? contestNameSearch, DateTime? startDate, DateTime? endDate);
-        Task<GetRoundDTO> GetRoundByIdAsync(Guid id);
+        Task<GetRoundDTO> GetRoundByIdAsync(Guid id, string? openCode);
         Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO);
         Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO);
         Task DeleteRoundAsync(Guid id);
         Task DistributeSubmissionsToJudgesAsync(Guid roundId);
         Task<int?> GetRoundTimeLimitSecondsAsync(Guid roundId);
         Task MarkFinishFinishRoundAsync(Guid roundId);
+        Task<string> GenerateOpenCode(Guid roundId);
+        Task ValidateOpenCode(Guid roundId, string openCode);
+        Task<string> GetOpenCode(Guid roundId);
     }
 }

@@ -32,14 +32,16 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
         /// <param name="roundId"></param>
         /// <param name="pageNumber"></param>
         /// <param name="pageSize"></param>
+        /// <param name="openCode"></param>
         /// <returns></returns>
         [HttpGet("rounds/{roundId}/mcq-test")]
         public async Task<IActionResult> GetQuiz(
             Guid roundId,
             int pageNumber = 1,
-            int pageSize = 10)
+            int pageSize = 10,
+            string? openCode = null)
         {
-            GetQuizDTO quiz = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId);
+            GetQuizDTO quiz = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId, openCode);
 
             var paging = new
             {

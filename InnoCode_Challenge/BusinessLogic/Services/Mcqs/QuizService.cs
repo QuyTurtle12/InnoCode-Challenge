@@ -482,7 +482,7 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId)
+        public async Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId, string? openCode)
         {
             try
             {
@@ -497,16 +497,56 @@ namespace BusinessLogic.Services.Mcqs
                 // Get user role from JWT token
                 string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
 
-                // If user is a student, validate round deadline and check if already finished
+                // If user is a student, perform additional validations
                 if (userRole == RoleConstants.Student)
                 {
+                    // Validate round deadline
                     await ValidateRoundDeadlineAsync(roundId, "access quiz");
 
-                    if (await IsAlreadyFinishRound(roundId))
+                    // Get student ID
+                    string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    if (string.IsNullOrWhiteSpace(userId))
+                    {
+                        throw new ErrorException(StatusCodes.Status401Unauthorized,
+                            ResponseCodeConstants.UNAUTHORIZED,
+                            "User ID not found.");
+                    }
+
+                    IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                    Guid studentId = await studentRepo.Entities
+                        .Where(s => s.UserId.ToString() == userId && !s.DeletedAt.HasValue)
+                        .Select(s => s.StudentId)
+                        .FirstOrDefaultAsync();
+
+                    if (studentId == Guid.Empty)
+                    {
+                        throw new ErrorException(StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            "Student not found.");
+                    }
+
+                    // Check if student has already finished this round
+                    bool hasFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+                    if (hasFinishedRound)
                     {
                         throw new ErrorException(StatusCodes.Status403Forbidden,
                             ResponseCodeConstants.FORBIDDEN,
-                            $"Cannot access. You have already finished this round.");
+                            "You have already finished this round and cannot access its content anymore.");
+                    }
+
+                    // Check if student has already inputted the open code once
+                    bool hasInputtedCode = await _configService.HasStudentInputtedOpenCodeAsync(roundId, studentId);
+
+                    // If student hasn't inputted code yet, validate the provided code
+                    if (!hasInputtedCode)
+                    {
+                        // Validate open code
+                        await ValidateOpenCodeAsync(roundId, openCode);
+
+                        // Mark that student has inputted the code
+                        await _configService.MarkStudentOpenCodeInputtedAsync(roundId, studentId);
                     }
                 }
 
@@ -514,12 +554,12 @@ namespace BusinessLogic.Services.Mcqs
                 int shuffleSeed = 0;
 
                 // Get the logged-in student's user ID
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+                string? currentUserId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
 
-                if (userId != null)
+                if (currentUserId != null)
                 {
                     // Combine userId and roundId to create a unique seed
-                    shuffleSeed = userId.GetHashCode() ^ roundId.GetHashCode();
+                    shuffleSeed = currentUserId.GetHashCode() ^ roundId.GetHashCode();
                 }
 
                 // Create Random with the seed
@@ -630,6 +670,45 @@ namespace BusinessLogic.Services.Mcqs
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving quiz: {ex.Message}");
+            }
+        }
+
+        private async Task ValidateOpenCodeAsync(Guid roundId, string? openCode)
+        {
+            try
+            {
+                // Validate input
+                if (string.IsNullOrWhiteSpace(openCode))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Open code is required to access this quiz.");
+                }
+
+                // Check if open code exists in config
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                string key = ConfigKeys.RoundOpenCode(roundId);
+
+                Config? config = await configRepo.Entities
+                    .FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+
+                if (config == null || config.Value != openCode)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Invalid open code.");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error validating open code: {ex.Message}");
             }
         }
 

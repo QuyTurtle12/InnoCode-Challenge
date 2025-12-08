@@ -11,7 +11,7 @@ namespace BusinessLogic.IServices.Mcqs
         Task<QuizResultDTO> GetQuizAttemptResultAsync(Guid attemptId);
         Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(int pageNumber, int pageSize, Guid? studentId, Guid? testId, Guid roundId, bool IsForCurrentLoggedInStudent = false);
         Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(int pageNumber, int pageSize, Guid? bankId, string? nameSearch);
-        Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId);
+        Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId, string? openCode);
         Task<GetBankWithQuestionsDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid TestId);
         Task<McqStartDTO> GetMcqStartDetailsAsync(Guid roundId);
         Task SaveAnswerAsync(string key, List<CurrentAnswerDTO> saveAnswerDTO);

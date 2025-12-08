@@ -55,6 +55,8 @@ namespace BusinessLogic.Services.Contests
                 using IServiceScope scope = _serviceProvider.CreateScope();
                 IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
                 IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
+                IRoundService roundService = scope.ServiceProvider.GetRequiredService<IRoundService>();
+
 
                 DateTime now = DateTime.UtcNow;
 
@@ -80,6 +82,24 @@ namespace BusinessLogic.Services.Contests
                         _logger.LogInformation(
                             "Round {RoundId} ({RoundName}) status changed from {OldStatus} to {NewStatus}",
                             round.RoundId, round.Name, oldStatus, newStatus);
+                    }
+
+                    // Generate open code when round in Opened status
+                    if (round.Status == RoundStatusEnum.Opened.ToString())
+                    {
+                        try
+                        {
+                            await roundService.GenerateOpenCode(round.RoundId);
+                            _logger.LogInformation(
+                                "Successfully generated open code for round {RoundId} ({RoundName})",
+                                round.RoundId, round.Name);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex,
+                                "Failed to generate open code for round {RoundId} ({RoundName})",
+                                round.RoundId, round.Name);
+                        }
                     }
                 }
 

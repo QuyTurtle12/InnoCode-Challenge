@@ -118,7 +118,8 @@ namespace BusinessLogic.Services.Contests
             // Skip if already in terminal state OR manually paused
             if (contest.Status == ContestStatusEnum.Completed.ToString()
                 || contest.Status == ContestStatusEnum.Cancelled.ToString()
-                || contest.Status == ContestStatusEnum.Paused.ToString())
+                || contest.Status == ContestStatusEnum.Paused.ToString()
+                || contest.Status == ContestStatusEnum.Draft.ToString())
                 return Task.FromResult<string?>(null);
 
             // Get registration dates from config

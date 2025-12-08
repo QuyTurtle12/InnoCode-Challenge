@@ -66,11 +66,12 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// Get round by id
         /// </summary>
         /// <param name="id"></param>
+        /// <param name="openCode"></param>
         /// <returns></returns>
         [HttpGet("{id}")]
-        public async Task<IActionResult> GetRoundById(Guid id)
+        public async Task<IActionResult> GetRoundById(Guid id, string? openCode = null)
         {
-            GetRoundDTO round = await _roundService.GetRoundByIdAsync(id);
+            GetRoundDTO round = await _roundService.GetRoundByIdAsync(id, openCode);
             return Ok(new BaseResponseModel<GetRoundDTO>(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
@@ -337,6 +338,41 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,
                         message: "Round marked as finished successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Generate open code for a round
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpPost("{roundId}/open-code/generate")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GenerateOpenCode(Guid roundId)
+        {
+            string openCode = await _roundService.GenerateOpenCode(roundId);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: openCode,
+                        message: "Open code generated successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Get open code for a round
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpGet("{roundId}/open-code")]
+        public async Task<IActionResult> GetOpenCode(Guid roundId)
+        {
+            string openCode = await _roundService.GetOpenCode(roundId);
+            return Ok(new BaseResponseModel<string>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: openCode,
+                        message: "Open code retrieved successfully."
                     ));
         }
 

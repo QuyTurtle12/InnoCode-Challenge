@@ -69,7 +69,7 @@ namespace InnoCode_Challenge_API.DI
                                    "http://localhost:5173",
                                    "https://localhost:5173",
                                    "https://innocode-challenge-api.onrender.com",
-                                   "https://innocode-fe-kbyi.vercel.app")
+                                   "https://innocode-fe.vercel.app")
                                .AllowAnyHeader()
                                .AllowAnyMethod()
                                .AllowCredentials();

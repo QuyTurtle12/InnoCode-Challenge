@@ -70,6 +70,34 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round name is required.");
                 }
 
+                // Validate Problem Type
+                if (roundDTO.ProblemType == ProblemTypeEnum.Manual || roundDTO.ProblemType == ProblemTypeEnum.AutoEvaluation)
+                {
+                    // Problem configuration is required for these types
+                    if (roundDTO.ProblemConfig == null)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Problem configuration is required for the selected problem type.");
+                    }
+
+                    // Validate penalty range
+                    if (roundDTO.ProblemConfig.PenaltyRate.HasValue && (roundDTO.ProblemConfig.PenaltyRate.Value < 0 || roundDTO.ProblemConfig.PenaltyRate.Value > 1))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Penalty rate must be between 0 and 1");
+                    }
+                } else if (roundDTO.ProblemType == ProblemTypeEnum.McqTest)
+                {
+                    // MCQ test configuration is required for this type
+                    if (roundDTO.McqTestConfig == null)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "MCQ test configuration is required for the selected problem type.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(roundDTO.McqTestConfig.Name))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "MCQ test name is required.");
+                    }
+                }
+
                 // Validate rounds
                 await ValidateRoundInputAsync(contestId, roundDTO, null);
 
@@ -292,7 +320,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<GetRoundDTO> GetRoundByIdAsync(Guid id)
+        public async Task<GetRoundDTO> GetRoundByIdAsync(Guid id, string? openCode)
         {
             try
             {
@@ -343,6 +371,61 @@ namespace BusinessLogic.Services.Contests
                 if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
                 {
                     roundDTO.TimeLimitSeconds = secs;
+                }
+
+                // Get user role from HttpContext
+                string? userRole = _httpContextAccessor.HttpContext?.User.FindFirst(ClaimTypes.Role)?.Value;
+
+                // If user is a student, perform additional validations
+                if (!string.IsNullOrWhiteSpace(userRole) && userRole == RoleConstants.Student)
+                {
+                    // Get user ID from JWT token
+                    string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    if (string.IsNullOrWhiteSpace(userId))
+                    {
+                        throw new ErrorException(StatusCodes.Status401Unauthorized,
+                            ResponseCodeConstants.UNAUTHORIZED,
+                            "User ID not found.");
+                    }
+
+                    // Get student ID associated with this user
+                    IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                    Guid studentId = await studentRepo.Entities
+                        .Where(s => s.UserId.ToString() == userId && !s.DeletedAt.HasValue)
+                        .Select(s => s.StudentId)
+                        .FirstOrDefaultAsync();
+
+                    // Check if student exists
+                    if (studentId == Guid.Empty)
+                    {
+                        throw new ErrorException(StatusCodes.Status404NotFound,
+                            ResponseCodeConstants.NOT_FOUND,
+                            "Student not found.");
+                    }
+
+                    // Check if student has already finished this round
+                    bool hasFinishedRound = await _configService.IsStudentFinishedRoundAsync(id, studentId);
+
+                    if (hasFinishedRound)
+                    {
+                        throw new ErrorException(StatusCodes.Status403Forbidden,
+                            ResponseCodeConstants.FORBIDDEN,
+                            "You have already finished this round and cannot access its content anymore.");
+                    }
+
+                    // Check if student has already inputted the open code once
+                    bool hasInputtedCode = await _configService.HasStudentInputtedOpenCodeAsync(id, studentId);
+
+                    // If student hasn't inputted code yet, validate the provided code
+                    if (!hasInputtedCode)
+                    {
+                        // Validate open code
+                        await ValidateOpenCode(id, openCode);
+
+                        // Mark that student has inputted the code
+                        await _configService.MarkStudentOpenCodeInputtedAsync(id, studentId);
+                    }
                 }
 
                 // Map problem information if exists
@@ -954,6 +1037,142 @@ namespace BusinessLogic.Services.Contests
 
             // Mark student as finished for this round
             await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+        }
+
+        public async Task<string> GenerateOpenCode(Guid roundId)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate round exists
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+                if (round == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found.");
+                }
+
+                // Retrieve open code from config
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                string key = ConfigKeys.RoundOpenCode(roundId);
+
+                Config? config = await configRepo.Entities
+                    .FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+
+                // Generate 4-digit random code
+                Random random = new Random();
+                string openCode = random.Next(1000, 10000).ToString();
+
+                // Create open code in config if not exists, else update it
+                if (config == null)
+                {
+                    await UpsertConfigAsync(configRepo, key, openCode);
+                }
+                else
+                {
+                    config.Value = openCode;
+                    configRepo.Update(config);
+                }
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+
+                return openCode;
+            }
+            catch (Exception ex)
+            {
+                // Rollback on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error generating open code: {ex.Message}");
+            }
+        }
+
+        public async Task ValidateOpenCode(Guid roundId, string? openCode)
+        {
+            try
+            {
+                // Validate input
+                if (string.IsNullOrWhiteSpace(openCode))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Open code cannot be empty.");
+                }
+
+                // Check if open code exists in config
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                string key = ConfigKeys.RoundOpenCode(roundId);
+
+                Config? config = await configRepo.Entities
+                    .FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+
+                if (config == null || config.Value != openCode)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Invalid open code.");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error validating open code: {ex.Message}");
+            }
+        }
+
+        public async Task<string> GetOpenCode(Guid roundId)
+        {
+            // Validate round exists
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Round not found.");
+            }
+
+            // Retrieve open code from config
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+            string key = ConfigKeys.RoundOpenCode(roundId);
+
+            Config? config = await configRepo.Entities
+                .FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+
+            // Validate open code exists
+            if (config == null || config.Value == null)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Open code not found.");
+            }
+
+            return config.Value;
         }
     }
 }

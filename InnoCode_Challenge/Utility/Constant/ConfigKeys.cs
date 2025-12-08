@@ -23,5 +23,7 @@
         public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
         public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";
         public static string RoundStudent(Guid roundId, Guid studentId) => $"round:{roundId}:student:{studentId}";
+        public static string RoundOpenCode(Guid roundId) => $"round:{roundId}:open_code";
+        public static string RoundStudentOpenCodeInputted(Guid studentId, Guid roundId) => $"student:{studentId}:round:{roundId}";
     }
 }
