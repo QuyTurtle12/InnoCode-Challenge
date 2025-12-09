@@ -14,7 +14,8 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly ILogger<RoundSateBackgroundService> _logger;
         private readonly IServiceProvider _serviceProvider;
-        private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(1); // Check every 1 minutes
+        private const int DelayMinutes = 1;
+        private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(DelayMinutes);
 
         public RoundSateBackgroundService(
             ILogger<RoundSateBackgroundService> logger,
@@ -27,6 +28,8 @@ namespace BusinessLogic.Services.Contests
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("Round State Background Service is starting.");
+
+            await DelayUntilNextMinuteBoundaryAsync(stoppingToken);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -45,6 +48,20 @@ namespace BusinessLogic.Services.Contests
             }
 
             _logger.LogInformation("Round State Background Service is stopping.");
+        }
+
+        private async Task DelayUntilNextMinuteBoundaryAsync(CancellationToken stoppingToken)
+        {
+            DateTime now = DateTime.UtcNow;
+            DateTime nextMinute = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc)
+                .AddMinutes(DelayMinutes);
+            TimeSpan delayUntilNextMinute = nextMinute - now;
+
+            _logger.LogInformation(
+                $"Waiting {delayUntilNextMinute} seconds until next minute boundary at {nextMinute} UTC",
+                delayUntilNextMinute.TotalSeconds, nextMinute);
+
+            await Task.Delay(delayUntilNextMinute, stoppingToken);
         }
 
         private async Task UpdateRoundStatesAsync()

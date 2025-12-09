@@ -35,7 +35,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         [Authorize(Policy = "RequireOrganizerOrAdmin")]
         public async Task<IActionResult> GetById(Guid id)
         {
-            var dto = await _certificateTemplateService.GetByIdAsync(id);
+            CertificateTemplateDTO? dto = await _certificateTemplateService.GetByIdAsync(id);
             return Ok(new BaseResponseModel<object>(
                 StatusCodes.Status200OK,
                 ResponseCodeConstants.SUCCESS,
