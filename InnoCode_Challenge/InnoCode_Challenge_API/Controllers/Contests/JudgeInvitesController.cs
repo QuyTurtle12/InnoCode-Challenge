@@ -195,5 +195,62 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 message: "Judge invite declined successfully."
             ));
         }
+
+        /// <summary>
+        /// Get paginated list of judges with their invite status for a contest
+        /// </summary>
+        /// <param name="contestId"></param>
+        /// <param name="page"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="judgeNameSearch"></param>
+        /// <param name="judgeEmailSearch"></param>
+        /// <param name="inviteStatus"></param>
+        /// <param name="hasBeenInvited"></param>
+        /// <param name="sortBy"> Sort by JudgeName, email, invitedat, status, expiresat, acceptedat</param>
+        /// <param name="desc"></param>
+        /// <returns></returns>
+        [HttpGet("judges")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetJudgesWithInviteStatus(
+            Guid contestId,
+            int page = 1,
+            int pageSize = 10,
+            string? judgeNameSearch = null,
+            string? judgeEmailSearch = null,
+            JudgeInviteStatusEnum? inviteStatus = null,
+            bool? hasBeenInvited = null,
+            string sortBy = "JudgeName",
+            bool desc = true)
+        {
+            PaginatedList<JudgeWithInviteStatusDTO> result =
+                await _judgeInviteService.GetJudgesWithInviteStatusAsync(
+                    contestId,
+                    page,
+                    pageSize,
+                    judgeNameSearch,
+                    judgeEmailSearch,
+                    inviteStatus,
+                    hasBeenInvited,
+                    sortBy,
+                    desc);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result.Items,
+                additionalData: paging,
+                message: "Judges with invite status retrieved successfully."
+            ));
+        }
     }
 }

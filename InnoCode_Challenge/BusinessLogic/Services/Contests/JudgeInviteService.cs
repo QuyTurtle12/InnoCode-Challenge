@@ -515,5 +515,176 @@ namespace BusinessLogic.Services.Contests
             return new string(Enumerable.Repeat(chars, 8)
                 .Select(s => s[random.Next(s.Length)]).ToArray());
         }
+
+        public async Task<PaginatedList<JudgeWithInviteStatusDTO>> GetJudgesWithInviteStatusAsync(
+            Guid contestId,
+            int page,
+            int pageSize,
+            string? judgeNameSearch,
+            string? judgeEmailSearch,
+            JudgeInviteStatusEnum? inviteStatus,
+            bool? hasBeenInvited,
+            string sortBy,
+            bool desc)
+        {
+            try
+            {
+                // Validate pagination parameters
+                if (page < 1 || pageSize < 1)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
+                }
+
+                if (pageSize > 100)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page size cannot exceed 100.");
+                }
+
+                // Get contest repository
+                IGenericRepository<Contest> contestRepo = _uow.GetRepository<Contest>();
+
+                // Verify contest exists
+                Contest? contest = await contestRepo.Entities
+                    .Where(c => c.ContestId == contestId && !c.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (contest == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"No contest found with ID={contestId}");
+                }
+
+                // Get user repository
+                IGenericRepository<User> userRepo = _uow.GetRepository<User>();
+
+                // Get judge invite repository
+                IGenericRepository<JudgeInvite> inviteRepo = _uow.GetRepository<JudgeInvite>();
+
+                // Get all judges with Judge role
+                IQueryable<User> judgeQuery = userRepo.Entities
+                    .Where(u => u.Role == RoleConstants.Judge && !u.DeletedAt.HasValue);
+
+                // Apply filters on judge name
+                if (!string.IsNullOrWhiteSpace(judgeNameSearch))
+                {
+                    judgeQuery = judgeQuery.Where(j => j.Fullname.Contains(judgeNameSearch));
+                }
+
+                // Apply filters on judge email
+                if (!string.IsNullOrWhiteSpace(judgeEmailSearch))
+                {
+                    judgeQuery = judgeQuery.Where(j => j.Email.Contains(judgeEmailSearch));
+                }
+
+                // Get all judges
+                List<User> allJudges = await judgeQuery
+                    .ToListAsync();
+
+                // Extract judge IDs
+                List<Guid> judgeIds = allJudges.Select(j => j.UserId).ToList();
+
+                // Get all invites for these judges in this contest
+                List<JudgeInvite> invites = await inviteRepo.Entities
+                    .Where(i => i.ContestId == contestId && judgeIds.Contains(i.JudgeId))
+                    .ToListAsync();
+
+                // Create a dictionary for faster lookup
+                Dictionary<Guid, JudgeInvite> inviteLookup = invites.ToDictionary(i => i.JudgeId);
+
+                // Map judges to DTOs with invite status
+                List<JudgeWithInviteStatusDTO> judgeWithInvites = allJudges.Select(judge =>
+                {
+                    // Check if this judge has an invite
+                    inviteLookup.TryGetValue(judge.UserId, out JudgeInvite? invite);
+
+                    return new JudgeWithInviteStatusDTO
+                    {
+                        JudgeId = judge.UserId,
+                        JudgeName = judge.Fullname,
+                        JudgeEmail = judge.Email,
+                        JudgeStatus = judge.Status,
+                        InviteId = invite?.InviteId,
+                        InviteStatus = invite?.Status,
+                        InvitedAt = invite?.CreatedAt,
+                        ExpiresAt = invite?.ExpiresAt,
+                        AcceptedAt = invite?.AcceptedAt,
+                        InviteCode = invite?.InviteCode
+                    };
+                }).ToList();
+
+                // Filter by invitation status
+                if (inviteStatus.HasValue)
+                {
+                    string statusString = inviteStatus.Value.ToString().ToLower();
+                    judgeWithInvites = judgeWithInvites.Where(j => j.InviteStatus == statusString).ToList();
+                }
+
+                // Filter by whether judge has been invited
+                if (hasBeenInvited.HasValue)
+                {
+                    if (hasBeenInvited.Value)
+                    {
+                        // Only show judges who have been invited
+                        judgeWithInvites = judgeWithInvites.Where(j => j.InviteId != null).ToList();
+                    }
+                    else
+                    {
+                        // Only show judges who have NOT been invited
+                        judgeWithInvites = judgeWithInvites.Where(j => j.InviteId == null).ToList();
+                    }
+                }
+
+                // Apply sorting
+                judgeWithInvites = (sortBy?.ToLowerInvariant()) switch
+                {
+                    "name" or "judgename" => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.JudgeName).ToList()
+                        : judgeWithInvites.OrderBy(j => j.JudgeName).ToList(),
+                    "email" or "judgeemail" => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.JudgeEmail).ToList()
+                        : judgeWithInvites.OrderBy(j => j.JudgeEmail).ToList(),
+                    "invitedat" => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.InvitedAt).ToList()
+                        : judgeWithInvites.OrderBy(j => j.InvitedAt).ToList(),
+                    "status" or "invitestatus" => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.InviteStatus).ToList()
+                        : judgeWithInvites.OrderBy(j => j.InviteStatus).ToList(),
+                    "expiresat" => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.ExpiresAt).ToList()
+                        : judgeWithInvites.OrderBy(j => j.ExpiresAt).ToList(),
+                    "acceptedat" => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.AcceptedAt).ToList()
+                        : judgeWithInvites.OrderBy(j => j.AcceptedAt).ToList(),
+                    _ => desc
+                        ? judgeWithInvites.OrderByDescending(j => j.JudgeName).ToList()
+                        : judgeWithInvites.OrderBy(j => j.JudgeName).ToList(),
+                };
+
+                // Get total count after filtering
+                int totalCount = judgeWithInvites.Count;
+
+                // Apply pagination
+                List<JudgeWithInviteStatusDTO> paginatedItems = judgeWithInvites
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .ToList();
+
+                // Create paginated list
+                PaginatedList<JudgeWithInviteStatusDTO> paginatedList = new PaginatedList<JudgeWithInviteStatusDTO>(paginatedItems, totalCount, page, pageSize);
+
+                // Return the paginated list of DTOs
+                return paginatedList;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving judges with invite status: {ex.Message}");
+            }
+        }
     }
 }

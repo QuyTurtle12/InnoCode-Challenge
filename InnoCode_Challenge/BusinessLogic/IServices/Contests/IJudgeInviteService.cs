@@ -22,6 +22,17 @@ namespace BusinessLogic.IServices.Contests
             DateTime? AcceptedAtEnd,
             bool desc);
 
+        Task<PaginatedList<JudgeWithInviteStatusDTO>> GetJudgesWithInviteStatusAsync(
+            Guid contestId,
+            int page,
+            int pageSize,
+            string? judgeNameSearch,
+            string? judgeEmailSearch,
+            JudgeInviteStatusEnum? inviteStatus,
+            bool? hasBeenInvited,
+            string sortBy,
+            bool desc);
+
         Task<JudgeInviteDTO> CreateAsync(Guid contestId, CreateJudgeInviteDTO dto);
 
         Task<JudgeInviteDTO> ResendAsync(Guid contestId, Guid inviteId);
