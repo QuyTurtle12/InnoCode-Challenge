@@ -376,82 +376,6 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task UpdateLeaderboardAsync(Guid contestId)
-        {
-            try
-            {
-                // Start a new transaction
-                _unitOfWork.BeginTransaction();
-
-                // Get the repository for LeaderboardEntry
-                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
-
-                // Get all leaderboard entries for the specified contest with Team info
-                IList<LeaderboardEntry> entries = leaderboardRepo.Entities
-                    .Include(e => e.Team)
-                    .Where(e => e.ContestId == contestId)
-                    .OrderByDescending(e => e.Score)  // Order by score in descending order
-                    .ToList();
-
-                // If no entries found, throw an exception
-                if (!entries.Any())
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"No leaderboard entries found for contest ID: {contestId}");
-                }
-
-                // Generate a shared snapshot time for all entries
-                DateTime sharedSnapshot = DateTime.UtcNow;
-
-                // Collect team info for broadcasting
-                List<TeamInfo> teamInfoList = new List<TeamInfo>();
-
-                // Update ranks based on the ordered scores
-                int currentRank = 1;
-                foreach (LeaderboardEntry entry in entries)
-                {
-                    entry.Rank = currentRank;
-                    entry.SnapshotAt = sharedSnapshot;
-                    await leaderboardRepo.UpdateAsync(entry);
-
-                    // Collect team info
-                    teamInfoList.Add(new TeamInfo
-                    {
-                        TeamId = entry.TeamId,
-                        TeamName = entry.Team?.Name ?? "Unknown",
-                        Rank = currentRank,
-                        Score = entry.Score ?? 0
-                    });
-
-                    currentRank++;
-                }
-
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
-
-                // Commit the transaction if all operations succeed
-                _unitOfWork.CommitTransaction();
-
-                // Broadcast real-time leaderboard update
-                await _realtimeService.BroadcastLeaderboardUpdateAsync(contestId, teamInfoList);
-            }
-            catch (Exception ex)
-            {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error updating leaderboard rankings: {ex.Message}");
-            }
-        }
-
         public async Task<GetLeaderboardEntryDTO> GetLeaderboardAsync(int pageNumber, int pageSize, Guid contestIdSearch)
         {
             try
@@ -794,11 +718,14 @@ namespace BusinessLogic.Services.Contests
             {
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
-                // Get all leaderboard entries for the contest ordered by score
+                // Get all leaderboard entries for the contest
+                // Ordered by highest score, then by earliest snapshot time, then by TeamId
                 List<LeaderboardEntry> allEntries = await leaderboardRepo.Entities
                     .Include(e => e.Team)
                     .Where(e => e.ContestId == contestId)
                     .OrderByDescending(e => e.Score)
+                    .ThenBy(e => e.SnapshotAt)
+                    .ThenBy(e => e.TeamId)
                     .ToListAsync();
 
                 // Validate that entries exist
@@ -809,28 +736,24 @@ namespace BusinessLogic.Services.Contests
                         $"No leaderboard entries found for contest ID: {contestId}");
                 }
 
-                // Generate shared snapshot time
-                DateTime sharedSnapshot = DateTime.UtcNow;
-
-                int rank = 1;
+                int currentRank = 1;
                 List<TeamInfo> teamInfoList = new List<TeamInfo>();
 
-                // Update ranks and prepare team info for broadcasting
+                // Assign unique ranks (1 rank = 1 team)
                 foreach (LeaderboardEntry e in allEntries)
                 {
-                    e.Rank = rank;
-                    e.SnapshotAt = sharedSnapshot;
+                    e.Rank = currentRank;
                     await leaderboardRepo.UpdateAsync(e);
 
                     teamInfoList.Add(new TeamInfo
                     {
                         TeamId = e.TeamId,
                         TeamName = e.Team?.Name ?? "Unknown",
-                        Rank = rank,
+                        Rank = currentRank,
                         Score = e.Score ?? 0
                     });
 
-                    rank++;
+                    currentRank++;
                 }
 
                 await _unitOfWork.SaveAsync();
@@ -1117,6 +1040,68 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving team list in leaderboard: {ex.Message}");
+            }
+        }
+
+        public async Task DeductScoreFromStudentAsync(Guid contestId, Guid studentId, double scoreToDeduct)
+        {
+            try
+            {
+                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+                // Find the student's team in this contest
+                TeamMember? teamMember = await teamMemberRepo.Entities
+                    .Where(tm => tm.StudentId == studentId
+                        && tm.Team.ContestId == contestId
+                        && tm.Team.DeletedAt == null)
+                    .Include(tm => tm.Team)
+                    .FirstOrDefaultAsync();
+
+                // Check if team member exists
+                if (teamMember == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Student {studentId} is not a member of any team in contest {contestId}");
+                }
+
+                Guid teamId = teamMember.TeamId;
+
+                // Find the leaderboard entry for the team
+                LeaderboardEntry? entry = await leaderboardRepo.Entities
+                    .Where(e => e.ContestId == contestId && e.TeamId == teamId)
+                    .FirstOrDefaultAsync();
+
+                // Check if leaderboard entry exists
+                if (entry == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Leaderboard entry not found for team {teamId} in contest {contestId}");
+                }
+
+                // Deduct score (ensure it doesn't go below 0)
+                entry.Score = Math.Max(0, (entry.Score ?? 0) - scoreToDeduct);
+                entry.SnapshotAt = DateTime.UtcNow;
+
+                await leaderboardRepo.UpdateAsync(entry);
+                await _unitOfWork.SaveAsync();
+
+                // Recalculate ranks after score change
+                await RecalculateRanksAsync(contestId);
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error deducting score from student: {ex.Message}");
             }
         }
     }

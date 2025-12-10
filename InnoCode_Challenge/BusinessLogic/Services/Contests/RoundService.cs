@@ -911,7 +911,7 @@ namespace BusinessLogic.Services.Contests
 
                 if (!pendingSubmissions.Any())
                 {
-                    // No pending submissions to distribute, but still mark as distributed
+                    // No pending submissions to distribute
                     _unitOfWork.CommitTransaction();
                     return;
                 }
