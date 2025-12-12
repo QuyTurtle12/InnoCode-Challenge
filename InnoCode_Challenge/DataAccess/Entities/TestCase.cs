@@ -23,7 +23,7 @@ public partial class TestCase
 
     public string? ExpectedOutput { get; set; }
 
-    public DateTime? DeleteAt { get; set; }
+    public DateTime? DeletedAt { get; set; }
 
     public int? OrderIndex { get; set; }
 

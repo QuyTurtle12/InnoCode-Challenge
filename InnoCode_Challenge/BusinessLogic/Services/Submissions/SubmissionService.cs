@@ -928,7 +928,7 @@ namespace BusinessLogic.Services.Submissions
                 List<TestCase> rubricCriteria = await rubricRepo.Entities
                     .Where(tc => tc.ProblemId == submission.ProblemId
                         && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .ToListAsync();
 
                 if (!rubricCriteria.Any())
@@ -1761,7 +1761,7 @@ namespace BusinessLogic.Services.Submissions
                         JudgeEmail = judgeEmail,
                         Status = s.Status ?? string.Empty,
                         CriterionResults = s.SubmissionDetails?
-                            .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeleteAt.HasValue)
+                            .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeletedAt.HasValue)
                             .Select(sd => new RubricCriterionResultDTO
                             {
                                 RubricId = sd.TestcaseId!.Value,
@@ -1853,7 +1853,7 @@ namespace BusinessLogic.Services.Submissions
                     JudgeEmail = judgeEmail,
                     Status = submission.Status ?? string.Empty,
                     CriterionResults = submission.SubmissionDetails?
-                        .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeleteAt.HasValue)
+                        .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeletedAt.HasValue)
                         .Select(sd => new RubricCriterionResultDTO
                         {
                             RubricId = sd.TestcaseId!.Value,

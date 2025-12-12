@@ -1058,7 +1058,7 @@ namespace BusinessLogic.Services.Contests
                 // Check if Auto Evaluation problems have test cases
                 List<Problem> autoEvalProblemsWithoutTestCases = problems
                     .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                                && !p.TestCases.Any(tc => tc.DeleteAt == null))
+                                && !p.TestCases.Any(tc => tc.DeletedAt == null))
                     .ToList();
 
                 if (autoEvalProblemsWithoutTestCases.Any())
@@ -1085,7 +1085,7 @@ namespace BusinessLogic.Services.Contests
                 // Check for rubric attachments
                 List<Problem> manualProblemsWithoutRubrics = problems
                     .Where(p => p.Type == ProblemTypeEnum.Manual.ToString()
-                                && !p.TestCases.Any(tc => tc.DeleteAt == null))
+                                && !p.TestCases.Any(tc => tc.DeletedAt == null))
                     .ToList();
 
                 if (manualProblemsWithoutRubrics.Any())

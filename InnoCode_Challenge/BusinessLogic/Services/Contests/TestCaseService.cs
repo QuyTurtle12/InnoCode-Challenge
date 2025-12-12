@@ -139,14 +139,14 @@ namespace BusinessLogic.Services.Contests
                 testCase.ProblemId = round.Problem.ProblemId;
                 testCase.Type = TestCaseTypeEnum.TestCase.ToString();
 
-                // Ensure DeleteAt is null
-                testCase.DeleteAt = null;
+                // Ensure DeletedAt is null
+                testCase.DeletedAt = null;
 
                 // Assign Order Index
                 if (!testCase.OrderIndex.HasValue)
                 {
                     int maxIndex = await testCaseRepo.Entities
-                        .Where(tc => tc.ProblemId == testCase.ProblemId && tc.Type == TestCaseTypeEnum.TestCase.ToString() && !tc.DeleteAt.HasValue)
+                        .Where(tc => tc.ProblemId == testCase.ProblemId && tc.Type == TestCaseTypeEnum.TestCase.ToString() && !tc.DeletedAt.HasValue)
                         .Select(tc => (int?)tc.OrderIndex)
                         .MaxAsync() ?? 0;
 
@@ -235,7 +235,7 @@ namespace BusinessLogic.Services.Contests
                     .Where(tc => testCaseIds.Contains(tc.TestCaseId)
                         && tc.ProblemId == round.Problem.ProblemId
                         && tc.Type == TestCaseTypeEnum.TestCase.ToString()
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .ToListAsync();
 
                 // Validate all test cases exist
@@ -312,7 +312,7 @@ namespace BusinessLogic.Services.Contests
                 // Find test case by id
                 TestCase? testCase = await testCaseRepo.Entities
                     .Where(tc => tc.TestCaseId == id 
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .Include(tc => tc.Problem)
                     .FirstOrDefaultAsync();
 
@@ -333,7 +333,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Delete the test case
-                testCase.DeleteAt = DateTime.UtcNow;
+                testCase.DeletedAt = DateTime.UtcNow;
 
                 await testCaseRepo.UpdateAsync(testCase);
 
@@ -423,7 +423,7 @@ namespace BusinessLogic.Services.Contests
                 IQueryable<TestCase> query = testCaseRepo.Entities
                     .Where(tc => tc.ProblemId == round.Problem.ProblemId
                         && tc.Type == TestCaseTypeEnum.TestCase.ToString()
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .OrderBy(tc => tc.TestCaseId);
 
                 // Get paginated results
@@ -543,14 +543,14 @@ namespace BusinessLogic.Services.Contests
                     List<TestCase> existingTestCases = await testCaseRepo.Entities
                         .Where(tc => tc.ProblemId == problem.ProblemId
                             && tc.Type == TestCaseTypeEnum.TestCase.ToString()
-                            && !tc.DeleteAt.HasValue)
+                            && !tc.DeletedAt.HasValue)
                         .ToListAsync();
 
                     if (existingTestCases.Any())
                     {
                         foreach (TestCase existingTestCase in existingTestCases)
                         {
-                            existingTestCase.DeleteAt = DateTime.UtcNow;
+                            existingTestCase.DeletedAt = DateTime.UtcNow;
                             await testCaseRepo.UpdateAsync(existingTestCase);
                         }
 
@@ -810,7 +810,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Load test case with its problem and round for validations
                 TestCase? testCase = await testCaseRepo.Entities
-                    .Where(tc => tc.TestCaseId == id && !tc.DeleteAt.HasValue)
+                    .Where(tc => tc.TestCaseId == id && !tc.DeletedAt.HasValue)
                     .Include(tc => tc.Problem)
                         .ThenInclude(p => p.Round)
                     .FirstOrDefaultAsync();

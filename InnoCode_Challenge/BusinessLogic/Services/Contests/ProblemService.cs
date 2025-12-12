@@ -93,9 +93,9 @@ namespace BusinessLogic.Services.Contests
                 // Delete all related test cases and rubric criteria
                 if (problem.TestCases != null && problem.TestCases.Any())
                 {
-                    foreach (TestCase testCase in problem.TestCases.Where(tc => !tc.DeleteAt.HasValue))
+                    foreach (TestCase testCase in problem.TestCases.Where(tc => !tc.DeletedAt.HasValue))
                     {
-                        testCase.DeleteAt = DateTime.UtcNow;
+                        testCase.DeletedAt = DateTime.UtcNow;
                         await testCaseRepo.UpdateAsync(testCase);
                     }
                 }
@@ -267,7 +267,7 @@ namespace BusinessLogic.Services.Contests
                 List<TestCase> rubricCriteria = await rubricRepo.Entities
                     .Where(tc => tc.ProblemId == problem.ProblemId
                         && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .OrderBy(tc => tc.TestCaseId)
                     .ToListAsync();
 
@@ -420,7 +420,7 @@ namespace BusinessLogic.Services.Contests
                 int maxIndex = await testCaseRepo.Entities
                     .Where(tc => tc.ProblemId == problem.ProblemId
                                  && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                                 && !tc.DeleteAt.HasValue)
+                                 && !tc.DeletedAt.HasValue)
                     .Select(tc => (int?)tc.OrderIndex)
                     .MaxAsync() ?? 0;
 
@@ -542,7 +542,7 @@ namespace BusinessLogic.Services.Contests
                     .Where(tc => rubricIdsToUpdate.Contains(tc.TestCaseId)
                         && tc.ProblemId == problem.ProblemId
                         && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .ToListAsync();
 
                 // Validate all rubric IDs exist
@@ -579,7 +579,7 @@ namespace BusinessLogic.Services.Contests
                 List<TestCase> allCriteria = await rubricRepo.Entities
                     .Where(tc => tc.ProblemId == problem.ProblemId
                         && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeleteAt.HasValue)
+                        && !tc.DeletedAt.HasValue)
                     .OrderBy(tc => tc.TestCaseId)
                     .ToListAsync();
 
@@ -630,7 +630,7 @@ namespace BusinessLogic.Services.Contests
                     .Include(tc => tc.Problem)
                     .FirstOrDefaultAsync(tc => tc.TestCaseId == rubricId
                         && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeleteAt.HasValue);
+                        && !tc.DeletedAt.HasValue);
 
                 if (rubricCriterion == null)
                 {
@@ -656,7 +656,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Soft delete the rubric criterion
-                rubricCriterion.DeleteAt = DateTime.UtcNow;
+                rubricCriterion.DeletedAt = DateTime.UtcNow;
                 await rubricRepo.UpdateAsync(rubricCriterion);
 
                 await _unitOfWork.SaveAsync();
@@ -761,14 +761,14 @@ namespace BusinessLogic.Services.Contests
                     List<TestCase> existingRubrics = await rubricRepo.Entities
                         .Where(tc => tc.ProblemId == problem.ProblemId
                             && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                            && !tc.DeleteAt.HasValue)
+                            && !tc.DeletedAt.HasValue)
                         .ToListAsync();
 
                     if (existingRubrics.Any())
                     {
                         foreach (TestCase existingRubric in existingRubrics)
                         {
-                            existingRubric.DeleteAt = DateTime.UtcNow;
+                            existingRubric.DeletedAt = DateTime.UtcNow;
                             await rubricRepo.UpdateAsync(existingRubric);
                         }
 
