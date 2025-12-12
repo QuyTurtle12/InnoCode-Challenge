@@ -25,7 +25,10 @@ namespace Repository.DTOs.ContestDTOs
         public DateTime? RegistrationEnd { get; set; }
 
         [Range(1, 50)]
-        public int? TeamMembersMax { get; set; }  
+        public int? TeamMembersMax { get; set; }
+
+        [Range(1, 50)]
+        public int? TeamMembersMin { get; set; }
 
         [Range(1, 10000)]
         public int? TeamLimitMax { get; set; }    

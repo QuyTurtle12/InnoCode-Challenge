@@ -14,6 +14,7 @@
         public DateTime? Start { get; set; }
         public DateTime? End { get; set; }
         public int TeamMembersMax { get; set; }
+        public int? TeamMembersMin { get; set; }
         public int? TeamLimitMax { get; set; }
         public string? RewardsText { get; set; }
     }

@@ -2,6 +2,7 @@
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
+using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
@@ -354,6 +355,14 @@ namespace BusinessLogic.Services.Contests
                         contestDTO.TeamMembersMax = teamMemberMax;
                     }
 
+                    // Fetch team members min from config
+                    string teamMemberMinKey = ConfigKeys.ContestTeamMembersMin(item.ContestId);
+                    Config? teamMemberMinConfig = configLookup[teamMemberMinKey].FirstOrDefault();
+                    if (teamMemberMinConfig != null && int.TryParse(teamMemberMinConfig.Value, out int teamMemberMin))
+                    {
+                        contestDTO.TeamMembersMin = teamMemberMin;
+                    }
+
                     // Fetch team limit max from config
                     string teamLimitMaxKey = ConfigKeys.ContestTeamLimitMax(item.ContestId);
                     Config? teamLimitMaxConfig = configLookup[teamLimitMaxKey].FirstOrDefault();
@@ -536,6 +545,14 @@ namespace BusinessLogic.Services.Contests
                     contestDTO.TeamMembersMax = teamMemberMax;
                 }
 
+                // Fetch team members min from config
+                string teamMemberMinKey = ConfigKeys.ContestTeamMembersMin(contest.ContestId);
+                Config? teamMemberMinConfig = configLookup[teamMemberMinKey].FirstOrDefault();
+                if (teamMemberMinConfig != null && int.TryParse(teamMemberMinConfig.Value, out int teamMemberMin))
+                {
+                    contestDTO.TeamMembersMin = teamMemberMin;
+                }
+
                 // Fetch team limit max from config
                 string teamLimitMaxKey = ConfigKeys.ContestTeamLimitMax(contest.ContestId);
                 Config? teamLimitMaxConfig = configLookup[teamLimitMaxKey].FirstOrDefault();
@@ -639,6 +656,22 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest name is required.");
                 }
 
+                // Validate Team Members Min is positive
+                if (contestDTO.TeamMembersMin.HasValue && contestDTO.TeamMembersMin.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum must be at least 1.");
+
+                // Validate Team Members Max is positive
+                if (contestDTO.TeamMembersMax.HasValue && contestDTO.TeamMembersMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members maximum must be at least 1.");
+
+                // Validate TeamMembersMin vs TeamMembersMax
+                if (contestDTO.TeamMembersMin.HasValue && contestDTO.TeamMembersMax.HasValue && contestDTO.TeamMembersMin.Value > contestDTO.TeamMembersMax.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum cannot be greater than team members maximum.");
+
+                // Validate Team Limit Max is positive
+                if (contestDTO.TeamLimitMax.HasValue && contestDTO.TeamLimitMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team limit maximum must be at least 1.");
+
                 // Get repository and fetch the contest by ID
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -699,11 +732,14 @@ namespace BusinessLogic.Services.Contests
                 // Set contest-specific configurations
                 int teamMembersMax = contestDTO.TeamMembersMax
                                      ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4);
+                int teamMembersMin = contestDTO.TeamMembersMin
+                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMin, 1);
                 int? teamLimitMax = contestDTO.TeamLimitMax
                                      ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);
 
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(existingContest.ContestId), teamMembersMax.ToString());
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(existingContest.ContestId), teamMembersMin.ToString());
 
                 // Set team limit max
                 if (teamLimitMax.HasValue)
@@ -795,6 +831,22 @@ namespace BusinessLogic.Services.Contests
                 if (dto.RegistrationEnd.HasValue && dto.Start.HasValue && dto.RegistrationEnd.Value >= dto.Start.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration end must be before contest start.");
 
+                // Validate Team Members Min is positive
+                if (dto.TeamMembersMin.HasValue && dto.TeamMembersMin.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum must be at least 1.");
+
+                // Validate Team Members Max is positive
+                if (dto.TeamMembersMax.HasValue && dto.TeamMembersMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members maximum must be at least 1.");
+
+                // Validate TeamMembersMin vs TeamMembersMax
+                if (dto.TeamMembersMin.HasValue && dto.TeamMembersMax.HasValue && dto.TeamMembersMin.Value > dto.TeamMembersMax.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum cannot be greater than team members maximum.");
+                
+                // Validate Team Limit Max is positive
+                if (dto.TeamLimitMax.HasValue && dto.TeamLimitMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team limit maximum must be at least 1.");
+
                 string currentUserId = GetCurrentUserIdOrThrow();
 
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
@@ -858,11 +910,14 @@ namespace BusinessLogic.Services.Contests
                 // Set contest-specific configurations
                 int teamMembersMax = dto.TeamMembersMax
                                      ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4);
+                int teamMembersMin = dto.TeamMembersMin
+                                     ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMin, 1);
                 int? teamLimitMax = dto.TeamLimitMax
                                      ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);
 
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(entity.ContestId), teamMembersMin.ToString());
 
                 // Set team limit max
                 if (teamLimitMax.HasValue)
@@ -894,6 +949,7 @@ namespace BusinessLogic.Services.Contests
                 ContestCreatedDTO created = _mapper.Map<ContestCreatedDTO>(entity);
                 created.TeamMembersMax = teamMembersMax;
                 created.TeamLimitMax = teamLimitMax;
+                created.TeamMembersMin = teamMembersMin;
                 created.RewardsText = dto.RewardsText;
                 created.RegistrationStart = dto.RegistrationStart;
                 created.RegistrationEnd = dto.RegistrationEnd;
