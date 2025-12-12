@@ -2,7 +2,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.AuthDTOs;
-using Repository.DTOs.AuthDTOs.Repository.DTOs.AuthDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 

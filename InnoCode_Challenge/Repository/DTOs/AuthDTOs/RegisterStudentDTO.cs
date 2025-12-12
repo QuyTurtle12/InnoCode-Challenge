@@ -7,8 +7,6 @@ using System.Threading.Tasks;
 
 namespace Repository.DTOs.AuthDTOs
 {
-    namespace Repository.DTOs.AuthDTOs
-    {
         public class RegisterStudentDTO
         {
             [Required, MaxLength(100)]
@@ -31,6 +29,4 @@ namespace Repository.DTOs.AuthDTOs
             [MaxLength(50)]
             public string? Grade { get; set; }
         }
-    }
-
 }

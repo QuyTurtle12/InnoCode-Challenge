@@ -106,5 +106,55 @@ namespace InnoCode_Challenge_API.Controllers.Users
             await _userService.DeleteUserAsync(id, deletedBy);
             return NoContent();
         }
+
+        [Authorize]
+        [HttpGet("me")]
+        public async Task<IActionResult> GetCurrentProfile()
+        {
+            var loggedInId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(loggedInId) || !Guid.TryParse(loggedInId, out var userId))
+            {
+                return Unauthorized(new BaseResponseModel(
+                    StatusCodes.Status401Unauthorized,
+                    ResponseCodeConstants.UNAUTHORIZED,
+                    "Unauthorized"
+                ));
+            }
+
+            var profile = await _userService.GetCurrentProfileAsync(userId);
+
+            return Ok(new BaseResponseModel<CurrentProfileDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: profile,
+                message: "Profile retrieved successfully."
+            ));
+        }
+
+        [Authorize]
+        [HttpPut("me")]
+        public async Task<IActionResult> UpdateCurrentProfile([FromBody] UpdateCurrentProfileDTO dto)
+        {
+            var loggedInId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(loggedInId) || !Guid.TryParse(loggedInId, out var userId))
+            {
+                return Unauthorized(new BaseResponseModel(
+                    StatusCodes.Status401Unauthorized,
+                    ResponseCodeConstants.UNAUTHORIZED,
+                    "Unauthorized"
+                ));
+            }
+
+            var updated = await _userService.UpdateCurrentProfileAsync(userId, dto);
+
+            return Ok(new BaseResponseModel<CurrentProfileDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: updated,
+                message: "Profile updated successfully."
+            ));
+        }
+
+
     }
 }

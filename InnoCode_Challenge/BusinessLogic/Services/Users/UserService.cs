@@ -200,7 +200,121 @@ namespace BusinessLogic.Services.Users
             if (!string.Equals(performedByRole, RoleConstants.Admin, StringComparison.Ordinal))
                 throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "Only Admin can perform this operation.");
         }
+        public async Task<CurrentProfileDTO> GetCurrentProfileAsync(Guid userId)
+        {
+            var userRepo = _uow.GetRepository<User>();
+            var user = await userRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.UserId == userId && u.DeletedAt == null);
 
+            if (user == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", $"No user found with ID={userId}");
 
+            var result = new CurrentProfileDTO
+            {
+                UserId = user.UserId.ToString(),
+                Email = user.Email,
+                FullName = user.Fullname,
+                Role = user.Role,
+                Status = user.Status,
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt
+            };
+
+            if (string.Equals(user.Role, RoleConstants.Student, StringComparison.Ordinal))
+                result.Details = await BuildStudentDetailsAsync(userId);
+
+            else if (string.Equals(user.Role, RoleConstants.Mentor, StringComparison.Ordinal))
+                result.Details = await BuildMentorDetailsAsync(userId);
+
+            else
+                result.Details = null; 
+
+            return result;
+        }
+
+        public async Task<CurrentProfileDTO> UpdateCurrentProfileAsync(Guid userId, UpdateCurrentProfileDTO dto)
+        {
+            var userRepo = _uow.GetRepository<User>();
+            var user = await userRepo.Entities
+                .FirstOrDefaultAsync(u => u.UserId == userId && u.DeletedAt == null);
+
+            if (user == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", $"No user found with ID={userId}");
+
+            // update fullname for all roles
+            if (!string.IsNullOrWhiteSpace(dto.FullName))
+                user.Fullname = dto.FullName.Trim();
+
+            // update phone only for mentor
+            if (!string.IsNullOrWhiteSpace(dto.Phone))
+            {
+                if (!string.Equals(user.Role, RoleConstants.Mentor, StringComparison.Ordinal))
+                    throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_PROFILE_TYPE", "Only Mentor can update phone.");
+
+                var mentorRepo = _uow.GetRepository<Mentor>();
+
+                var mentor = await mentorRepo.Entities
+                    .Where(m => m.UserId == userId && m.DeletedAt == null)
+                    .OrderByDescending(m => m.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (mentor == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, "PROFILE_NOT_FOUND", "Mentor profile not found.");
+
+                mentor.Phone = dto.Phone.Trim();
+            }
+
+            user.UpdatedAt = DateTime.UtcNow;
+            await _uow.SaveAsync();
+
+            return await GetCurrentProfileAsync(userId);
+        }
+        private async Task<StudentProfileDetailsDTO> BuildStudentDetailsAsync(Guid userId)
+        {
+            var studentRepo = _uow.GetRepository<Student>();
+
+            var student = await studentRepo.Entities
+                .AsNoTracking()
+                .Include(s => s.School)
+                .ThenInclude(s => s.Province)
+                .FirstOrDefaultAsync(s => s.UserId == userId && s.DeletedAt == null);
+
+            if (student == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "PROFILE_NOT_FOUND", "Student profile not found.");
+
+            return new StudentProfileDetailsDTO
+            {
+                StudentId = student.StudentId.ToString(),
+                SchoolId = student.SchoolId.ToString(),
+                SchoolName = student.School.Name,
+                Province = student.School.Province.Name,
+                Grade = student.Grade
+            };
+        }
+        private async Task<MentorProfileDetailsDTO> BuildMentorDetailsAsync(Guid userId)
+        {
+            var mentorRepo = _uow.GetRepository<Mentor>();
+
+            var mentor = await mentorRepo.Entities
+                .AsNoTracking()
+                .Include(m => m.School)
+                .ThenInclude(s => s.Province)
+                .Where(m => m.UserId == userId && m.DeletedAt == null)
+                .OrderByDescending(m => m.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (mentor == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "PROFILE_NOT_FOUND", "Mentor profile not found.");
+
+            return new MentorProfileDetailsDTO
+            {
+                MentorId = mentor.MentorId.ToString(),
+                SchoolId = mentor.SchoolId.ToString(),
+                SchoolName = mentor.School.Name,
+                Province = mentor.School.Province.Name,
+                Phone = mentor.Phone
+            };
+        }
     }
 }
