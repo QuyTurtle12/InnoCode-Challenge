@@ -18,7 +18,7 @@ namespace BusinessLogic.IServices
         Task RevokeAsync(Guid teamId, Guid inviteId,
             Guid requesterUserId, string requesterRole);
 
-        Task AcceptByTokenAsync(string token, Guid currentUserId);
-        Task DeclineByTokenAsync(string token, Guid currentUserId);
+        Task AcceptByTokenAsync(string token, string email);
+        Task DeclineByTokenAsync(string token, string email);
     }
 }

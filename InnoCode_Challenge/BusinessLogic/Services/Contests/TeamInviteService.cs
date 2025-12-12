@@ -264,7 +264,7 @@ namespace BusinessLogic.Services
             await _uow.SaveAsync();
         }
 
-        public async Task AcceptByTokenAsync(string token, Guid currentUserId)
+        public async Task AcceptByTokenAsync(string token, string email)
         {
             var inviteRepo = _uow.GetRepository<TeamInvite>();
             var userRepo = _uow.GetRepository<User>();
@@ -272,6 +272,11 @@ namespace BusinessLogic.Services
             var memberRepo = _uow.GetRepository<TeamMember>();
             var roundRepo = _uow.GetRepository<Round>();
             var configRepo = _uow.GetRepository<Config>();
+
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(email))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_INPUT", "Token and Email are required.");
+
+            var normEmail = email.Trim().ToLowerInvariant();
 
             var invite = await inviteRepo.Entities
                 .Include(i => i.Team).ThenInclude(t => t.Contest)
@@ -291,27 +296,30 @@ namespace BusinessLogic.Services
                 throw new ErrorException(StatusCodes.Status410Gone, "INVITE_EXPIRED", "Invite has expired.");
             }
 
-            var user = await userRepo.GetByIdAsync(currentUserId)
-                       ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
+            if (!string.IsNullOrWhiteSpace(invite.InviteeEmail)
+                && !string.Equals(invite.InviteeEmail.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
 
-            if (user.DeletedAt != null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
+            var user = await userRepo.Entities
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail && u.DeletedAt == null);
+
+            if (user == null)
+                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register/log in with the invited email first.");
 
             if (user.Role != RoleConstants.Student)
-                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_STUDENT", "Only students can accept invites.");
+                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_STUDENT", "Only students can accept team invites.");
 
-            if (invite.StudentId == null)
-            {
-                if (!string.Equals(user.Email, invite.InviteeEmail, StringComparison.OrdinalIgnoreCase))
-                    throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
-            }
+            var student = await studentRepo.Entities
+                .FirstOrDefaultAsync(s => s.UserId == user.UserId && s.DeletedAt == null);
 
-            var student = await studentRepo.Entities.FirstOrDefaultAsync(s => s.UserId == user.UserId && s.DeletedAt == null);
             if (student == null)
                 throw new ErrorException(StatusCodes.Status409Conflict, "STUDENT_PROFILE_REQUIRED",
                     "Please create/complete student profile before accepting the invite.");
 
-            if (invite.StudentId == null) invite.StudentId = student.StudentId;
+            if (invite.StudentId.HasValue && invite.StudentId.Value != student.StudentId)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "INVITE_NOT_FOR_YOU", "This invite is for a different student.");
+
+            if (!invite.StudentId.HasValue) invite.StudentId = student.StudentId;
 
             // policy checks again
             var maxMembers = await GetMaxTeamMembersAsync(invite.Team.ContestId, configRepo);
@@ -333,7 +341,7 @@ namespace BusinessLogic.Services
                 throw new ErrorException(StatusCodes.Status409Conflict, "TIME_CONFLICT",
                     "You have a time conflict with another contest.");
 
-            // add membership
+            // add membership + accept invite
             var membership = new TeamMember
             {
                 TeamId = invite.TeamId,
@@ -347,13 +355,17 @@ namespace BusinessLogic.Services
             inviteRepo.Update(invite);
 
             await _uow.SaveAsync();
-            // TODO: notify mentor & members
         }
 
-        public async Task DeclineByTokenAsync(string token, Guid currentUserId)
+
+        public async Task DeclineByTokenAsync(string token, string email)
         {
             var inviteRepo = _uow.GetRepository<TeamInvite>();
-            var userRepo = _uow.GetRepository<User>();
+
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(email))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_INPUT", "Token and Email are required.");
+
+            var normEmail = email.Trim().ToLowerInvariant();
 
             var invite = await inviteRepo.Entities.FirstOrDefaultAsync(i => i.Token == token);
             if (invite == null)
@@ -362,16 +374,11 @@ namespace BusinessLogic.Services
             if (invite.Status != Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVITE_NOT_PENDING", "Invite is not pending.");
 
-            var user = await userRepo.GetByIdAsync(currentUserId)
-                       ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
+            if (!string.IsNullOrWhiteSpace(invite.InviteeEmail)
+                && !string.Equals(invite.InviteeEmail.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
 
-            if (invite.StudentId == null)
-            {
-                if (!string.Equals(user.Email, invite.InviteeEmail, StringComparison.OrdinalIgnoreCase))
-                    throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
-            }
-
-            invite.Status = Declined;
+            invite.Status = Declined; // (cancelled)
             inviteRepo.Update(invite);
             await _uow.SaveAsync();
         }

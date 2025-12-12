@@ -10,5 +10,9 @@ namespace BusinessLogic.IServices.Users
         Task<UserDTO> CreateUserAsync(CreateUserDTO dto);
         Task<UserDTO> UpdateUserAsync(Guid id, UpdateUserDTO dto, string performedByRole);
         Task DeleteUserAsync(Guid id, string deletedBy);
+
+        Task<CurrentProfileDTO> GetCurrentProfileAsync(Guid userId);
+        Task<CurrentProfileDTO> UpdateCurrentProfileAsync(Guid userId, UpdateCurrentProfileDTO dto);
+
     }
 }

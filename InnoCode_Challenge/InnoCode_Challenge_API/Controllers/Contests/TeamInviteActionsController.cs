@@ -16,18 +16,16 @@ namespace InnoCode_Challenge_API.Controllers
         public TeamInviteActionsController(ITeamInviteService service) => _service = service;
 
         [HttpPost("accept")]
-        public async Task<IActionResult> Accept([FromQuery] string token)
+        public async Task<IActionResult> Accept([FromQuery] string token, string email)
         {
-            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            await _service.AcceptByTokenAsync(token, userId);
+            await _service.AcceptByTokenAsync(token, email);
             return Ok(BaseResponseModel<object>.OkResponseModel(new { token }, "Invite accepted."));
         }
 
         [HttpPost("decline")]
-        public async Task<IActionResult> Decline([FromQuery] string token)
+        public async Task<IActionResult> Decline([FromQuery] string token, string email)
         {
-            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            await _service.DeclineByTokenAsync(token, userId);
+            await _service.DeclineByTokenAsync(token, email);
             return Ok(BaseResponseModel<object>.OkResponseModel(new { token }, "Invite declined."));
         }
     }

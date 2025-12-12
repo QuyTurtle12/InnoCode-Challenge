@@ -1,6 +1,5 @@
 ﻿using DataAccess.Entities;
 using Repository.DTOs.AuthDTOs;
-using Repository.DTOs.AuthDTOs.Repository.DTOs.AuthDTOs;
 
 namespace BusinessLogic.IServices.Users
 {
