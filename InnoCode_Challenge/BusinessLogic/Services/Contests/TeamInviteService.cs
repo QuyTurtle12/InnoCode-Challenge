@@ -296,12 +296,10 @@ namespace BusinessLogic.Services
                 throw new ErrorException(StatusCodes.Status410Gone, "INVITE_EXPIRED", "Invite has expired.");
             }
 
-            // ✅ Must match invite email (an toàn khi public)
             if (!string.IsNullOrWhiteSpace(invite.InviteeEmail)
                 && !string.Equals(invite.InviteeEmail.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
                 throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
 
-            // resolve student by email (public flow)
             var user = await userRepo.Entities
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail && u.DeletedAt == null);
 
@@ -318,7 +316,6 @@ namespace BusinessLogic.Services
                 throw new ErrorException(StatusCodes.Status409Conflict, "STUDENT_PROFILE_REQUIRED",
                     "Please create/complete student profile before accepting the invite.");
 
-            // If invite.StudentId exists, ensure it matches resolved student
             if (invite.StudentId.HasValue && invite.StudentId.Value != student.StudentId)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "INVITE_NOT_FOR_YOU", "This invite is for a different student.");
 

@@ -166,10 +166,9 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="inviteCode">8-character invite code</param>
         /// <returns>Success message</returns>
         [HttpPost("judge-invites/accept")]
-        [Authorize(Policy = "RequireJudgeRole")]
-        public async Task<IActionResult> Accept([Required] string inviteCode)
+        public async Task<IActionResult> Accept([Required] string inviteCode, string email)
         {
-            await _judgeInviteService.AcceptByCodeAsync(inviteCode);
+            await _judgeInviteService.AcceptByCodeAsync(inviteCode, email);
 
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,
@@ -184,10 +183,9 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="inviteCode">8-character invite code</param>
         /// <returns>Success message</returns>
         [HttpPost("judge-invites/decline")]
-        [Authorize(Policy = "RequireJudgeRole")]
-        public async Task<IActionResult> Decline([Required] string inviteCode)
+        public async Task<IActionResult> Decline([Required] string inviteCode, string email)
         {
-            await _judgeInviteService.DeclineByCodeAsync(inviteCode);
+            await _judgeInviteService.DeclineByCodeAsync(inviteCode, email);
 
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,

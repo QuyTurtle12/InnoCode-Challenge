@@ -39,7 +39,7 @@ namespace BusinessLogic.IServices.Contests
 
         Task RevokeAsync(Guid contestId, Guid inviteId);
 
-        Task AcceptByCodeAsync(string inviteCode);
-        Task DeclineByCodeAsync(string inviteCode);
+        Task AcceptByCodeAsync(string inviteCode, string email);
+        Task DeclineByCodeAsync(string inviteCode, string email);
     }
 }
