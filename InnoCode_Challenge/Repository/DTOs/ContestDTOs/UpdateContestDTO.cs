@@ -15,9 +15,6 @@ namespace Repository.DTOs.ContestDTOs
         [Range(1, 50)]
         public int? TeamMembersMin { get; set; }
 
-        [Range(1, 50)]
-        public int? TeamMembersMin { get; set; }
-
         [Range(1, 10000)]
         public int? TeamLimitMax { get; set; }
 

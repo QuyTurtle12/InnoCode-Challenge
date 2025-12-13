@@ -918,7 +918,6 @@ namespace BusinessLogic.Services.Contests
 
                 int teamMembersMax = dto.TeamMembersMax
                                      ?? await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMax, 4);
-
                 int? teamLimitMax = dto.TeamLimitMax
                                      ?? await GetGlobalNullableIntAsync(configRepo, ConfigKeys.Defaults_TeamLimitMax);
 
