@@ -740,7 +740,6 @@ namespace BusinessLogic.Services.Contests
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(existingContest.ContestId), teamMembersMin.ToString());
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(existingContest.ContestId), teamMembersMax.ToString());
-                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(existingContest.ContestId), teamMembersMin.ToString());
 
                 // Set team limit max
                 if (teamLimitMax.HasValue)
@@ -924,7 +923,6 @@ namespace BusinessLogic.Services.Contests
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(entity.ContestId), teamMembersMin.ToString());
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
-                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(entity.ContestId), teamMembersMin.ToString());
 
                 // Set team limit max
                 if (teamLimitMax.HasValue)

@@ -716,10 +716,28 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                // Get current user information for role-based filtering
+                string? userIdClaim = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
+                string? userRole = _httpContextAccessor.HttpContext?.User.FindFirstValue(ClaimTypes.Role);
+
+                Guid? currentUserId = null;
+                if (Guid.TryParse(userIdClaim, out Guid parsedUserId))
+                {
+                    currentUserId = parsedUserId;
+                }
+
+                // Get repositories
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
                 // Get all leaderboard entries for the contest
-                // Ordered by highest score, then by earliest snapshot time, then by TeamId
                 List<LeaderboardEntry> allEntries = await leaderboardRepo.Entities
                     .Include(e => e.Team)
                     .Where(e => e.ContestId == contestId)
@@ -736,29 +754,244 @@ namespace BusinessLogic.Services.Contests
                         $"No leaderboard entries found for contest ID: {contestId}");
                 }
 
+                // Determine user's team if they're a student or mentor
+                Guid? userTeamId = null;
+                if (currentUserId.HasValue)
+                {
+                    if (userRole == RoleConstants.Student)
+                    {
+                        Student? student = await studentRepo.Entities
+                            .Where(s => s.UserId == currentUserId.Value && s.DeletedAt == null)
+                            .FirstOrDefaultAsync();
+
+                        if (student != null)
+                        {
+                            TeamMember? teamMember = await teamMemberRepo.Entities
+                                .Include(tm => tm.Team)
+                                .Where(tm => tm.StudentId == student.StudentId
+                                    && tm.Team.ContestId == contestId
+                                    && tm.Team.DeletedAt == null)
+                                .FirstOrDefaultAsync();
+                            userTeamId = teamMember?.TeamId;
+                        }
+                    }
+                    else if (userRole == RoleConstants.Mentor)
+                    {
+                        Mentor? mentor = await mentorRepo.Entities
+                            .Where(m => m.UserId == currentUserId.Value && m.DeletedAt == null)
+                            .FirstOrDefaultAsync();
+
+                        if (mentor != null)
+                        {
+                            Team? team = await teamRepo.Entities
+                                .Where(t => t.MentorId == mentor.MentorId
+                                    && t.ContestId == contestId
+                                    && t.DeletedAt == null)
+                                .FirstOrDefaultAsync();
+                            userTeamId = team?.TeamId;
+                        }
+                    }
+                }
+
+                // Determine if should show all members or only user's team members
+                bool showAllMembers = userRole != RoleConstants.Student
+                    && userRole != RoleConstants.Mentor
+                    && !string.IsNullOrWhiteSpace(userIdClaim);
+
+                // Get all rounds for this contest
+                List<Round> rounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
+                    .OrderBy(r => r.Start)
+                    .ToListAsync();
+
+                // Determine which teams need member details
+                List<Guid> teamIdsToLoadMembers = new List<Guid>();
+                if (showAllMembers)
+                {
+                    // Organizer: Load all teams
+                    teamIdsToLoadMembers = allEntries.Select(e => e.TeamId).ToList();
+                }
+                else if (userTeamId.HasValue)
+                {
+                    // Student/Mentor: Load only their team
+                    teamIdsToLoadMembers.Add(userTeamId.Value);
+                }
+
+                // Load all team members for relevant teams
+                Dictionary<Guid, List<TeamMember>> membersByTeam = new Dictionary<Guid, List<TeamMember>>();
+                if (teamIdsToLoadMembers.Any())
+                {
+                    List<TeamMember> allTeamMembers = await teamMemberRepo.Entities
+                        .Include(tm => tm.Student)
+                            .ThenInclude(s => s.User)
+                        .Where(tm => teamIdsToLoadMembers.Contains(tm.TeamId))
+                        .ToListAsync();
+
+                    membersByTeam = allTeamMembers
+                        .GroupBy(tm => tm.TeamId)
+                        .ToDictionary(g => g.Key, g => g.ToList());
+                }
+
+                // Load all student IDs for config/attempt/submission lookups
+                List<Guid> allStudentIds = membersByTeam.Values
+                    .SelectMany(members => members.Select(m => m.StudentId))
+                    .Distinct()
+                    .ToList();
+
+                // Load all configs for all students and rounds
+                Dictionary<string, Config> configLookup = new Dictionary<string, Config>();
+                if (allStudentIds.Any() && rounds.Any())
+                {
+                    List<string> configKeys = allStudentIds
+                        .SelectMany(studentId => rounds.Select(round =>
+                            ConfigKeys.RoundStudent(round.RoundId, studentId)))
+                        .ToList();
+
+                    List<Config> configs = await configRepo.Entities
+                        .Where(c => configKeys.Contains(c.Key) && c.DeletedAt == null)
+                        .ToListAsync();
+
+                    configLookup = configs.ToDictionary(c => c.Key, c => c);
+                }
+
+                // Load all MCQ attempts for all students and rounds
+                Dictionary<(Guid RoundId, Guid StudentId), McqAttempt> mcqAttemptLookup =
+                    new Dictionary<(Guid, Guid), McqAttempt>();
+                if (allStudentIds.Any() && rounds.Any())
+                {
+                    List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
+
+                    List<McqAttempt> mcqAttempts = await mcqAttemptRepo.Entities
+                        .Where(ma => roundIds.Contains(ma.RoundId)
+                                    && allStudentIds.Contains(ma.StudentId)
+                                    && ma.End.HasValue)
+                        .ToListAsync();
+
+                    // Group by (RoundId, StudentId) and take the latest attempt
+                    mcqAttemptLookup = mcqAttempts
+                        .GroupBy(ma => (ma.RoundId, ma.StudentId))
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.OrderByDescending(ma => ma.End).First()
+                        );
+                }
+
+                // Load all submissions for all students, rounds, and teams
+                Dictionary<(Guid RoundId, Guid StudentId, Guid TeamId), Submission> submissionLookup =
+                    new Dictionary<(Guid, Guid, Guid), Submission>();
+                if (allStudentIds.Any() && rounds.Any())
+                {
+                    List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
+                    List<Guid> teamIds = teamIdsToLoadMembers;
+
+                    List<Submission> submissions = await submissionRepo.Entities
+                        .Include(s => s.Problem)
+                        .Where(s => roundIds.Contains(s.Problem.RoundId)
+                                   && allStudentIds.Contains(s.SubmittedByStudentId)
+                                   && teamIds.Contains(s.TeamId)
+                                   && s.Status == SubmissionStatusEnum.Finished.ToString())
+                        .ToListAsync();
+
+                    // Group by (RoundId, StudentId, TeamId) and take the latest submission
+                    submissionLookup = submissions
+                        .GroupBy(s => (s.Problem.RoundId, s.SubmittedByStudentId, s.TeamId))
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.OrderByDescending(s => s.CreatedAt).First()
+                        );
+                }
+
                 int currentRank = 1;
                 List<TeamInfo> teamInfoList = new List<TeamInfo>();
 
-                // Assign unique ranks (1 rank = 1 team)
+                // Assign unique ranks and populate team details with members
                 foreach (LeaderboardEntry e in allEntries)
                 {
                     e.Rank = currentRank;
                     await leaderboardRepo.UpdateAsync(e);
 
-                    teamInfoList.Add(new TeamInfo
+                    TeamInfo teamInfo = new TeamInfo
                     {
                         TeamId = e.TeamId,
                         TeamName = e.Team?.Name ?? "Unknown",
                         Rank = currentRank,
-                        Score = e.Score ?? 0
-                    });
+                        Score = e.Score ?? 0,
+                        Members = new List<MemberInfo>()
+                    };
 
+                    // Check if we should load members for this team
+                    bool shouldLoadMembers = showAllMembers || (userTeamId.HasValue && userTeamId.Value == e.TeamId);
+
+                    if (shouldLoadMembers && membersByTeam.TryGetValue(e.TeamId, out List<TeamMember>? teamMembers))
+                    {
+                        // Populate member details using batch-loaded data
+                        foreach (TeamMember teamMember in teamMembers)
+                        {
+                            MemberInfo memberInfo = new MemberInfo
+                            {
+                                MemberId = teamMember.StudentId,
+                                MemberName = teamMember.Student.User.Fullname,
+                                MemberRole = teamMember.MemberRole,
+                                TotalScore = 0,
+                                RoundScores = new List<RoundScoreDetail>()
+                            };
+
+                            // Calculate scores for each round using batch-loaded data
+                            foreach (Round round in rounds)
+                            {
+                                double roundScore = 0;
+                                string roundType = string.Empty;
+                                DateTime? completedAt = null;
+
+                                // Check config using lookup
+                                string configKey = ConfigKeys.RoundStudent(round.RoundId, teamMember.StudentId);
+                                if (!configLookup.TryGetValue(configKey, out Config? config))
+                                {
+                                    // Student hasn't finished this round
+                                    continue;
+                                }
+
+                                // Check MCQ attempt using lookup
+                                if (mcqAttemptLookup.TryGetValue((round.RoundId, teamMember.StudentId), out McqAttempt? mcqAttempt))
+                                {
+                                    roundScore = mcqAttempt.Score ?? 0;
+                                    roundType = ProblemTypeEnum.McqTest.ToString();
+                                    completedAt = config.UpdatedAt;
+                                }
+                                else if (submissionLookup.TryGetValue((round.RoundId, teamMember.StudentId, e.TeamId), out Submission? submission))
+                                {
+                                    // Check submission using lookup
+                                    roundScore = submission.Score;
+                                    roundType = submission.Problem.Type ?? "Unknown Type";
+                                    completedAt = config.UpdatedAt;
+                                }
+
+                                // Add round score detail
+                                memberInfo.RoundScores.Add(new RoundScoreDetail
+                                {
+                                    RoundId = round.RoundId,
+                                    RoundName = round.Name,
+                                    Score = roundScore,
+                                    RoundType = roundType,
+                                    CompletedAt = completedAt
+                                });
+
+                                // Add to total score
+                                memberInfo.TotalScore += roundScore;
+                            }
+
+                            // Add member to team
+                            teamInfo.Members.Add(memberInfo);
+                        }
+                    }
+
+                    teamInfoList.Add(teamInfo);
                     currentRank++;
                 }
 
                 await _unitOfWork.SaveAsync();
 
-                // Broadcast the updated leaderboard in real-time
+                // Broadcast the updated leaderboard with full member details in real-time
                 await _realtimeService.BroadcastLeaderboardUpdateAsync(contestId, teamInfoList);
             }
             catch (Exception ex)

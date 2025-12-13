@@ -13,6 +13,8 @@ public partial class ContestDbContext : DbContext
 
     public virtual DbSet<ActivityLog> ActivityLogs { get; set; }
 
+    public virtual DbSet<AggregatedCounter> AggregatedCounters { get; set; }
+
     public virtual DbSet<Appeal> Appeals { get; set; }
 
     public virtual DbSet<AppealEvidence> AppealEvidences { get; set; }
@@ -29,9 +31,21 @@ public partial class ContestDbContext : DbContext
 
     public virtual DbSet<Contest> Contests { get; set; }
 
+    public virtual DbSet<Counter> Counters { get; set; }
+
+    public virtual DbSet<Hash> Hashes { get; set; }
+
+    public virtual DbSet<Job> Jobs { get; set; }
+
+    public virtual DbSet<JobParameter> JobParameters { get; set; }
+
+    public virtual DbSet<JobQueue> JobQueues { get; set; }
+
     public virtual DbSet<JudgeInvite> JudgeInvites { get; set; }
 
     public virtual DbSet<LeaderboardEntry> LeaderboardEntries { get; set; }
+
+    public virtual DbSet<List> Lists { get; set; }
 
     public virtual DbSet<McqAttempt> McqAttempts { get; set; }
 
@@ -61,7 +75,15 @@ public partial class ContestDbContext : DbContext
 
     public virtual DbSet<Round> Rounds { get; set; }
 
+    public virtual DbSet<Schema> Schemas { get; set; }
+
     public virtual DbSet<School> Schools { get; set; }
+
+    public virtual DbSet<Server> Servers { get; set; }
+
+    public virtual DbSet<Set> Sets { get; set; }
+
+    public virtual DbSet<State> States { get; set; }
 
     public virtual DbSet<Student> Students { get; set; }
 
@@ -85,7 +107,7 @@ public partial class ContestDbContext : DbContext
     {
         modelBuilder.Entity<ActivityLog>(entity =>
         {
-            entity.HasKey(e => e.LogId).HasName("PK__activity__9E2397E01FC81FA3");
+            entity.HasKey(e => e.LogId).HasName("PK__activity__9E2397E05809F74C");
 
             entity.ToTable("activity_logs");
 
@@ -96,7 +118,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("log_id");
             entity.Property(e => e.Action)
                 .HasMaxLength(100)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("action");
             entity.Property(e => e.At)
                 .HasPrecision(0)
@@ -104,11 +126,11 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.TargetId)
                 .HasMaxLength(36)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("target_id");
             entity.Property(e => e.TargetType)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("target_type");
             entity.Property(e => e.UserId).HasColumnName("user_id");
 
@@ -118,9 +140,21 @@ public partial class ContestDbContext : DbContext
                 .HasConstraintName("FK_activity_logs_user");
         });
 
+        modelBuilder.Entity<AggregatedCounter>(entity =>
+        {
+            entity.HasKey(e => e.Key).HasName("PK_HangFire_CounterAggregated");
+
+            entity.ToTable("AggregatedCounter", "Hangfire");
+
+            entity.HasIndex(e => e.ExpireAt, "IX_HangFire_AggregatedCounter_ExpireAt").HasFilter("([ExpireAt] IS NOT NULL)");
+
+            entity.Property(e => e.Key).HasMaxLength(100);
+            entity.Property(e => e.ExpireAt).HasColumnType("datetime");
+        });
+
         modelBuilder.Entity<Appeal>(entity =>
         {
-            entity.HasKey(e => e.AppealId).HasName("PK__appeals__DFAC766D37C6317B");
+            entity.HasKey(e => e.AppealId).HasName("PK__appeals__DFAC766D989A2821");
 
             entity.ToTable("appeals");
 
@@ -132,10 +166,10 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("created_at");
             entity.Property(e => e.CreatedBy)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("created_by");
             entity.Property(e => e.Decision)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("decision");
             entity.Property(e => e.DecisionReason).HasColumnName("decision_reason");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
@@ -143,13 +177,13 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.Reason).HasColumnName("reason");
             entity.Property(e => e.State)
                 .HasMaxLength(20)
-                .IsUnicode(false)
                 .HasDefaultValue("open")
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("state");
             entity.Property(e => e.TargetId).HasColumnName("target_id");
             entity.Property(e => e.TargetType)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("target_type");
             entity.Property(e => e.TeamId).HasColumnName("team_id");
 
@@ -171,7 +205,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<AppealEvidence>(entity =>
         {
-            entity.HasKey(e => e.EvidenceId).HasName("PK__appeal_e__C59A788E3D889D2B");
+            entity.HasKey(e => e.EvidenceId).HasName("PK__appeal_e__C59A788E617D5B3D");
 
             entity.ToTable("appeal_evidence");
 
@@ -184,10 +218,10 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("created_at");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Note)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("note");
             entity.Property(e => e.Url)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("url");
 
             entity.HasOne(d => d.Appeal).WithMany(p => p.AppealEvidences)
@@ -198,7 +232,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Attachment>(entity =>
         {
-            entity.HasKey(e => e.AttachmentId).HasName("PK__attachme__B74DF4E22729B77F");
+            entity.HasKey(e => e.AttachmentId).HasName("PK__attachme__B74DF4E25AF86F34");
 
             entity.ToTable("attachments");
 
@@ -211,16 +245,16 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Type)
                 .HasMaxLength(100)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("type");
             entity.Property(e => e.Url)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("url");
         });
 
         modelBuilder.Entity<Bank>(entity =>
         {
-            entity.HasKey(e => e.BankId).HasName("PK__bank__4076F7037B3215B4");
+            entity.HasKey(e => e.BankId).HasName("PK__bank__4076F7032DD39B83");
 
             entity.ToTable("bank");
 
@@ -232,17 +266,17 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("created_at");
             entity.Property(e => e.CreatedBy)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("created_by");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Name)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
         });
 
         modelBuilder.Entity<Certificate>(entity =>
         {
-            entity.HasKey(e => e.CertificateId).HasName("PK__certific__E2256D31C0599C20");
+            entity.HasKey(e => e.CertificateId).HasName("PK__certific__E2256D315B904797");
 
             entity.ToTable("certificates");
 
@@ -251,7 +285,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("certificate_id");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.FileUrl)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("file_url");
             entity.Property(e => e.IssuedAt)
                 .HasPrecision(0)
@@ -276,7 +310,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<CertificateTemplate>(entity =>
         {
-            entity.HasKey(e => e.TemplateId).HasName("PK__certific__BE44E079B62C67CF");
+            entity.HasKey(e => e.TemplateId).HasName("PK__certific__BE44E079AB23655F");
 
             entity.ToTable("certificate_templates");
 
@@ -285,11 +319,11 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("template_id");
             entity.Property(e => e.ContestId).HasColumnName("contest_id");
             entity.Property(e => e.FileUrl)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("file_url");
             entity.Property(e => e.Name)
                 .HasMaxLength(120)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
             entity.Property(e => e.TextX)
                 .HasColumnType("decimal(18, 0)")
@@ -306,7 +340,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Config>(entity =>
         {
-            entity.HasKey(e => e.Key).HasName("PK__config__DFD83CAE142C8605");
+            entity.HasKey(e => e.Key).HasName("PK__config__DFD83CAE412B7C69");
 
             entity.ToTable("config");
 
@@ -317,13 +351,13 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Scope)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("scope");
             entity.Property(e => e.UpdatedAt)
                 .HasPrecision(0)
                 .HasColumnName("updated_at");
             entity.Property(e => e.Value)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("value");
         });
 
@@ -341,42 +375,103 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("created_at");
             entity.Property(e => e.CreatedBy)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("created_by");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Description)
-                .HasMaxLength(200)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("description");
             entity.Property(e => e.End)
                 .HasPrecision(0)
                 .HasColumnName("end");
             entity.Property(e => e.ImgUrl)
                 .HasMaxLength(200)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("img_url");
             entity.Property(e => e.Name)
                 .HasMaxLength(200)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
             entity.Property(e => e.Start)
                 .HasPrecision(0)
                 .HasColumnName("start");
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
-                .IsUnicode(false)
                 .HasDefaultValue("draft")
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("status");
             entity.Property(e => e.Year).HasColumnName("year");
         });
 
+        modelBuilder.Entity<Counter>(entity =>
+        {
+            entity.HasKey(e => new { e.Key, e.Id }).HasName("PK_HangFire_Counter");
+
+            entity.ToTable("Counter", "Hangfire");
+
+            entity.Property(e => e.Key).HasMaxLength(100);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.ExpireAt).HasColumnType("datetime");
+        });
+
+        modelBuilder.Entity<Hash>(entity =>
+        {
+            entity.HasKey(e => new { e.Key, e.Field }).HasName("PK_HangFire_Hash");
+
+            entity.ToTable("Hash", "Hangfire");
+
+            entity.HasIndex(e => e.ExpireAt, "IX_HangFire_Hash_ExpireAt").HasFilter("([ExpireAt] IS NOT NULL)");
+
+            entity.Property(e => e.Key).HasMaxLength(100);
+            entity.Property(e => e.Field).HasMaxLength(100);
+        });
+
+        modelBuilder.Entity<Job>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_HangFire_Job");
+
+            entity.ToTable("Job", "Hangfire");
+
+            entity.HasIndex(e => e.ExpireAt, "IX_HangFire_Job_ExpireAt").HasFilter("([ExpireAt] IS NOT NULL)");
+
+            entity.HasIndex(e => e.StateName, "IX_HangFire_Job_StateName").HasFilter("([StateName] IS NOT NULL)");
+
+            entity.Property(e => e.CreatedAt).HasColumnType("datetime");
+            entity.Property(e => e.ExpireAt).HasColumnType("datetime");
+            entity.Property(e => e.StateName).HasMaxLength(20);
+        });
+
+        modelBuilder.Entity<JobParameter>(entity =>
+        {
+            entity.HasKey(e => new { e.JobId, e.Name }).HasName("PK_HangFire_JobParameter");
+
+            entity.ToTable("JobParameter", "Hangfire");
+
+            entity.Property(e => e.Name).HasMaxLength(40);
+
+            entity.HasOne(d => d.Job).WithMany(p => p.JobParameters)
+                .HasForeignKey(d => d.JobId)
+                .HasConstraintName("FK_HangFire_JobParameter_Job");
+        });
+
+        modelBuilder.Entity<JobQueue>(entity =>
+        {
+            entity.HasKey(e => new { e.Queue, e.Id }).HasName("PK_HangFire_JobQueue");
+
+            entity.ToTable("JobQueue", "Hangfire");
+
+            entity.Property(e => e.Queue).HasMaxLength(50);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.FetchedAt).HasColumnType("datetime");
+        });
+
         modelBuilder.Entity<JudgeInvite>(entity =>
         {
-            entity.HasKey(e => e.InviteId).HasName("PK__judge_in__32ADC005D8C6C63C");
+            entity.HasKey(e => e.InviteId).HasName("PK__judge_in__32ADC005D4D26D8D");
 
             entity.ToTable("judge_invites");
 
-            entity.HasIndex(e => e.InviteCode, "UQ__judge_in__C90895D4C6218585").IsUnique();
+            entity.HasIndex(e => e.InviteCode, "UQ__judge_in__C90895D431D589E5").IsUnique();
 
             entity.Property(e => e.InviteId)
                 .ValueGeneratedNever()
@@ -440,9 +535,22 @@ public partial class ContestDbContext : DbContext
                 .HasConstraintName("FK_leaderboard_team");
         });
 
+        modelBuilder.Entity<List>(entity =>
+        {
+            entity.HasKey(e => new { e.Key, e.Id }).HasName("PK_HangFire_List");
+
+            entity.ToTable("List", "Hangfire");
+
+            entity.HasIndex(e => e.ExpireAt, "IX_HangFire_List_ExpireAt").HasFilter("([ExpireAt] IS NOT NULL)");
+
+            entity.Property(e => e.Key).HasMaxLength(100);
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.ExpireAt).HasColumnType("datetime");
+        });
+
         modelBuilder.Entity<McqAttempt>(entity =>
         {
-            entity.HasKey(e => e.AttemptId).HasName("PK__mcq_atte__5621F949D49F3AF0");
+            entity.HasKey(e => e.AttemptId).HasName("PK__mcq_atte__5621F949945F45E0");
 
             entity.ToTable("mcq_attempts");
 
@@ -479,7 +587,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<McqAttemptItem>(entity =>
         {
-            entity.HasKey(e => e.ItemId).HasName("PK__mcq_atte__52020FDD6260E352");
+            entity.HasKey(e => e.ItemId).HasName("PK__mcq_atte__52020FDD62FDECCB");
 
             entity.ToTable("mcq_attempt_items");
 
@@ -516,7 +624,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<McqOption>(entity =>
         {
-            entity.HasKey(e => e.OptionId).HasName("PK__mcq_opti__F4EACE1B2571F86E");
+            entity.HasKey(e => e.OptionId).HasName("PK__mcq_opti__F4EACE1B05A8E6DA");
 
             entity.ToTable("mcq_options");
 
@@ -526,7 +634,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.IsCorrect).HasColumnName("is_correct");
             entity.Property(e => e.QuestionId).HasColumnName("question_id");
             entity.Property(e => e.Text)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("text");
 
             entity.HasOne(d => d.Question).WithMany(p => p.McqOptions)
@@ -537,7 +645,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<McqQuestion>(entity =>
         {
-            entity.HasKey(e => e.QuestionId).HasName("PK__mcq_ques__2EC215498F140593");
+            entity.HasKey(e => e.QuestionId).HasName("PK__mcq_ques__2EC2154961A77A2A");
 
             entity.ToTable("mcq_questions");
 
@@ -550,7 +658,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("created_at");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Text)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("text");
 
             entity.HasOne(d => d.Bank).WithMany(p => p.McqQuestions)
@@ -560,7 +668,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<McqTest>(entity =>
         {
-            entity.HasKey(e => e.TestId).HasName("PK__mcq_test__F3FF1C0201B7B998");
+            entity.HasKey(e => e.TestId).HasName("PK__mcq_test__F3FF1C0229406B18");
 
             entity.ToTable("mcq_tests");
 
@@ -570,12 +678,12 @@ public partial class ContestDbContext : DbContext
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("test_id");
             entity.Property(e => e.Config)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("config");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Name)
                 .HasMaxLength(120)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
             entity.Property(e => e.RoundId).HasColumnName("round_id");
 
@@ -611,7 +719,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Mentor>(entity =>
         {
-            entity.HasKey(e => e.MentorId).HasName("PK__mentors__E5D27EF348DEC5F2");
+            entity.HasKey(e => e.MentorId).HasName("PK__mentors__E5D27EF3AA750019");
 
             entity.ToTable("mentors");
 
@@ -626,7 +734,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Phone)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("phone");
             entity.Property(e => e.SchoolId).HasColumnName("school_id");
             entity.Property(e => e.UserId).HasColumnName("user_id");
@@ -663,31 +771,31 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.DenyReason)
                 .HasMaxLength(300)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("deny_reason");
             entity.Property(e => e.Email)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("email");
             entity.Property(e => e.Fullname)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("fullname");
             entity.Property(e => e.PasswordHash)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("password_hash");
             entity.Property(e => e.Phone)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("phone");
             entity.Property(e => e.ProposedSchoolAddress)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("proposed_school_address");
             entity.Property(e => e.ProposedSchoolName)
                 .HasMaxLength(200)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("proposed_school_name");
             entity.Property(e => e.ProvinceId).HasColumnName("province_id");
             entity.Property(e => e.ReviewedAt)
@@ -726,17 +834,17 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.UserId).HasColumnName("user_id");
             entity.Property(e => e.Channel)
                 .HasMaxLength(20)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("channel");
             entity.Property(e => e.Payload)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("payload");
             entity.Property(e => e.SentAt)
                 .HasPrecision(0)
                 .HasColumnName("sent_at");
             entity.Property(e => e.Type)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("type");
 
             entity.HasOne(d => d.User).WithMany(p => p.Notifications)
@@ -747,7 +855,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Problem>(entity =>
         {
-            entity.HasKey(e => e.ProblemId).HasName("PK__problems__69B87CEC67F983BE");
+            entity.HasKey(e => e.ProblemId).HasName("PK__problems__69B87CEC30757E7F");
 
             entity.ToTable("problems");
 
@@ -760,20 +868,21 @@ public partial class ContestDbContext : DbContext
                 .HasPrecision(0)
                 .HasColumnName("created_at");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
+            entity.Property(e => e.Description).UseCollation("Latin1_General_100_CI_AS_SC_UTF8");
             entity.Property(e => e.Language)
                 .HasMaxLength(20)
-                .IsUnicode(false)
                 .HasDefaultValue("python3")
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("language");
             entity.Property(e => e.PenaltyRate).HasColumnName("penalty_rate");
             entity.Property(e => e.RoundId).HasColumnName("round_id");
             entity.Property(e => e.TemplateUrl)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("template_url");
             entity.Property(e => e.Type)
                 .HasMaxLength(20)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("type");
 
             entity.HasOne(d => d.Round).WithOne(p => p.Problem)
@@ -784,7 +893,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Province>(entity =>
         {
-            entity.HasKey(e => e.ProvinceId).HasName("PK__province__08DCB60FCF240C27");
+            entity.HasKey(e => e.ProvinceId).HasName("PK__province__08DCB60FF0073EF3");
 
             entity.ToTable("provinces");
 
@@ -793,11 +902,11 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("province_id");
             entity.Property(e => e.Address)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("address");
             entity.Property(e => e.Name)
                 .HasMaxLength(120)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
         });
 
@@ -819,29 +928,29 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("deny_reason");
             entity.Property(e => e.Email)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("email");
             entity.Property(e => e.Fullname)
                 .HasMaxLength(255)
                 .HasColumnName("fullname");
             entity.Property(e => e.PasswordHash)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("password_hash");
             entity.Property(e => e.Payload).HasColumnName("payload");
             entity.Property(e => e.Phone)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("phone");
             entity.Property(e => e.RequestedRole)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("requested_role");
             entity.Property(e => e.ReviewedAt).HasPrecision(0);
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
-                .IsUnicode(false)
                 .HasDefaultValue("pending")
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("status");
 
             entity.HasOne(d => d.ReviewedByNavigation).WithMany(p => p.RoleRegistrations)
@@ -867,10 +976,10 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.RegistrationId).HasColumnName("registration_id");
             entity.Property(e => e.Type)
                 .HasMaxLength(100)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("type");
             entity.Property(e => e.Url)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("url");
 
             entity.HasOne(d => d.Registration).WithMany(p => p.RoleRegistrationEvidences)
@@ -881,7 +990,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Round>(entity =>
         {
-            entity.HasKey(e => e.RoundId).HasName("PK__rounds__295E52E31AEB124A");
+            entity.HasKey(e => e.RoundId).HasName("PK__rounds__295E52E347DC2E3E");
 
             entity.ToTable("rounds");
 
@@ -895,14 +1004,14 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("end");
             entity.Property(e => e.Name)
                 .HasMaxLength(100)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
             entity.Property(e => e.Start)
                 .HasPrecision(0)
                 .HasColumnName("start");
             entity.Property(e => e.Status)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("status");
 
             entity.HasOne(d => d.Contest).WithMany(p => p.Rounds)
@@ -911,9 +1020,18 @@ public partial class ContestDbContext : DbContext
                 .HasConstraintName("FK_rounds_contest");
         });
 
+        modelBuilder.Entity<Schema>(entity =>
+        {
+            entity.HasKey(e => e.Version).HasName("PK_HangFire_Schema");
+
+            entity.ToTable("Schema", "Hangfire");
+
+            entity.Property(e => e.Version).ValueGeneratedNever();
+        });
+
         modelBuilder.Entity<School>(entity =>
         {
-            entity.HasKey(e => e.SchoolId).HasName("PK__schools__27CA6CF404A5DC42");
+            entity.HasKey(e => e.SchoolId).HasName("PK__schools__27CA6CF4F217898F");
 
             entity.ToTable("schools");
 
@@ -922,7 +1040,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("school_id");
             entity.Property(e => e.Contact)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("contact");
             entity.Property(e => e.CreatedAt)
                 .HasPrecision(0)
@@ -930,7 +1048,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Name)
                 .HasMaxLength(200)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
             entity.Property(e => e.ProvinceId).HasColumnName("province_id");
 
@@ -940,9 +1058,54 @@ public partial class ContestDbContext : DbContext
                 .HasConstraintName("FK_schools_province");
         });
 
+        modelBuilder.Entity<Server>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK_HangFire_Server");
+
+            entity.ToTable("Server", "Hangfire");
+
+            entity.HasIndex(e => e.LastHeartbeat, "IX_HangFire_Server_LastHeartbeat");
+
+            entity.Property(e => e.Id).HasMaxLength(200);
+            entity.Property(e => e.LastHeartbeat).HasColumnType("datetime");
+        });
+
+        modelBuilder.Entity<Set>(entity =>
+        {
+            entity.HasKey(e => new { e.Key, e.Value }).HasName("PK_HangFire_Set");
+
+            entity.ToTable("Set", "Hangfire");
+
+            entity.HasIndex(e => e.ExpireAt, "IX_HangFire_Set_ExpireAt").HasFilter("([ExpireAt] IS NOT NULL)");
+
+            entity.HasIndex(e => new { e.Key, e.Score }, "IX_HangFire_Set_Score");
+
+            entity.Property(e => e.Key).HasMaxLength(100);
+            entity.Property(e => e.Value).HasMaxLength(256);
+            entity.Property(e => e.ExpireAt).HasColumnType("datetime");
+        });
+
+        modelBuilder.Entity<State>(entity =>
+        {
+            entity.HasKey(e => new { e.JobId, e.Id }).HasName("PK_HangFire_State");
+
+            entity.ToTable("State", "Hangfire");
+
+            entity.HasIndex(e => e.CreatedAt, "IX_HangFire_State_CreatedAt");
+
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+            entity.Property(e => e.CreatedAt).HasColumnType("datetime");
+            entity.Property(e => e.Name).HasMaxLength(20);
+            entity.Property(e => e.Reason).HasMaxLength(100);
+
+            entity.HasOne(d => d.Job).WithMany(p => p.States)
+                .HasForeignKey(d => d.JobId)
+                .HasConstraintName("FK_HangFire_State_Job");
+        });
+
         modelBuilder.Entity<Student>(entity =>
         {
-            entity.HasKey(e => e.StudentId).HasName("PK__students__2A33069AB5CDB663");
+            entity.HasKey(e => e.StudentId).HasName("PK__students__2A33069A74906915");
 
             entity.ToTable("students");
 
@@ -957,7 +1120,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Grade)
                 .HasMaxLength(20)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("grade");
             entity.Property(e => e.SchoolId).HasColumnName("school_id");
             entity.Property(e => e.UserId).HasColumnName("user_id");
@@ -975,7 +1138,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Submission>(entity =>
         {
-            entity.HasKey(e => e.SubmissionId).HasName("PK__submissi__9B53559540D428A7");
+            entity.HasKey(e => e.SubmissionId).HasName("PK__submissi__9B535595854EC76E");
 
             entity.ToTable("submissions");
 
@@ -988,13 +1151,13 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.JudgedBy)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("judged_by");
             entity.Property(e => e.ProblemId).HasColumnName("problem_id");
             entity.Property(e => e.Score).HasColumnName("score");
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("status");
             entity.Property(e => e.SubmittedByStudentId).HasColumnName("submitted_by_student_id");
             entity.Property(e => e.TeamId).HasColumnName("team_id");
@@ -1017,7 +1180,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<SubmissionArtifact>(entity =>
         {
-            entity.HasKey(e => e.ArtifactId).HasName("PK__submissi__A074A76F0689A1F9");
+            entity.HasKey(e => e.ArtifactId).HasName("PK__submissi__A074A76F0F7FDE53");
 
             entity.ToTable("submission_artifacts");
 
@@ -1031,10 +1194,10 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.SubmissionId).HasColumnName("submission_id");
             entity.Property(e => e.Type)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("type");
             entity.Property(e => e.Url)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("url");
 
             entity.HasOne(d => d.Submission).WithMany(p => p.SubmissionArtifacts)
@@ -1045,7 +1208,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<SubmissionDetail>(entity =>
         {
-            entity.HasKey(e => e.DetailsId).HasName("PK__submissi__C3E443F4AE35BF0F");
+            entity.HasKey(e => e.DetailsId).HasName("PK__submissi__C3E443F40B9FDA26");
 
             entity.ToTable("submission_details");
 
@@ -1059,7 +1222,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.MemoryKb).HasColumnName("memory_kb");
             entity.Property(e => e.Note)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("note");
             entity.Property(e => e.RuntimeMs).HasColumnName("runtime_ms");
             entity.Property(e => e.SubmissionId).HasColumnName("submission_id");
@@ -1078,7 +1241,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<Team>(entity =>
         {
-            entity.HasKey(e => e.TeamId).HasName("PK__teams__F82DEDBC3B66F61A");
+            entity.HasKey(e => e.TeamId).HasName("PK__teams__F82DEDBC70BC535F");
 
             entity.ToTable("teams");
 
@@ -1093,12 +1256,12 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.MentorId).HasColumnName("mentor_id");
             entity.Property(e => e.Name)
                 .HasMaxLength(200)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
             entity.Property(e => e.SchoolId).HasColumnName("school_id");
             entity.Property(e => e.Status)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("status");
 
             entity.HasOne(d => d.Contest).WithMany(p => p.Teams)
@@ -1187,7 +1350,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("joined_at");
             entity.Property(e => e.MemberRole)
                 .HasMaxLength(50)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("member_role");
 
             entity.HasOne(d => d.Student).WithMany(p => p.TeamMembers)
@@ -1203,7 +1366,7 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<TestCase>(entity =>
         {
-            entity.HasKey(e => e.TestCaseId).HasName("PK__test_cas__F33C4A1748CA2993");
+            entity.HasKey(e => e.TestCaseId).HasName("PK__test_cas__F33C4A17214DEFB3");
 
             entity.ToTable("test_cases");
 
@@ -1213,15 +1376,15 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Description)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("description");
             entity.Property(e => e.ExpectedOutput)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("expected_output");
             entity.Property(e => e.Input)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("input");
             entity.Property(e => e.MemoryKb).HasColumnName("memory_kb");
             entity.Property(e => e.OrderIndex).HasColumnName("order_index");
@@ -1229,7 +1392,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.TimeLimitMs).HasColumnName("time_limit_ms");
             entity.Property(e => e.Type)
                 .HasMaxLength(20)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("type");
             entity.Property(e => e.Weight)
                 .HasDefaultValue(1.0)
@@ -1243,11 +1406,11 @@ public partial class ContestDbContext : DbContext
 
         modelBuilder.Entity<User>(entity =>
         {
-            entity.HasKey(e => e.UserId).HasName("PK__users__B9BE370F5811B60B");
+            entity.HasKey(e => e.UserId).HasName("PK__users__B9BE370F070DD9D8");
 
             entity.ToTable("users");
 
-            entity.HasIndex(e => e.Email, "UQ__users__AB6E61643FCCEBB6").IsUnique();
+            entity.HasIndex(e => e.Email, "UQ__users__AB6E616465EAFB59").IsUnique();
 
             entity.Property(e => e.UserId)
                 .HasDefaultValueSql("(newid())")
@@ -1262,20 +1425,20 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("email");
             entity.Property(e => e.Fullname)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("fullname");
             entity.Property(e => e.PasswordHash)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("password_hash");
             entity.Property(e => e.Role)
                 .HasMaxLength(255)
-                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("role");
             entity.Property(e => e.Status)
                 .HasMaxLength(30)
-                .IsUnicode(false)
                 .HasDefaultValue("active")
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("status");
             entity.Property(e => e.UpdatedAt)
                 .HasPrecision(0)
