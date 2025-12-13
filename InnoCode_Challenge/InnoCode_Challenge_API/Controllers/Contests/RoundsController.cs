@@ -377,5 +377,31 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
+        [HttpPut("{id}/start-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> StartRoundNow(Guid id)
+        {
+            var result = await _roundService.StartRoundNowAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Round start time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/end-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> EndRoundNow(Guid id)
+        {
+            var result = await _roundService.EndRoundNowAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Round end time updated to now."
+            ));
+        }
+
     }
 }
