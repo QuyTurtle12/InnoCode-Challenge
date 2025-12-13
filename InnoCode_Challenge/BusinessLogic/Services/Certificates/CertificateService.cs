@@ -43,9 +43,8 @@ namespace BusinessLogic.Services.Certificates
             IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
             // Fetch the template
-            CertificateTemplate? tpl = await tplRepo.Entities.Include(t => t.Contest).FirstOrDefaultAsync(t => t.TemplateId == dto.TemplateId);
+            CertificateTemplate? tpl = await tplRepo.Entities.Include(t => t.Contest).FirstOrDefaultAsync(t => t.TemplateId == dto.TemplateId && t.DeletedAt == null);
 
-            // Validate template existence
             if (tpl == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, CertificateErrorCodeConstants.TemplateNotFound, $"No template with ID={dto.TemplateId}");
 
@@ -349,14 +348,65 @@ namespace BusinessLogic.Services.Certificates
             // Return paginated DTOs
             return new PaginatedList<CertificateDTO>(items, pageData.TotalCount, pageData.PageNumber, pageData.PageSize);
         }
-        private static IFormFile ToFormFile(byte[] data, string fileName, string contentType)
+        public async Task<CertificateDTO> UpdateAsync(Guid certificateId, UpdateCertificateDTO dto)
         {
-            var stream = new MemoryStream(data); 
-            return new FormFile(stream, 0, data.Length, "file", fileName)
+            if (certificateId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "CertificateId is invalid.");
+
+            if (dto == null)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "Payload cannot be null.");
+
+            var repo = _unitOfWork.GetRepository<Certificate>();
+
+            var cert = await repo.Entities
+                .Include(x => x.Template).ThenInclude(t => t.Contest)
+                .Include(x => x.Team)
+                .Include(x => x.Student).ThenInclude(s => s.User)
+                .FirstOrDefaultAsync(x => x.CertificateId == certificateId && x.DeletedAt == null);
+
+            if (cert == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CERT_NOT_FOUND", "Certificate not found.");
+
+            if (!string.IsNullOrWhiteSpace(dto.FileUrl))
+                cert.FileUrl = dto.FileUrl;
+
+            if (dto.IssuedAt.HasValue)
+                cert.IssuedAt = dto.IssuedAt.Value;
+
+            repo.Update(cert);
+            await _unitOfWork.SaveAsync();
+
+            return new CertificateDTO
             {
-                Headers = new HeaderDictionary(),
-                ContentType = contentType
+                CertificateId = cert.CertificateId,
+                TemplateId = cert.TemplateId,
+                TemplateName = cert.Template.Name,
+                ContestId = cert.Template.ContestId,
+                TeamId = cert.TeamId,
+                TeamName = cert.Team?.Name,
+                StudentId = cert.StudentId,
+                StudentName = cert.Student?.User?.Fullname,
+                FileUrl = cert.FileUrl,
+                IssuedAt = cert.IssuedAt
             };
+        }
+
+        public async Task SoftDeleteAsync(Guid certificateId)
+        {
+            if (certificateId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "CertificateId is invalid.");
+
+            var repo = _unitOfWork.GetRepository<Certificate>();
+
+            var cert = await repo.Entities
+                .FirstOrDefaultAsync(x => x.CertificateId == certificateId && x.DeletedAt == null);
+
+            if (cert == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CERT_NOT_FOUND", "Certificate not found.");
+
+            cert.DeletedAt = DateTime.UtcNow;
+            repo.Update(cert);
+            await _unitOfWork.SaveAsync();
         }
 
     }

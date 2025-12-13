@@ -91,5 +91,29 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
                 paging,
                 "OK"));
         }
+
+        //[HttpPut("{id:guid}")]
+        //[Authorize(Policy = "RequireOrganizerOrAdmin")]
+        //public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCertificateDTO dto)
+        //{
+        //    var updated = await _certificateService.UpdateAsync(id, dto);
+        //    return Ok(new BaseResponseModel<object>(
+        //        StatusCodes.Status200OK,
+        //        ResponseCodeConstants.SUCCESS,
+        //        updated,
+        //        "Certificate updated."));
+        //}
+
+        [HttpDelete("{id:guid}")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> SoftDelete(Guid id)
+        {
+            await _certificateService.SoftDeleteAsync(id);
+            return Ok(new BaseResponseModel(
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                "Certificate deleted (soft)."));
+        }
+
     }
 }

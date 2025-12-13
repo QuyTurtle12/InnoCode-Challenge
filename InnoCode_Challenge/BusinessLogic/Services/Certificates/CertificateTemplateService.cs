@@ -147,5 +147,76 @@ namespace BusinessLogic.Services.Certificates
             return new PaginatedList<CertificateTemplateDTO>(items, pageData.TotalCount, pageData.PageNumber, pageData.PageSize);
         }
 
+        public async Task<CertificateTemplateDTO> UpdateAsync(Guid templateId, UpdateCertificateTemplateDTO dto)
+        {
+            if (templateId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "TemplateId is invalid.");
+
+            if (dto == null)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "Payload cannot be null.");
+
+            var repo = _unitOfWork.GetRepository<CertificateTemplate>();
+
+            var tpl = await repo.Entities
+                .FirstOrDefaultAsync(t => t.TemplateId == templateId && t.DeletedAt == null);
+
+            if (tpl == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "TEMPLATE_NOT_FOUND", "Template not found.");
+
+            // Optional updates
+            if (!string.IsNullOrWhiteSpace(dto.Name))
+                tpl.Name = dto.Name.Trim();
+
+            if (!string.IsNullOrWhiteSpace(dto.FileUrl))
+                tpl.FileUrl = dto.FileUrl.Trim();
+
+            if (dto.Text != null)
+            {
+                if (dto.Text.X.HasValue) tpl.TextX = dto.Text.X.Value;
+                if (dto.Text.Y.HasValue) tpl.TextY = dto.Text.Y.Value;
+            }
+
+            repo.Update(tpl);
+            await _unitOfWork.SaveAsync();
+
+            return new CertificateTemplateDTO
+            {
+                TemplateId = tpl.TemplateId,
+                ContestId = tpl.ContestId,
+                Name = tpl.Name,
+                FileUrl = tpl.FileUrl,
+                Text = new TextLayoutDTO
+                {
+                    X = (int)(tpl.TextX ?? 960),
+                    Y = (int)(tpl.TextY ?? 540),
+
+                    FontFamily = "Arial",
+                    FontSize = 64f,
+                    ColorHex = "#1F2937",
+                    MaxWidth = 1600,
+                    Align = "center"
+                }
+            };
+        }
+
+        public async Task SoftDeleteAsync(Guid templateId)
+        {
+            if (templateId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "TemplateId is invalid.");
+
+            var repo = _unitOfWork.GetRepository<CertificateTemplate>();
+
+            var tpl = await repo.Entities
+                .FirstOrDefaultAsync(t => t.TemplateId == templateId && t.DeletedAt == null);
+
+            if (tpl == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "TEMPLATE_NOT_FOUND", "Template not found.");
+
+            tpl.DeletedAt = DateTime.UtcNow;
+            repo.Update(tpl);
+            await _unitOfWork.SaveAsync();
+        }
+
+
     }
 }
