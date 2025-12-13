@@ -55,6 +55,10 @@ public partial class ContestDbContext : DbContext
 
     public virtual DbSet<Province> Provinces { get; set; }
 
+    public virtual DbSet<RoleRegistration> RoleRegistrations { get; set; }
+
+    public virtual DbSet<RoleRegistrationEvidence> RoleRegistrationEvidences { get; set; }
+
     public virtual DbSet<Round> Rounds { get; set; }
 
     public virtual DbSet<School> Schools { get; set; }
@@ -287,6 +291,12 @@ public partial class ContestDbContext : DbContext
                 .HasMaxLength(120)
                 .IsUnicode(false)
                 .HasColumnName("name");
+            entity.Property(e => e.TextX)
+                .HasColumnType("decimal(18, 0)")
+                .HasColumnName("textX");
+            entity.Property(e => e.TextY)
+                .HasColumnType("decimal(18, 0)")
+                .HasColumnName("textY");
 
             entity.HasOne(d => d.Contest).WithMany(p => p.CertificateTemplates)
                 .HasForeignKey(d => d.ContestId)
@@ -750,9 +760,6 @@ public partial class ContestDbContext : DbContext
                 .HasPrecision(0)
                 .HasColumnName("created_at");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
-            entity.Property(e => e.Description)
-                .HasMaxLength(255)
-                .IsUnicode(false);
             entity.Property(e => e.Language)
                 .HasMaxLength(20)
                 .IsUnicode(false)
@@ -792,6 +799,84 @@ public partial class ContestDbContext : DbContext
                 .HasMaxLength(120)
                 .IsUnicode(false)
                 .HasColumnName("name");
+        });
+
+        modelBuilder.Entity<RoleRegistration>(entity =>
+        {
+            entity.HasKey(e => e.RegistrationId);
+
+            entity.ToTable("role_registrations");
+
+            entity.Property(e => e.RegistrationId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("registration_id");
+            entity.Property(e => e.CreatedAt)
+                .HasPrecision(0)
+                .HasDefaultValueSql("(getdate())");
+            entity.Property(e => e.DeletedAt).HasPrecision(0);
+            entity.Property(e => e.DenyReason)
+                .HasMaxLength(300)
+                .HasColumnName("deny_reason");
+            entity.Property(e => e.Email)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("email");
+            entity.Property(e => e.Fullname)
+                .HasMaxLength(255)
+                .HasColumnName("fullname");
+            entity.Property(e => e.PasswordHash)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("password_hash");
+            entity.Property(e => e.Payload).HasColumnName("payload");
+            entity.Property(e => e.Phone)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("phone");
+            entity.Property(e => e.RequestedRole)
+                .HasMaxLength(50)
+                .IsUnicode(false)
+                .HasColumnName("requested_role");
+            entity.Property(e => e.ReviewedAt).HasPrecision(0);
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasDefaultValue("pending")
+                .HasColumnName("status");
+
+            entity.HasOne(d => d.ReviewedByNavigation).WithMany(p => p.RoleRegistrations)
+                .HasForeignKey(d => d.ReviewedBy)
+                .HasConstraintName("FK_role_registrations_reviewer");
+        });
+
+        modelBuilder.Entity<RoleRegistrationEvidence>(entity =>
+        {
+            entity.HasKey(e => e.EvidenceId);
+
+            entity.ToTable("role_registration_evidence");
+
+            entity.Property(e => e.EvidenceId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("evidence_id");
+            entity.Property(e => e.CreatedAt)
+                .HasPrecision(0)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.DeletedAt).HasPrecision(0);
+            entity.Property(e => e.Note).HasColumnName("note");
+            entity.Property(e => e.RegistrationId).HasColumnName("registration_id");
+            entity.Property(e => e.Type)
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasColumnName("type");
+            entity.Property(e => e.Url)
+                .IsUnicode(false)
+                .HasColumnName("url");
+
+            entity.HasOne(d => d.Registration).WithMany(p => p.RoleRegistrationEvidences)
+                .HasForeignKey(d => d.RegistrationId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_evidence_registration");
         });
 
         modelBuilder.Entity<Round>(entity =>
@@ -1125,7 +1210,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.TestCaseId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("test_case_id");
-            entity.Property(e => e.DeleteAt).HasPrecision(0);
+            entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Description)
                 .HasMaxLength(255)
                 .IsUnicode(false)

@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Appeals;
+using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -21,6 +22,7 @@ namespace BusinessLogic.Services.Appeals
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly ILeaderboardEntryService _leaderboardEntryService;
 
         private const string APPEAL_EVIDENCE_FOLDER = "appeal_evidences";
 
@@ -29,12 +31,14 @@ namespace BusinessLogic.Services.Appeals
             IMapper mapper,
             IUOW uow,
             IHttpContextAccessor httpContextAccessor,
-            ICloudinaryService cloudinaryService)
+            ICloudinaryService cloudinaryService,
+            ILeaderboardEntryService leaderboardEntryService)
         {
             _mapper = mapper;
             _unitOfWork = uow;
             _httpContextAccessor = httpContextAccessor;
             _cloudinaryService = cloudinaryService;
+            _leaderboardEntryService = leaderboardEntryService;
         }
 
         public async Task<GetAppealDTO> CreateAppealAsync(CreateAppealDTO dto)
@@ -475,6 +479,7 @@ namespace BusinessLogic.Services.Appeals
             IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
             IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
             IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
+            IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
             Guid roundId = appeal.TargetId;
 
@@ -505,6 +510,8 @@ namespace BusinessLogic.Services.Appeals
             bool isAutoEval = string.Equals(problemType, ProblemTypeEnum.AutoEvaluation.ToString(), StringComparison.OrdinalIgnoreCase);
             bool isManual = string.Equals(problemType, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
 
+            double scoreToDeduct = 0;
+
             // Manual: soft delete the latest submission for this student in the round
             if (isManual)
             {
@@ -519,6 +526,8 @@ namespace BusinessLogic.Services.Appeals
 
                 if (latest != null)
                 {
+                    scoreToDeduct = latest.Score;
+
                     latest.DeletedAt = DateTime.UtcNow;
                     await submissionRepo.UpdateAsync(latest);
 
@@ -553,6 +562,13 @@ namespace BusinessLogic.Services.Appeals
                                 && s.DeletedAt == null)
                     .ToListAsync();
 
+                // Get the latest submission's score for deduction
+                Submission? latest = subs.OrderByDescending(s => s.CreatedAt).FirstOrDefault();
+                if (latest != null)
+                {
+                    scoreToDeduct = latest.Score;
+                }
+
                 foreach (Submission s in subs)
                 {
                     s.DeletedAt = DateTime.UtcNow;
@@ -586,12 +602,22 @@ namespace BusinessLogic.Services.Appeals
                                 && a.DeletedAt == null)
                     .ToListAsync();
 
+                // Get the latest attempt's score for deduction
+                McqAttempt? latest = attempts.OrderByDescending(a => a.End).FirstOrDefault();
+                if (latest != null)
+                {
+                    scoreToDeduct = latest.Score ?? 0;
+                }
+
                 foreach (McqAttempt at in attempts)
                 {
                     at.DeletedAt = DateTime.UtcNow;
                     await mcqAttemptRepo.UpdateAsync(at);
                 }
             }
+
+            // Deduct the score from the leaderboard
+            await _leaderboardEntryService.DeductScoreFromStudentAsync(round!.ContestId, studentId.Value, scoreToDeduct);
         }
 
         private string GetCurrentUserIdOrThrow()

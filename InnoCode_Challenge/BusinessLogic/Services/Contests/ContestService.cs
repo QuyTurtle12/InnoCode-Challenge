@@ -1082,7 +1082,7 @@ namespace BusinessLogic.Services.Contests
                 // Check if Auto Evaluation problems have test cases
                 List<Problem> autoEvalProblemsWithoutTestCases = problems
                     .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                                && !p.TestCases.Any(tc => tc.DeleteAt == null))
+                                && !p.TestCases.Any(tc => tc.DeletedAt == null))
                     .ToList();
 
                 if (autoEvalProblemsWithoutTestCases.Any())
@@ -1109,7 +1109,7 @@ namespace BusinessLogic.Services.Contests
                 // Check for rubric attachments
                 List<Problem> manualProblemsWithoutRubrics = problems
                     .Where(p => p.Type == ProblemTypeEnum.Manual.ToString()
-                                && !p.TestCases.Any(tc => tc.DeleteAt == null))
+                                && !p.TestCases.Any(tc => tc.DeletedAt == null))
                     .ToList();
 
                 if (manualProblemsWithoutRubrics.Any())
@@ -1345,26 +1345,71 @@ namespace BusinessLogic.Services.Contests
 
         public async Task DeleteContestPolicyAsync(Guid contestId, string policyKey)
         {
-            if (string.IsNullOrWhiteSpace(policyKey))
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policy key is required.");
+            try
+            {
+                // Start a transaction
+                _unitOfWork.BeginTransaction();
 
-            Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+                if (string.IsNullOrWhiteSpace(policyKey))
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policy key is required.");
 
-            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
 
-            string normalizedKey = policyKey.Trim().ToLowerInvariant();
-            string configKey = ConfigKeys.ContestPolicy(contest.ContestId, normalizedKey);
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
-            Config? existing = await configRepo.Entities
-                .FirstOrDefaultAsync(c => c.Key == configKey && c.Scope == "contest");
+                string normalizedKey = policyKey.Trim().ToLowerInvariant();
+                string configKey = ConfigKeys.ContestPolicy(contest.ContestId, normalizedKey);
 
-            if (existing == null || existing.DeletedAt != null)
-                return;
+                // Delete associated teams and their members
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
 
-            existing.DeletedAt = DateTime.UtcNow;
-            existing.UpdatedAt = DateTime.UtcNow;
-            await configRepo.UpdateAsync(existing);
-            await _unitOfWork.SaveAsync();
+                // Get all teams associated with the contest
+                List<Team> teams = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                    .Include(t => t.TeamMembers)
+                    .ToListAsync();
+
+                if (teams.Any())
+                {
+                    DateTime now = DateTime.UtcNow;
+
+                    // Soft delete all team members
+                    foreach (Team team in teams)
+                    {
+                        List<TeamMember> teamMembers = team.TeamMembers.ToList();
+
+                        foreach (TeamMember member in teamMembers)
+                        {
+                            await teamMemberRepo.DeleteAsync(member);
+                        }
+
+                        // Soft delete the team
+                        team.DeletedAt = now;
+                        await teamRepo.UpdateAsync(team);
+                    }
+                }
+
+                // Save all changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit the transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // If something fails, roll back the transaction
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error deleting Contest policy: {ex.Message}");
+            }
         }
 
         private async Task<Contest> GetContestOwnedByCurrentOrganizer(Guid contestId)

@@ -35,6 +35,8 @@ public partial class User
 
     public virtual ICollection<Notification> Notifications { get; set; } = new List<Notification>();
 
+    public virtual ICollection<RoleRegistration> RoleRegistrations { get; set; } = new List<RoleRegistration>();
+
     public virtual ICollection<Student> Students { get; set; } = new List<Student>();
 
     public virtual ICollection<TeamInvite> TeamInvites { get; set; } = new List<TeamInvite>();

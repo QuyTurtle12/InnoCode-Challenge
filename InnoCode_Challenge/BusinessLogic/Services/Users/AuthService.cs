@@ -175,7 +175,7 @@ namespace BusinessLogic.Services.Users
 
             var user = await userRepo.Entities
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+                .FirstOrDefaultAsync(u => u.Email == email && u.DeletedAt == null);
 
             if (user == null || !PasswordHasher.Verify(dto.Password, user.PasswordHash))
                 throw new ErrorException(StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS", "Email or password is incorrect.");
