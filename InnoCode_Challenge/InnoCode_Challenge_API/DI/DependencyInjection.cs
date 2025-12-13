@@ -2,6 +2,7 @@
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
 using BusinessLogic.IServices.Mentors;
 using BusinessLogic.IServices.Schools;
@@ -9,13 +10,11 @@ using BusinessLogic.IServices.Students;
 using BusinessLogic.IServices.Submissions;
 using BusinessLogic.IServices.Users;
 using BusinessLogic.MappingProfiles.Users;
-using BusinessLogic.IServices.FileStorages;
-using BusinessLogic.Services.FileStorages;
-using Utility.Helpers;
 using BusinessLogic.Services;
 using BusinessLogic.Services.Appeals;
 using BusinessLogic.Services.Certificates;
 using BusinessLogic.Services.Contests;
+using BusinessLogic.Services.FileStorages;
 using BusinessLogic.Services.Mcqs;
 using BusinessLogic.Services.Mentors;
 using BusinessLogic.Services.Schools;
@@ -23,6 +22,8 @@ using BusinessLogic.Services.Students;
 using BusinessLogic.Services.Submissions;
 using BusinessLogic.Services.Users;
 using DataAccess.Entities;
+using Hangfire;
+using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -33,6 +34,7 @@ using Repository.Repositories;
 using System.Reflection;
 using System.Text;
 using Utility.Constant;
+using Utility.Helpers;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -51,13 +53,10 @@ namespace InnoCode_Challenge_API.DI
             services.AddCloudinary(configuration);
             services.AddSignalR();
             services.AddServices();
-            services.AddBackgroundServices();
+            services.AddHangfireJobs(configuration);
             services.AddMemoryCache();
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="services"></param>
+
         public static void ConfigCors(this IServiceCollection services)
         {
             services.AddCors(options =>
@@ -259,11 +258,35 @@ namespace InnoCode_Challenge_API.DI
             });
         }
 
-        public static void AddBackgroundServices(this IServiceCollection services)
+        public static void AddHangfireJobs(this IServiceCollection services, IConfiguration configuration)
         {
-            // Register all background services here
-            services.AddHostedService<ContestStateBackgroundService>();
-            services.AddHostedService<RoundSateBackgroundService>();
+            // Configure Hangfire to use SQL Server storage
+            services.AddHangfire(config => config
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UseSqlServerStorage(configuration.GetConnectionString("MyCnn"),
+                    new SqlServerStorageOptions
+                    {
+                        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                        QueuePollInterval = TimeSpan.Zero,
+                        UseRecommendedIsolationLevel = true,
+                        DisableGlobalLocks = true,
+                        SchemaName = "Hangfire"
+                    }));
+
+
+            // Add Hangfire server with specific configuration
+            services.AddHangfireServer(options =>
+            {
+                options.WorkerCount = 1; // Single worker to prevent race conditions
+                options.SchedulePollingInterval = TimeSpan.FromSeconds(1);
+            });
+
+            // Register Hangfire job classes
+            services.AddScoped<ContestStateJob>();
+            services.AddScoped<RoundStateJob>();
         }
 
         public static void AddServices(this IServiceCollection services)

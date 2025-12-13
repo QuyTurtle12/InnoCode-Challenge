@@ -4,6 +4,7 @@ using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
 using DataAccess.Entities;
+using Hangfire;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
@@ -216,8 +217,12 @@ namespace BusinessLogic.Services.Contests
                         throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
                 }
 
-                // Save all changes (including TemplateUrl updates)
+                // Save all changes
                 await _unitOfWork.SaveAsync();
+
+                // Schedule background job for round state transitions
+                BackgroundJob.Enqueue<RoundStateJob>(job =>
+                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
@@ -735,6 +740,10 @@ namespace BusinessLogic.Services.Contests
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
+
+                // Reschedule round state transitions
+                BackgroundJob.Enqueue<RoundStateJob>(job =>
+                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();

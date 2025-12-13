@@ -2,6 +2,7 @@
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
+using Hangfire;
 using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -773,6 +774,10 @@ namespace BusinessLogic.Services.Contests
                 // Return the updated contest DTO
                 PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
 
+                // Schedule state transitions using Hangfire
+                BackgroundJob.Enqueue<ContestStateJob>(job =>
+                    job.ScheduleContestStateTransitionsAsync(existingContest.ContestId));
+
                 return result.Items.First();
             }
             catch (Exception ex)
@@ -957,6 +962,10 @@ namespace BusinessLogic.Services.Contests
                 created.End = entity.End;
                 created.CreatedAt = entity.CreatedAt;
                 created.imageUrl = imageUrl;
+
+                // Schedule state transitions using Hangfire
+                BackgroundJob.Enqueue<ContestStateJob>(job =>
+                    job.ScheduleContestStateTransitionsAsync(created.ContestId));
 
                 // Return the created contest DTO
                 return created;
