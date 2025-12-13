@@ -3,6 +3,7 @@
     public enum RoundStatusEnum
     {
         Opened,
-        Closed
+        Closed,
+        Incoming
     }
 }

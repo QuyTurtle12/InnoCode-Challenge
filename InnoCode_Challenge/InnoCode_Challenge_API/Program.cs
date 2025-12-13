@@ -1,5 +1,7 @@
 using BusinessLogic.Hubs;
+using BusinessLogic.Services.Contests;
 using CloudinaryDotNet.Actions;
+using Hangfire;
 using InnoCode_Challenge_API.DI;
 using InnoCode_Challenge_API.Middleware;
 using Microsoft.AspNetCore.Mvc;
@@ -109,6 +111,47 @@ app.UseCors("AllowAllOrigins");
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireAuthorizationFilter() },
+    DashboardTitle = "InnoCode Challenge - Job Dashboard",
+    StatsPollingInterval = 2000, // Update dashboard every 2 seconds
+    DisplayStorageConnectionString = false,
+
+    // Enable detailed job information
+    DisplayNameFunc = (context, job) =>
+    {
+        // Custom display names for better readability
+        if (job.Type.Name == "ContestStateJob")
+        {
+            return $"Contest State: {job.Method.Name}";
+        }
+        if (job.Type.Name == "RoundStateJob")
+        {
+            return $"Round State: {job.Method.Name}";
+        }
+        return $"{job.Type.Name}.{job.Method.Name}";
+    }
+});
+
+// Schedule recurring job as fallback (every minute)
+RecurringJob.AddOrUpdate<ContestStateJob>(
+    "update-all-contest-states",
+    job => job.UpdateAllContestStatesAsync(),
+    "* * * * *", // Every minute as fallback
+    new RecurringJobOptions
+    {
+        TimeZone = TimeZoneInfo.Utc
+    });
+
+RecurringJob.AddOrUpdate<RoundStateJob>(
+    "update-all-round-states",
+    job => job.UpdateAllRoundStatesAsync(),
+    "* * * * *", // Every minute as fallback
+    new RecurringJobOptions
+    {
+        TimeZone = TimeZoneInfo.Utc
+    });
 
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 

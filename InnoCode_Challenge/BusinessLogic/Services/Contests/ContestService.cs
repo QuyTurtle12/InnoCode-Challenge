@@ -2,6 +2,8 @@
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
+using Hangfire;
+using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ContestDTOs;
@@ -652,6 +654,22 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Contest name is required.");
                 }
 
+                // Validate Team Members Min is positive
+                if (contestDTO.TeamMembersMin.HasValue && contestDTO.TeamMembersMin.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum must be at least 1.");
+
+                // Validate Team Members Max is positive
+                if (contestDTO.TeamMembersMax.HasValue && contestDTO.TeamMembersMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members maximum must be at least 1.");
+
+                // Validate TeamMembersMin vs TeamMembersMax
+                if (contestDTO.TeamMembersMin.HasValue && contestDTO.TeamMembersMax.HasValue && contestDTO.TeamMembersMin.Value > contestDTO.TeamMembersMax.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum cannot be greater than team members maximum.");
+
+                // Validate Team Limit Max is positive
+                if (contestDTO.TeamLimitMax.HasValue && contestDTO.TeamLimitMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team limit maximum must be at least 1.");
+
                 // Get repository and fetch the contest by ID
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -722,6 +740,7 @@ namespace BusinessLogic.Services.Contests
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(existingContest.ContestId), teamMembersMin.ToString());
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(existingContest.ContestId), teamMembersMax.ToString());
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(existingContest.ContestId), teamMembersMin.ToString());
 
                 // Set team limit max
                 if (teamLimitMax.HasValue)
@@ -754,6 +773,10 @@ namespace BusinessLogic.Services.Contests
 
                 // Return the updated contest DTO
                 PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
+
+                // Schedule state transitions using Hangfire
+                BackgroundJob.Enqueue<ContestStateJob>(job =>
+                    job.ScheduleContestStateTransitionsAsync(existingContest.ContestId));
 
                 return result.Items.First();
             }
@@ -812,6 +835,22 @@ namespace BusinessLogic.Services.Contests
                 // Validate registration end vs contest start
                 if (dto.RegistrationEnd.HasValue && dto.Start.HasValue && dto.RegistrationEnd.Value >= dto.Start.Value)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Registration end must be before contest start.");
+
+                // Validate Team Members Min is positive
+                if (dto.TeamMembersMin.HasValue && dto.TeamMembersMin.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum must be at least 1.");
+
+                // Validate Team Members Max is positive
+                if (dto.TeamMembersMax.HasValue && dto.TeamMembersMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members maximum must be at least 1.");
+
+                // Validate TeamMembersMin vs TeamMembersMax
+                if (dto.TeamMembersMin.HasValue && dto.TeamMembersMax.HasValue && dto.TeamMembersMin.Value > dto.TeamMembersMax.Value)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team members minimum cannot be greater than team members maximum.");
+                
+                // Validate Team Limit Max is positive
+                if (dto.TeamLimitMax.HasValue && dto.TeamLimitMax.Value < 1)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Team limit maximum must be at least 1.");
 
                 string currentUserId = GetCurrentUserIdOrThrow();
 
@@ -886,6 +925,7 @@ namespace BusinessLogic.Services.Contests
                 // Insert or update config entries
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(entity.ContestId), teamMembersMin.ToString());
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMax(entity.ContestId), teamMembersMax.ToString());
+                await UpsertConfigAsync(configRepo, ConfigKeys.ContestTeamMembersMin(entity.ContestId), teamMembersMin.ToString());
 
                 // Set team limit max
                 if (teamLimitMax.HasValue)
@@ -918,6 +958,7 @@ namespace BusinessLogic.Services.Contests
                 created.TeamMembersMin = teamMembersMin;
                 created.TeamMembersMax = teamMembersMax;
                 created.TeamLimitMax = teamLimitMax;
+                created.TeamMembersMin = teamMembersMin;
                 created.RewardsText = dto.RewardsText;
                 created.RegistrationStart = dto.RegistrationStart;
                 created.RegistrationEnd = dto.RegistrationEnd;
@@ -925,6 +966,10 @@ namespace BusinessLogic.Services.Contests
                 created.End = entity.End;
                 created.CreatedAt = entity.CreatedAt;
                 created.imageUrl = imageUrl;
+
+                // Schedule state transitions using Hangfire
+                BackgroundJob.Enqueue<ContestStateJob>(job =>
+                    job.ScheduleContestStateTransitionsAsync(created.ContestId));
 
                 // Return the created contest DTO
                 return created;

@@ -8,7 +8,8 @@
         public const string Defaults_TeamMembersMin = "defaults:team_members_min";
         public static string ContestTeamMembersMin(Guid contestId) => $"contest:{contestId}:team_members_min";
         public static string ContestTeamMembersMax(Guid contestId) => $"contest:{contestId}:team_members_max";
-        public static string ContestTeamLimitMax(Guid contestId) => $"contest:{contestId}:team_limit_max";        public static string ContestInviteTtlDays(Guid contestId) => $"contest:{contestId}:invite_ttl_days";
+        public static string ContestTeamLimitMax(Guid contestId) => $"contest:{contestId}:team_limit_max";
+        public static string ContestInviteTtlDays(Guid contestId) => $"contest:{contestId}:invite_ttl_days";
         public static string ContestRegStart(Guid contestId) => $"contest:{contestId}:registration_start";
         public static string ContestRegEnd(Guid contestId) => $"contest:{contestId}:registration_end";
         public static string ContestRewards(Guid contestId) => $"contest:{contestId}:rewards_text";
