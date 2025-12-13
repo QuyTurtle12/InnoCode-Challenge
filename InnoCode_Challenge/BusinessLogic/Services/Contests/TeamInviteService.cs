@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Repository.DTOs.TeamInviteDTOs;
 using Repository.IRepositories;
+using System;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
@@ -19,6 +20,7 @@ namespace BusinessLogic.Services
         private readonly IMapper _mapper;
         private readonly INotificationService _notificationService;
         private readonly ILogger<TeamInviteService> _logger;
+        private readonly IActivityLogWriter _logWriter;
 
         private const string Pending = "pending";
         private const string Accepted = "accepted";
@@ -26,13 +28,20 @@ namespace BusinessLogic.Services
         private const string Revoked = "revoked";
         private const string Expired = "expired";
 
-        public TeamInviteService(IUOW uow, IMapper mapper, INotificationService notificationService, ILogger<TeamInviteService> logger)
+        public TeamInviteService(
+            IUOW uow,
+            IMapper mapper,
+            INotificationService notificationService,
+            ILogger<TeamInviteService> logger,
+            IActivityLogWriter logWriter)
         {
             _uow = uow;
             _mapper = mapper;
             _notificationService = notificationService;
             _logger = logger;
+            _logWriter = logWriter;
         }
+
 
         public async Task<PaginatedList<TeamInviteDTO>> GetForTeamAsync(
             Guid teamId,
@@ -177,6 +186,12 @@ namespace BusinessLogic.Services
                 await _uow.SaveAsync();
                 await TryNotifyInviteeAsync(inviteeUserId, team, pending);
 
+                await _logWriter.TryWriteAsync(invitedByUserId,
+                    ActivityActions.TeamInviteResent,
+                    TargetTypes.TeamInvite,
+                    pending.InviteId.ToString());
+
+
                 return await ProjectWithTokenAsync(pending.InviteId);
             }
 
@@ -196,6 +211,12 @@ namespace BusinessLogic.Services
             await inviteRepo.InsertAsync(invite);
             await _uow.SaveAsync();
             await TryNotifyInviteeAsync(inviteeUserId, team, invite);
+
+            await _logWriter.TryWriteAsync(invitedByUserId,
+                ActivityActions.TeamInviteCreated,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
+
 
             return await ProjectWithTokenAsync(invite.InviteId);
         }
@@ -243,8 +264,10 @@ namespace BusinessLogic.Services
                 await _uow.SaveAsync();
                 var inviteeUserId = await ResolveInviteeUserIdAsync(newInvite);
                 await TryNotifyInviteeAsync(inviteeUserId, invite.Team, newInvite);
-
-
+                await _logWriter.TryWriteAsync(requesterUserId,
+                    ActivityActions.TeamInviteResent,
+                    TargetTypes.TeamInvite,
+                    newInvite.InviteId.ToString());
 
                 return await ProjectWithTokenAsync(newInvite.InviteId);
             }
@@ -256,6 +279,11 @@ namespace BusinessLogic.Services
                 await _uow.SaveAsync();
                 var inviteeUserId = await ResolveInviteeUserIdAsync(invite);
                 await TryNotifyInviteeAsync(inviteeUserId, invite.Team, invite);
+
+                await _logWriter.TryWriteAsync(requesterUserId,
+                    ActivityActions.TeamInviteResent,
+                    TargetTypes.TeamInvite,
+                    invite.InviteId.ToString());
 
                 return await ProjectWithTokenAsync(invite.InviteId);
             }
@@ -280,6 +308,11 @@ namespace BusinessLogic.Services
             invite.Status = Revoked;
             repo.Update(invite);
             await _uow.SaveAsync();
+            await _logWriter.TryWriteAsync(requesterUserId,
+                ActivityActions.TeamInviteRevoked,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
+
         }
 
         public async Task AcceptByTokenAsync(string token, string email)
@@ -322,7 +355,7 @@ namespace BusinessLogic.Services
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail && u.DeletedAt == null);
 
             if (user == null)
-                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register/log in with the invited email first.");
+                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register with the invited email first.");
 
             if (user.Role != RoleConstants.Student)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_STUDENT", "Only students can accept team invites.");
@@ -373,6 +406,10 @@ namespace BusinessLogic.Services
             inviteRepo.Update(invite);
 
             await _uow.SaveAsync();
+            await _logWriter.TryWriteAsync(user.UserId,
+                ActivityActions.TeamInviteAccepted,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
 
             // notify inviter
             var inviterUserId = invite.InvitedByUserId;
@@ -409,6 +446,7 @@ namespace BusinessLogic.Services
         public async Task DeclineByTokenAsync(string token, string email)
         {
             var inviteRepo = _uow.GetRepository<TeamInvite>();
+            var userRepo = _uow.GetRepository<User>();
 
             if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(email))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_INPUT", "Token and Email are required.");
@@ -421,14 +459,36 @@ namespace BusinessLogic.Services
 
             if (invite.Status != Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVITE_NOT_PENDING", "Invite is not pending.");
+            
+            if (invite.ExpiresAt <= DateTime.UtcNow)
+            {
+                invite.Status = Expired;
+                inviteRepo.Update(invite);
+                await _uow.SaveAsync();
+                throw new ErrorException(StatusCodes.Status410Gone, "INVITE_EXPIRED", "Invite has expired.");
+            }
 
             if (!string.IsNullOrWhiteSpace(invite.InviteeEmail)
                 && !string.Equals(invite.InviteeEmail.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
                 throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
+            
+            var user = await userRepo.Entities
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail && u.DeletedAt == null);
+
+            if (user == null)
+                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register with the invited email first.");
+
+            if (user.Role != RoleConstants.Student)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_STUDENT", "Only students can accept team invites.");
+
 
             invite.Status = Declined; // (cancelled)
             inviteRepo.Update(invite);
             await _uow.SaveAsync();
+            await _logWriter.TryWriteAsync(user.UserId,
+                ActivityActions.TeamInviteDeclined,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
 
             //notify inviter
             try
