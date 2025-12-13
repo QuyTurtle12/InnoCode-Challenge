@@ -129,7 +129,17 @@ namespace InnoCode_Challenge_API.DI
                         return Task.CompletedTask;
                     }
                 };
-            });
+            })
+            .AddCookie("HangfireCookie", options =>
+            {
+                options.Cookie.Name = "HangfireAuth";
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SameSite = SameSiteMode.Lax;
+                options.ExpireTimeSpan = TimeSpan.FromHours(8);
+                options.SlidingExpiration = true;
+                options.LoginPath = "/api/auth/login";
+            }); ;
         }
 
         public static void AddAuthor(this IServiceCollection services, IConfiguration configuration)
