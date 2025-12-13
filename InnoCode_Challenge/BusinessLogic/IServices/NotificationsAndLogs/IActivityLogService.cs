@@ -1,7 +1,7 @@
 ﻿using Repository.DTOs.ActivityLogDTOs;
 using Utility.PaginatedList;
 
-namespace BusinessLogic.IServices
+namespace BusinessLogic.IServices.NotificationsAndLogs
 {
     public interface IActivityLogService
     {

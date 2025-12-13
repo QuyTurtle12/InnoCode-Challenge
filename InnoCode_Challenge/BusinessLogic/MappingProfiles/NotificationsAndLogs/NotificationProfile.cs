@@ -2,7 +2,7 @@
 using DataAccess.Entities;
 using Repository.DTOs.NotificationDTOs;
 
-namespace BusinessLogic.MappingProfiles.Users
+namespace BusinessLogic.MappingProfiles.NotificationsAndLogs
 {
     public class NotificationProfile : Profile
     {

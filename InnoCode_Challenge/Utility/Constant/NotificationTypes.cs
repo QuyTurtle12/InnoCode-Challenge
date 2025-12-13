@@ -1,0 +1,27 @@
+﻿
+namespace Utility.Constant
+{
+    public static class NotificationTypes
+    {
+        public const string VerifyEmail = "auth.verify_email";
+        public const string TeamInvitation = "team.invitation";
+        public const string TeamInvitationAccepted = "team.invitation_accepted";
+        public const string TeamInvitationDenied = "team.invitation_denied";
+
+        public const string SubmissionResult = "submission.result";
+        public const string SubmissionStatusChanged = "submission.status_changed";
+        public const string ManualGradingAssigned = "manual_grading.assigned";
+
+        public const string ContestStarted = "contest.started";
+        public const string ContestEnded = "contest.ended";
+        public const string RoundStarted = "round.started";
+        public const string RoundEnded = "round.ended";
+
+        public const string AppealCreated = "appeal.created";
+        public const string AppealUpdated = "appeal.updated";
+
+        public const string CertificateIssued = "certificate.issued";
+        public const string SchoolApproved = "school.approved";
+        public const string SchoolRejected = "school.rejected";
+    }
+}
