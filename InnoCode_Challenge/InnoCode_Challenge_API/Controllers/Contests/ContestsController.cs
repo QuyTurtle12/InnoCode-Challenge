@@ -302,6 +302,31 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 message: "Policy deleted successfully."
             ));
         }
+        [HttpPut("{id}/start-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> StartContestNow(Guid id)
+        {
+            var result = await _contestService.StartContestNowAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Contest start time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/end-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> EndContestNow(Guid id)
+        {
+            var result = await _contestService.EndContestNowAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Contest end time updated to now."
+            ));
+        }
 
     }
 }

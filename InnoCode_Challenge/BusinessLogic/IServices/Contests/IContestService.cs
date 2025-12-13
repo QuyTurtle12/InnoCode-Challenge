@@ -31,6 +31,8 @@ namespace BusinessLogic.IServices.Contests
         Task<IReadOnlyList<ContestPolicyDTO>> GetContestPoliciesAsync(Guid contestId);
         Task SetContestPoliciesAsync(Guid contestId, IList<ContestPolicyDTO> policies);
         Task DeleteContestPolicyAsync(Guid contestId, string policyKey);
+        Task<GetContestDTO> StartContestNowAsync(Guid contestId);
+        Task<GetContestDTO> EndContestNowAsync(Guid contestId);
 
     }
 }

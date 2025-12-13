@@ -58,5 +58,29 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
                 paging,
                 "OK"));
         }
+
+        [HttpPut("{id:guid}")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCertificateTemplateDTO dto)
+        {
+            var updated = await _certificateTemplateService.UpdateAsync(id, dto);
+            return Ok(new BaseResponseModel<object>(
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                updated,
+                "Certificate template updated."));
+        }
+
+        [HttpDelete("{id:guid}")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> SoftDelete(Guid id)
+        {
+            await _certificateTemplateService.SoftDeleteAsync(id);
+            return Ok(new BaseResponseModel(
+                StatusCodes.Status200OK,
+                ResponseCodeConstants.SUCCESS,
+                "Certificate template deleted (soft)."));
+        }
+
     }
 }

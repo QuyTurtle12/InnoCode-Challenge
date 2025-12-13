@@ -1189,5 +1189,143 @@ namespace BusinessLogic.Services.Contests
 
             return config.Value;
         }
+        public async Task<GetRoundDTO> StartRoundNowAsync(Guid roundId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                if (roundId == Guid.Empty)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid round ID.");
+
+                Round round = await GetRoundOwnedByCurrentOrganizerAsync(roundId);
+
+                DateTime now = DateTime.UtcNow;
+
+                if (now >= round.End)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Round already ended. Cannot start now.");
+
+                // Round cannot be started before contest start
+                if (round.Contest?.Start.HasValue == true && now < round.Contest.Start.Value)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot start round before contest start.");
+
+                if (round.Contest?.End.HasValue == true && now >= round.Contest.End.Value)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot start round because contest already ended.");
+
+                // Time limit must fit inside remaining duration
+                //int? tl = await GetRoundTimeLimitSecondsAsync(roundId);
+                //if (tl.HasValue && tl.Value > (round.End - now).TotalSeconds)
+                //    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "TimeLimitSeconds exceeds remaining round duration.");
+
+                // Prevent overlap with other rounds
+                var roundRepo = _unitOfWork.GetRepository<Round>();
+                var otherRounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == round.ContestId && r.RoundId != roundId && r.DeletedAt == null)
+                    .ToListAsync();
+
+                foreach (var other in otherRounds)
+                {
+                    if (now <= other.End && round.End >= other.Start)
+                        throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
+                            $"New round time conflicts with existing round '{other.Name}' ({DateTimeHelpers.ToIso8601String(other.Start)} - {DateTimeHelpers.ToIso8601String(other.End)}).");
+                }
+
+                round.Start = now;
+                round.Status = RoundStatusEnum.Opened.ToString();
+
+                await roundRepo.UpdateAsync(round);
+                await _unitOfWork.SaveAsync();
+
+                _unitOfWork.CommitTransaction();
+
+                BackgroundJob.Enqueue<RoundStateJob>(job =>
+                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
+
+                return await GetRoundByIdAsync(round.RoundId, null);
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+        }
+
+        public async Task<GetRoundDTO> EndRoundNowAsync(Guid roundId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                if (roundId == Guid.Empty)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid round ID.");
+
+                Round round = await GetRoundOwnedByCurrentOrganizerAsync(roundId);
+
+                DateTime now = DateTime.UtcNow;
+
+                if (now <= round.Start)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot end round before it starts.");
+
+                round.End = now;
+                round.Status = RoundStatusEnum.Closed.ToString();
+
+                var roundRepo = _unitOfWork.GetRepository<Round>();
+                await roundRepo.UpdateAsync(round);
+                await _unitOfWork.SaveAsync();
+
+                _unitOfWork.CommitTransaction();
+
+                // If manual round, distribute pending submissions immediately (idempotent)
+                if (round.Problem != null && round.Problem.Type == ProblemTypeEnum.Manual.ToString())
+                    await DistributeSubmissionsToJudgesAsync(roundId);
+
+                BackgroundJob.Enqueue<RoundStateJob>(job =>
+                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
+
+                return await GetRoundByIdAsync(round.RoundId, null);
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+        }
+
+        private string GetCurrentUserIdOrThrow()
+        {
+            var user = _httpContextAccessor.HttpContext?.User;
+            if (user == null || !user.Identity?.IsAuthenticated == true)
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Sign in required.");
+
+            var id = user.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(id))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Invalid user context.");
+
+            return id;
+        }
+
+        private async Task<Round> GetRoundOwnedByCurrentOrganizerAsync(Guid roundId)
+        {
+            string currentUserId = GetCurrentUserIdOrThrow();
+
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == roundId && r.DeletedAt == null)
+                .Include(r => r.Contest)
+                .Include(r => r.Problem)
+                .FirstOrDefaultAsync();
+
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            if (round.Contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            if (!string.Equals(round.Contest.CreatedBy, currentUserId, StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "Only the organizer who created this contest can modify rounds.");
+
+            return round;
+        }
+
     }
 }

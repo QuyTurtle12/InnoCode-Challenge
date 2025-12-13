@@ -1599,6 +1599,103 @@ namespace BusinessLogic.Services.Contests
                     $"Error cancelling Contest: {ex.Message}");
             }
         }
+
+        public async Task<GetContestDTO> StartContestNowAsync(Guid contestId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                if (contestId == Guid.Empty)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
+
+                Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+
+                DateTime now = DateTime.UtcNow;
+
+                // Prevent invalid timeline if End already passed
+                if (contest.End.HasValue && contest.End.Value <= now)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest already ended. Cannot start now.");
+
+                contest.Start = now;
+
+                // Update status
+                contest.Status = ContestStatusEnum.Ongoing.ToString();
+
+                await _unitOfWork.GetRepository<Contest>().UpdateAsync(contest);
+                await _unitOfWork.SaveAsync();
+
+                _unitOfWork.CommitTransaction();
+
+                BackgroundJob.Enqueue<ContestStateJob>(job =>
+                    job.ScheduleContestStateTransitionsAsync(contest.ContestId));
+
+                return await GetContestByIdAsync(contest.ContestId);
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+        }
+
+        public async Task<GetContestDTO> EndContestNowAsync(Guid contestId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                if (contestId == Guid.Empty)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
+
+                Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+
+                DateTime now = DateTime.UtcNow;
+
+                // Must not end before start
+                if (contest.Start.HasValue && contest.Start.Value >= now)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest has not started yet (start time is in the future).");
+
+                // Must not contest end < any existing round end
+                var roundRepo = _unitOfWork.GetRepository<Round>();
+                var violatingRounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestId && r.DeletedAt == null && r.End > now)
+                    .Select(r => r.Name)
+                    .ToListAsync();
+
+                if (violatingRounds.Any())
+                {
+                    var ex = new CoreException("END_BLOCKED", "Cannot end contest now because some rounds end after now.", StatusCodes.Status409Conflict)
+                    {
+                        AdditionalData = new Dictionary<string, object>
+                        {
+                            ["rounds"] = violatingRounds
+                        }
+                    };
+                    throw ex;
+                }
+
+                contest.End = now;
+                contest.Status = ContestStatusEnum.Completed.ToString();
+
+                await _unitOfWork.GetRepository<Contest>().UpdateAsync(contest);
+                await _unitOfWork.SaveAsync();
+
+                _unitOfWork.CommitTransaction();
+
+                BackgroundJob.Enqueue<ContestStateJob>(job =>
+                    job.ScheduleContestStateTransitionsAsync(contest.ContestId));
+
+                return await GetContestByIdAsync(contest.ContestId);
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+        }
+
+
         private static void ValidateTeamMemberRange(int min, int max)
         {
             if (min < 1)
