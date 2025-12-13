@@ -343,7 +343,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
             services.AddScoped<IContestJudgeService, ContestJudgeService>();
             services.AddScoped<IJudgeInviteService, JudgeInviteService>();
-
+            services.AddScoped<IActivityLogWriter, ActivityLogWriter>();
         }
     }
 }

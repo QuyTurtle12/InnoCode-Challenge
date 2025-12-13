@@ -155,6 +155,7 @@ RecurringJob.AddOrUpdate<RoundStateJob>(
 
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 app.MapHub<NotificationsHub>("/hubs/notifications");
+app.MapHub<ActivityLogsHub>("/hubs/activity-logs");
 
 app.MapControllers();
 app.Run();

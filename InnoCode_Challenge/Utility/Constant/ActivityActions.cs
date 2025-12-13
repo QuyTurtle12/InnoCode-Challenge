@@ -27,9 +27,6 @@
         // Team
         public const string TeamCreate = "team.create";
         public const string TeamUpdate = "team.update";
-        public const string TeamInviteSent = "team.invite_sent";
-        public const string TeamInviteAccepted = "team.invite_accepted";
-        public const string TeamInviteDenied = "team.invite_denied";
         public const string TeamMemberAdd = "team.member_add";
         public const string TeamMemberRemove = "team.member_remove";
 
@@ -39,6 +36,16 @@
         public const string SubmissionOverride = "submission.override";
         public const string SubmissionStatusChange = "submission.status_change";
         public const string SubmissionAssignJudge = "submission.assign_judge";
+
+        // Team invite
+        public const string TeamInviteCreated = "team_invite.created";
+        public const string TeamInviteResent = "team_invite.resent";
+        public const string TeamInviteRevoked = "team_invite.revoked";
+        public const string TeamInviteAccepted = "team_invite.accepted";
+        public const string TeamInviteDeclined = "team_invite.declined";
+
+        // Notifications
+        public const string NotificationCreated = "notification.created";
 
         // Appeal
         public const string AppealSubmit = "appeal.submit";
