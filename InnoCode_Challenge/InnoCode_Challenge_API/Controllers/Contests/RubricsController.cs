@@ -34,7 +34,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         [HttpGet("rounds/{roundId}/rubric")]
         public async Task<IActionResult> GetRubricTemplate(Guid roundId)
         {
-            RubricTemplateDTO template = await _problemService.GetRubricTemplateAsync(roundId);
+            RubricTemplateDTO? template = await _problemService.GetRubricTemplateAsync(roundId);
 
             return Ok(new BaseResponseModel<RubricTemplateDTO>(
                 statusCode: StatusCodes.Status200OK,

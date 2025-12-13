@@ -233,7 +233,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<RubricTemplateDTO> GetRubricTemplateAsync(Guid roundId)
+        public async Task<RubricTemplateDTO?> GetRubricTemplateAsync(Guid roundId)
         {
             try
             {
@@ -271,12 +271,10 @@ namespace BusinessLogic.Services.Contests
                     .OrderBy(tc => tc.TestCaseId)
                     .ToListAsync();
 
-                // Validate test cases existence
+                // Validate criteria existence
                 if (!rubricCriteria.Any())
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"No rubric criteria found for problem {problem.ProblemId}");
+                    return null;
                 }
 
                 // Map to DTO

@@ -14,7 +14,7 @@ namespace BusinessLogic.IServices.Contests
         Task UpdateProblemAsync(Guid id, UpdateProblemDTO problemDTO);
         Task DeleteProblemAsync(Guid id);
 
-        Task<RubricTemplateDTO> GetRubricTemplateAsync(Guid roundId);
+        Task<RubricTemplateDTO?> GetRubricTemplateAsync(Guid roundId);
         Task<RubricTemplateDTO> CreateRubricCriterionAsync(Guid roundId, CreateRubricDTO createRubricDTO);
         Task<RubricTemplateDTO> UpdateRubricCriterionAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
         Task DeleteRubricCriterionAsync(Guid rubricId);

@@ -634,6 +634,12 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
                 }
 
+                // Prevent updates while round is in "Opened" status
+                if (round.Status == RoundStatusEnum.Opened.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Cannot update round while it is in 'Opened' status.");
+                }
+
 
                 // Validate against contest dates and other rounds (excluding current round)
                 await ValidateRoundInputAsync(round.ContestId, roundDTO, round.RoundId);
