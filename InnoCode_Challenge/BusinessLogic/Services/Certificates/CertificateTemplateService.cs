@@ -26,99 +26,126 @@ namespace BusinessLogic.Services.Certificates
             _unitOfWork = unitOfWork;
             _cloudinaryService = cloudinaryService;
         }
-        
+
         public async Task<CertificateTemplateDTO> CreateAsync(CreateCertificateTemplateDTO dto)
         {
-            // Get Repositories
             IGenericRepository<CertificateTemplate> repo = _unitOfWork.GetRepository<CertificateTemplate>();
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
-            // Validate Contest Existence
-            bool contestExists = await contestRepo.Entities.AnyAsync(c => c.ContestId == dto.ContestId);
+            bool contestExists = await contestRepo.Entities
+                .AnyAsync(c => c.ContestId == dto.ContestId && c.DeletedAt == null);
+
             if (!contestExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND", $"No contest with ID={dto.ContestId}");
 
-            // Create Entity
-            CertificateTemplate entity = new CertificateTemplate
+            var entity = new CertificateTemplate
             {
                 TemplateId = Guid.NewGuid(),
                 ContestId = dto.ContestId,
                 Name = dto.Name.Trim(),
-                FileUrl = dto.FileUrl
+                FileUrl = dto.FileUrl,
+                TextX = dto.Text?.X,    
+                TextY = dto.Text?.Y,
+                DeletedAt = null
             };
 
-            // Insert and Save
             await repo.InsertAsync(entity);
             await _unitOfWork.SaveAsync();
 
-            // Retrieve Created Entity with Contest
-            CertificateTemplate created = await repo.Entities
-                .Where(t => t.TemplateId == entity.TemplateId)
-                .Include(t => t.Contest)
-                .FirstAsync();
+            return new CertificateTemplateDTO
+            {
+                TemplateId = entity.TemplateId,
+                ContestId = entity.ContestId,
+                Name = entity.Name,
+                FileUrl = entity.FileUrl,
+                Text = new TextLayoutDTO
+                {
+                    X = (int)(entity.TextX ?? 960),
+                    Y = (int)(entity.TextY ?? 540),
 
-            // Map to DTO
-            CertificateTemplateDTO mapped = _mapper.Map<CertificateTemplateDTO>(entity);
-            mapped.Text = dto.Text; 
-            return mapped;
+                    FontFamily = dto.Text?.FontFamily ?? "Arial",
+                    FontSize = dto.Text?.FontSize ?? 64f,
+                    ColorHex = dto.Text?.ColorHex ?? "#1F2937",
+                    MaxWidth = dto.Text?.MaxWidth ?? 1600,
+                    Align = dto.Text?.Align ?? "center"
+                },
+            };
         }
 
         public async Task<CertificateTemplateDTO?> GetByIdAsync(Guid id)
         {
-            // Get repository
-            IGenericRepository<CertificateTemplate> repo = _unitOfWork.GetRepository<CertificateTemplate>();
+            var repo = _unitOfWork.GetRepository<CertificateTemplate>();
 
-            // Find entity
-            CertificateTemplate? certificateTemplate = await repo
-                .Entities
-                .Where(t => t.TemplateId == id)
+            var tpl = await repo.Entities
+                .Where(t => t.TemplateId == id && t.DeletedAt == null)
                 .Include(t => t.Contest)
                 .FirstOrDefaultAsync();
 
-            // If not found, return null
-            if (certificateTemplate == null)
-            {
-                return null;
-            }
+            if (tpl == null) return null;
 
-            // Map to DTO and return
-            CertificateTemplateDTO dto = _mapper.Map<CertificateTemplateDTO>(certificateTemplate);
-            return dto;
+            return new CertificateTemplateDTO
+            {
+                TemplateId = tpl.TemplateId,
+                ContestId = tpl.ContestId,
+                Name = tpl.Name,
+                FileUrl = tpl.FileUrl,
+                Text = new TextLayoutDTO
+                {
+                    X = (int)(tpl.TextX ?? 960),
+                    Y = (int)(tpl.TextY ?? 540),
+                    FontFamily = "Arial",
+                    FontSize = 64f,
+                    ColorHex = "#1F2937",
+                    MaxWidth = 1600,
+                    Align = "center"
+                },
+            };
         }
 
         public async Task<PaginatedList<CertificateTemplateDTO>> GetAsync(Guid? contestId, string? search, int page, int pageSize, string? sortBy, bool desc)
         {
-            // Get repository
-            IGenericRepository<CertificateTemplate> repo = _unitOfWork.GetRepository<CertificateTemplate>();
+            var repo = _unitOfWork.GetRepository<CertificateTemplate>();
 
-            // Build query
-            IQueryable<CertificateTemplate> query = repo.Entities.AsNoTracking();
+            IQueryable<CertificateTemplate> query = repo.Entities
+                .AsNoTracking()
+                .Where(x => x.DeletedAt == null);
 
-            // Apply filters by contestId
             if (contestId.HasValue) query = query.Where(x => x.ContestId == contestId.Value);
 
-            // Apply filters by template name
             if (!string.IsNullOrWhiteSpace(search))
             {
-                string formattedSearchValue = search.Trim().ToLower();
-                query = query.Where(x => x.Name.ToLower().Contains(formattedSearchValue));
+                string s = search.Trim().ToLower();
+                query = query.Where(x => x.Name.ToLower().Contains(s));
             }
 
-            // Apply sorting
             query = (sortBy?.ToLowerInvariant()) switch
             {
                 "name" => desc ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
                 _ => desc ? query.OrderByDescending(x => x.TemplateId) : query.OrderBy(x => x.TemplateId)
             };
 
-            // Get paginated data
-            PaginatedList<CertificateTemplate> pageData = await repo.GetPagingAsync(query, page, pageSize);
+            var pageData = await repo.GetPagingAsync(query, page, pageSize);
 
-            // Map to DTOs
-            IReadOnlyCollection<CertificateTemplateDTO> items = pageData.Items.Select(_mapper.Map<CertificateTemplateDTO>).ToList();
+            var items = pageData.Items.Select(t => new CertificateTemplateDTO
+            {
+                TemplateId = t.TemplateId,
+                ContestId = t.ContestId,
+                Name = t.Name,
+                FileUrl = t.FileUrl,
+                Text = new TextLayoutDTO
+                {
+                    X = (int)(t.TextX ?? 960),
+                    Y = (int)(t.TextY ?? 540),
+                    FontFamily = "Arial",
+                    FontSize = 64f,
+                    ColorHex = "#1F2937",
+                    MaxWidth = 1600,
+                    Align = "center"
+                },
+            }).ToList();
 
-            // Return paginated list of DTOs
             return new PaginatedList<CertificateTemplateDTO>(items, pageData.TotalCount, pageData.PageNumber, pageData.PageSize);
         }
+
     }
 }

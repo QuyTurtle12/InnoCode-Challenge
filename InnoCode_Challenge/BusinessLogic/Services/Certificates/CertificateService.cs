@@ -116,7 +116,17 @@ namespace BusinessLogic.Services.Certificates
                 }
 
                 // Render text on the certificate template
-                TextLayoutDTO layout = new TextLayoutDTO();
+                TextLayoutDTO layout = new TextLayoutDTO
+                {
+                    X = (int)(tpl.TextX ?? 960),
+                    Y = (int)(tpl.TextY ?? 540),
+
+                    FontFamily = "Arial",
+                    FontSize = 64f,
+                    ColorHex = "#1F2937",
+                    MaxWidth = 1600,
+                    Align = "center"
+                };
                 var pngBytes = ImageDrawHelper.RenderTextOnImage(
                     template: templateStream,
                     displayText: recipientName,
