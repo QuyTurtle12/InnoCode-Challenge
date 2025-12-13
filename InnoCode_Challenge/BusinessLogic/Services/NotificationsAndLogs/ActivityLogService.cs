@@ -1,5 +1,5 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +8,7 @@ using Repository.IRepositories;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
-namespace BusinessLogic.Services
+namespace BusinessLogic.Services.NotificationsAndLogs
 {
     public class ActivityLogService : IActivityLogService
     {

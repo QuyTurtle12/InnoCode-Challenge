@@ -1,11 +1,11 @@
-﻿using BusinessLogic.IServices;
+﻿using BusinessLogic.IServices.NotificationsAndLogs;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ActivityLogDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 
-namespace InnoCode_Challenge_API.Controllers
+namespace InnoCode_Challenge_API.Controllers.NotificationsAndLogs
 {
     [Route("api/[controller]")]
     [ApiController]
