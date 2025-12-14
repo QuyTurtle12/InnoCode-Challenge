@@ -41,6 +41,10 @@ namespace BusinessLogic.Services.Submissions
         private const string AUTO_TEST_SUBMISSION_FOLDER = "code-submissions";
         private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
 
+        private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
+        private const string FP_ALGORITHM = "sha256_py_v1";
+        private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
+
         // Constructor
         public SubmissionService(
             IUOW unitOfWork,
@@ -300,6 +304,8 @@ namespace BusinessLogic.Services.Submissions
 
                 // Save results with penalty applied
                 await SaveSubmissionResultAsync(submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
+                var (suspected, matchedSubmissionId) =
+                    await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
@@ -333,7 +339,7 @@ namespace BusinessLogic.Services.Submissions
                 string tempFilePath = Path.Combine(Path.GetTempPath(), fileName);
 
                 // Write code to temporary file
-                await File.WriteAllTextAsync(tempFilePath, code, System.Text.Encoding.UTF8);
+                await File.WriteAllTextAsync(tempFilePath, unescapedCode, System.Text.Encoding.UTF8);
 
                 try
                 {
@@ -811,12 +817,21 @@ namespace BusinessLogic.Services.Submissions
                     .OrderByDescending(s => s.CreatedAt)
                     .FirstOrDefaultAsync();
 
+
                 // Validate submission existence
                 if (submission == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"No submission found for this problem");
+                }
+
+                // Check if submission is flagged for plagiarism
+                if (string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ErrorException(StatusCodes.Status409Conflict,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Submission is flagged for plagiarism and must be reviewed by staff before updating leaderboard.");
                 }
 
                 // Get roundId and studentId
@@ -1876,5 +1891,66 @@ namespace BusinessLogic.Services.Submissions
                     $"Error retrieving submission: {ex.Message}");
             }
         }
+        private async Task<(bool suspected, Guid? matchedSubmissionId)> CheckAndFlagPlagiarismAsync(
+            Submission submission,
+            Problem problem,
+            string sourceCode)
+        {
+            // Normalize -> hash
+            string normalized = PlagiarismHelpers.NormalizePython(sourceCode, removeTripleQuoted: true);
+
+            // Avoid false positives on tiny/template code
+            if (normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
+                return (false, null);
+
+            string hash = PlagiarismHelpers.Sha256Hex(normalized);
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+
+            // Find any existing fingerprint with same Problem + Hash but different Team
+            Guid? matchedId = await fpRepo.Entities
+                .AsNoTracking()
+                .Where(f =>
+                    f.ProblemId == problem.ProblemId &&
+                    f.Hash == hash &&
+                    f.TeamId != submission.TeamId &&
+                    f.Submission.DeletedAt == null)   
+                .Select(f => (Guid?)f.SubmissionId)
+                .FirstOrDefaultAsync();
+
+            // Save fingerprint for this submission
+            SubmissionFingerprint fp = new SubmissionFingerprint
+            {
+                FingerprintId = Guid.NewGuid(),
+                SubmissionId = submission.SubmissionId,
+                ProblemId = problem.ProblemId,
+                TeamId = submission.TeamId,
+                Algorithm = FP_ALGORITHM,
+                Hash = hash,
+                NormalizedLength = normalized.Length,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            // Avoid duplicate fingerprints
+            bool exists = await fpRepo.Entities.AnyAsync(x => x.SubmissionId == submission.SubmissionId);
+            if (!exists)
+            {
+                await fpRepo.InsertAsync(fp);
+            }
+
+            // If duplicate found -> set status for staff review
+            if (matchedId.HasValue)
+            {
+                var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                submission.Status = STATUS_PLAGIARISM_SUSPECTED;
+                submission.JudgedBy = null; // unassigned -> staff queue
+                await submissionRepo.UpdateAsync(submission);
+            }
+
+            await _unitOfWork.SaveAsync();
+            return (matchedId.HasValue, matchedId);
+        }
+
     }
 }
