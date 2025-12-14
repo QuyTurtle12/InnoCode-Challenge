@@ -1083,68 +1083,85 @@ public partial class ContestDbContext : DbContext
         {
             entity.HasKey(e => e.RequestId);
 
-            entity.ToTable("SchoolCreationRequest");
+            entity.ToTable("school_creation_requests");
 
-            entity.HasIndex(e => e.RequestedByUserId, "IX_SchoolCreationRequest_RequestedByUserId");
+            entity.HasIndex(e => e.ProvinceId, "IX_school_creation_requests_province_id");
 
-            entity.HasIndex(e => e.Status, "IX_SchoolCreationRequest_Status").HasFilter("([DeletedAt] IS NULL)");
+            entity.HasIndex(e => e.RequestedByUserId, "IX_school_creation_requests_requested_by_user_id");
 
-            entity.HasIndex(e => e.ProvinceId, "IX_SchoolCreationRequest_provinceID");
+            entity.HasIndex(e => e.Status, "IX_school_creation_requests_status").HasFilter("([deleted_at] IS NULL)");
 
-            entity.Property(e => e.RequestId).HasDefaultValueSql("(newid())");
+            entity.Property(e => e.RequestId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("request_id");
             entity.Property(e => e.Address)
                 .HasMaxLength(255)
                 .HasColumnName("address");
             entity.Property(e => e.Contact)
                 .HasMaxLength(255)
                 .HasColumnName("contact");
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())");
-            entity.Property(e => e.DenyReason).HasColumnName("denyReason");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.CreatedSchoolId).HasColumnName("created_school_id");
+            entity.Property(e => e.DeletedAt).HasColumnName("deleted_at");
+            entity.Property(e => e.DenyReason).HasColumnName("deny_reason");
             entity.Property(e => e.Name)
                 .HasMaxLength(200)
                 .HasColumnName("name");
-            entity.Property(e => e.ProvinceId).HasColumnName("provinceID");
-            entity.Property(e => e.ReviewedAt).HasColumnName("reviewedAt");
-            entity.Property(e => e.ReviewedBy).HasColumnName("reviewedBy");
+            entity.Property(e => e.ProvinceId).HasColumnName("province_id");
+            entity.Property(e => e.RequestedByUserId).HasColumnName("requested_by_user_id");
+            entity.Property(e => e.ReviewedAt).HasColumnName("reviewed_at");
+            entity.Property(e => e.ReviewedBy).HasColumnName("reviewed_by");
             entity.Property(e => e.Status)
                 .HasMaxLength(20)
-                .HasDefaultValue("pending");
+                .HasDefaultValue("pending")
+                .HasColumnName("status");
 
             entity.HasOne(d => d.CreatedSchool).WithMany(p => p.SchoolCreationRequests)
                 .HasForeignKey(d => d.CreatedSchoolId)
-                .HasConstraintName("FK_SchoolCreationRequest_school");
+                .HasConstraintName("FK_school_creation_requests_school");
 
             entity.HasOne(d => d.Province).WithMany(p => p.SchoolCreationRequests)
                 .HasForeignKey(d => d.ProvinceId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SchoolCreationRequest_province");
+                .HasConstraintName("FK_school_creation_requests_province");
 
             entity.HasOne(d => d.RequestedByUser).WithMany(p => p.SchoolCreationRequestRequestedByUsers)
                 .HasForeignKey(d => d.RequestedByUserId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SchoolCreationRequest_user");
+                .HasConstraintName("FK_school_creation_requests_user");
 
             entity.HasOne(d => d.ReviewedByNavigation).WithMany(p => p.SchoolCreationRequestReviewedByNavigations)
                 .HasForeignKey(d => d.ReviewedBy)
-                .HasConstraintName("FK_SchoolCreationRequest_reviewer");
+                .HasConstraintName("FK_school_creation_requests_reviewer");
         });
 
         modelBuilder.Entity<SchoolCreationRequestEvidence>(entity =>
         {
             entity.HasKey(e => e.EvidenceId);
 
-            entity.ToTable("SchoolCreationRequestEvidence");
+            entity.ToTable("school_creation_request_evidences");
 
-            entity.HasIndex(e => e.RequestId, "IX_SchoolCreationRequestEvidence_RequestId").HasFilter("([DeletedAt] IS NULL)");
+            entity.HasIndex(e => e.RequestId, "IX_school_creation_request_evidences_request_id").HasFilter("([deleted_at] IS NULL)");
 
-            entity.Property(e => e.EvidenceId).HasDefaultValueSql("(newid())");
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())");
-            entity.Property(e => e.Type).HasMaxLength(100);
+            entity.Property(e => e.EvidenceId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("evidence_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.DeletedAt).HasColumnName("deleted_at");
+            entity.Property(e => e.RequestId).HasColumnName("request_id");
+            entity.Property(e => e.Type)
+                .HasMaxLength(100)
+                .HasColumnName("type");
+            entity.Property(e => e.Url).HasColumnName("url");
 
             entity.HasOne(d => d.Request).WithMany(p => p.SchoolCreationRequestEvidences)
                 .HasForeignKey(d => d.RequestId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SchoolCreationRequestEvidence_request");
+                .HasConstraintName("FK_school_creation_request_evidences_request");
         });
 
         modelBuilder.Entity<Server>(entity =>
@@ -1332,33 +1349,45 @@ public partial class ContestDbContext : DbContext
         {
             entity.HasKey(e => e.FingerprintId);
 
-            entity.ToTable("SubmissionFingerprint");
+            entity.ToTable("submission_fingerprints");
 
-            entity.HasIndex(e => e.Hash, "IX_SubmissionFingerprint_Hash");
+            entity.HasIndex(e => e.Hash, "IX_submission_fingerprints_hash");
 
-            entity.HasIndex(e => new { e.ProblemId, e.TeamId }, "IX_SubmissionFingerprint_Problem_Team");
+            entity.HasIndex(e => new { e.ProblemId, e.TeamId }, "IX_submission_fingerprints_problem_team");
 
-            entity.HasIndex(e => e.SubmissionId, "IX_SubmissionFingerprint_SubmissionId");
+            entity.HasIndex(e => e.SubmissionId, "IX_submission_fingerprints_submission_id");
 
-            entity.Property(e => e.FingerprintId).HasDefaultValueSql("(newid())");
-            entity.Property(e => e.Algorithm).HasMaxLength(100);
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(getdate())");
-            entity.Property(e => e.Hash).HasMaxLength(255);
+            entity.Property(e => e.FingerprintId)
+                .HasDefaultValueSql("(newid())")
+                .HasColumnName("fingerprint_id");
+            entity.Property(e => e.Algorithm)
+                .HasMaxLength(100)
+                .HasColumnName("algorithm");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(getdate())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Hash)
+                .HasMaxLength(255)
+                .HasColumnName("hash");
+            entity.Property(e => e.NormalizedLength).HasColumnName("normalized_length");
+            entity.Property(e => e.ProblemId).HasColumnName("problem_id");
+            entity.Property(e => e.SubmissionId).HasColumnName("submission_id");
+            entity.Property(e => e.TeamId).HasColumnName("team_id");
 
             entity.HasOne(d => d.Problem).WithMany(p => p.SubmissionFingerprints)
                 .HasForeignKey(d => d.ProblemId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SubmissionFingerprint_problem");
+                .HasConstraintName("FK_submission_fingerprints_problem");
 
             entity.HasOne(d => d.Submission).WithMany(p => p.SubmissionFingerprints)
                 .HasForeignKey(d => d.SubmissionId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SubmissionFingerprint_submission");
+                .HasConstraintName("FK_submission_fingerprints_submission");
 
             entity.HasOne(d => d.Team).WithMany(p => p.SubmissionFingerprints)
                 .HasForeignKey(d => d.TeamId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_SubmissionFingerprint_team");
+                .HasConstraintName("FK_submission_fingerprints_team");
         });
 
         modelBuilder.Entity<Team>(entity =>
