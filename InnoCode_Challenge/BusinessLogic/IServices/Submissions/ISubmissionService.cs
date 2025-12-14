@@ -1,5 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.PlagiarismDTOs;
+using Repository.DTOs.PlagiarismDTOs.Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Utility.Enums;
@@ -22,5 +24,16 @@ namespace BusinessLogic.IServices.Submissions
         Task<PaginatedList<GetSubmissionDTO>> GetAllAutoTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
         Task<PaginatedList<SubmissionDistributionDTO>> GetSubmissionsByJudgeByAsync(int pageNumber, int pageSize, Guid? contestIdSearch, string? contestName, Guid? roundIdSearch, string? roundName, Guid? teamIdSearch, string? teamName, Guid? studentIdSearch, string? studentName, SubmissionStatusEnum? statusFilter = null);
         Task<SubmissionDistributionDTO> GetSubmissionByIdAsync(Guid submissionId);
+        Task<PaginatedList<PlagiarismQueueItemDTO>> GetPlagiarismQueueAsync(
+            int pageNumber,
+            int pageSize,
+            Guid? contestId,
+            Guid? roundId,
+            string? studentName,
+            string? teamName);
+
+        Task<PlagiarismSubmissionDetailDTO> GetPlagiarismSubmissionDetailAsync(Guid submissionId);
+        Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto);
+
     }
 }

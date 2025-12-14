@@ -7,12 +7,16 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.PlagiarismDTOs;
+using Repository.DTOs.PlagiarismDTOs.Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionArtifactDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
+using System;
 using System.Linq;
+using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
@@ -42,6 +46,7 @@ namespace BusinessLogic.Services.Submissions
         private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
 
         private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
+        private const string STATUS_PLAGIARISM_CONFIRMED = "PlagiarismConfirmed";
         private const string FP_ALGORITHM = "sha256_py_v1";
         private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
 
@@ -1891,6 +1896,243 @@ namespace BusinessLogic.Services.Submissions
                     $"Error retrieving submission: {ex.Message}");
             }
         }
+
+        public async Task<PaginatedList<PlagiarismQueueItemDTO>> GetPlagiarismQueueAsync(
+            int pageNumber,
+            int pageSize,
+            Guid? contestId,
+            Guid? roundId,
+            string? studentName,
+            string? teamName)
+        {
+            if (pageNumber < 1 || pageSize < 1)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Page number and page size must be >= 1.");
+            }
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+
+            IQueryable<SubmissionFingerprint> query = fpRepo.Entities
+                .Where(f => f.Submission.DeletedAt == null
+                            && f.Submission.Status == STATUS_PLAGIARISM_SUSPECTED)
+                .Include(f => f.Submission)
+                    .ThenInclude(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                            .ThenInclude(r => r.Contest)
+                .Include(f => f.Submission.Team)
+                .Include(f => f.Submission.SubmittedByStudent)
+                    .ThenInclude(st => st.User);
+
+            if (contestId.HasValue)
+                query = query.Where(f => f.Submission.Problem.Round.ContestId == contestId.Value);
+
+            if (roundId.HasValue)
+                query = query.Where(f => f.Submission.Problem.RoundId == roundId.Value);
+
+            if (!string.IsNullOrWhiteSpace(studentName))
+                query = query.Where(f => f.Submission.SubmittedByStudent.User.Fullname.Contains(studentName.Trim()));
+
+            if (!string.IsNullOrWhiteSpace(teamName))
+                query = query.Where(f => f.Submission.Team.Name.Contains(teamName.Trim()));
+
+            query = query.OrderByDescending(f => f.Submission.CreatedAt);
+
+            PaginatedList<SubmissionFingerprint> paged = await fpRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+            var items = paged.Items.Select(f => new PlagiarismQueueItemDTO
+            {
+                SubmissionId = f.SubmissionId,
+                ProblemId = f.ProblemId,
+                RoundId = f.Submission.Problem.RoundId,
+                RoundName = f.Submission.Problem.Round.Name,
+                ContestId = f.Submission.Problem.Round.ContestId,
+                ContestName = f.Submission.Problem.Round.Contest.Name,
+
+                TeamId = f.TeamId,
+                TeamName = f.Submission.Team.Name,
+
+                StudentId = f.Submission.SubmittedByStudentId,
+                StudentName = f.Submission.SubmittedByStudent.User.Fullname,
+
+                Score = f.Submission.Score,
+                SubmittedAt = f.Submission.CreatedAt,
+
+                Hash = f.Hash,
+                Algorithm = f.Algorithm,
+                NormalizedLength = f.NormalizedLength
+            }).ToList();
+
+            return new PaginatedList<PlagiarismQueueItemDTO>(items, paged.TotalCount, paged.PageNumber, paged.PageSize);
+        }
+
+        public async Task<PlagiarismSubmissionDetailDTO> GetPlagiarismSubmissionDetailAsync(Guid submissionId)
+        {
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+
+            SubmissionFingerprint? fp = await fpRepo.Entities
+                .Where(f => f.SubmissionId == submissionId)
+                .Include(f => f.Submission)
+                    .ThenInclude(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                            .ThenInclude(r => r.Contest)
+                .Include(f => f.Submission.Team)
+                .Include(f => f.Submission.SubmittedByStudent)
+                    .ThenInclude(st => st.User)
+                .Include(f => f.Submission.SubmissionArtifacts)
+                .Include(f => f.Submission.SubmissionDetails)
+                    .ThenInclude(sd => sd.Testcase)
+                .OrderByDescending(f => f.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (fp == null || fp.Submission.DeletedAt != null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Fingerprint/submission {submissionId} not found");
+            }
+
+            if (!string.Equals(fp.Submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Submission is not in plagiarism suspected state.");
+            }
+
+            // Find other submissions with same (ProblemId, Hash) but different TeamId
+            List<PlagiarismMatchDTO> matches = await fpRepo.Entities
+                .Where(x => x.ProblemId == fp.ProblemId
+                            && x.Hash == fp.Hash
+                            && x.TeamId != fp.TeamId
+                            && x.Submission.DeletedAt == null)
+                .Include(x => x.Submission)
+                    .ThenInclude(s => s.Team)
+                .Include(x => x.Submission)
+                    .ThenInclude(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st.User)
+                .OrderByDescending(x => x.Submission.CreatedAt)
+                .Select(x => new PlagiarismMatchDTO
+                {
+                    SubmissionId = x.SubmissionId,
+                    TeamId = x.TeamId,
+                    TeamName = x.Submission.Team.Name,
+                    StudentId = x.Submission.SubmittedByStudentId,
+                    StudentName = x.Submission.SubmittedByStudent.User.Fullname,
+                    SubmittedAt = x.Submission.CreatedAt,
+                    Score = x.Submission.Score
+                })
+                .ToListAsync();
+
+            var artifacts = fp.Submission.SubmissionArtifacts?
+                .Where(a => a.DeletedAt == null)
+                .Select(a => _mapper.Map<GetSubmissionArtifactDTO>(a))
+                .ToList() ?? new();
+
+            var details = fp.Submission.SubmissionDetails?
+                .Where(d => d.DeletedAt == null)
+                .Select(d => _mapper.Map<GetSubmissionDetailDTO>(d))
+                .ToList() ?? new();
+
+            var head = new PlagiarismQueueItemDTO
+            {
+                SubmissionId = fp.SubmissionId,
+                ProblemId = fp.ProblemId,
+                RoundId = fp.Submission.Problem.RoundId,
+                RoundName = fp.Submission.Problem.Round.Name,
+                ContestId = fp.Submission.Problem.Round.ContestId,
+                ContestName = fp.Submission.Problem.Round.Contest.Name,
+                TeamId = fp.TeamId,
+                TeamName = fp.Submission.Team.Name,
+                StudentId = fp.Submission.SubmittedByStudentId,
+                StudentName = fp.Submission.SubmittedByStudent.User.Fullname,
+                Score = fp.Submission.Score,
+                SubmittedAt = fp.Submission.CreatedAt,
+                Hash = fp.Hash,
+                Algorithm = fp.Algorithm,
+                NormalizedLength = fp.NormalizedLength
+            };
+
+            return new PlagiarismSubmissionDetailDTO
+            {
+                Submission = head,
+                Artifacts = artifacts,
+                Details = details,
+                Matches = matches
+            };
+        }
+
+        public async Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                Submission? submission = await submissionRepo.Entities
+                    .Where(s => s.SubmissionId == submissionId && s.DeletedAt == null)
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                    .FirstOrDefaultAsync();
+
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Submission {submissionId} not found");
+                }
+
+                if (!string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Submission is not in plagiarism suspected state.");
+                }
+
+                // staff/admin userId
+                string staffUserId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User ID not found");
+
+                submission.JudgedBy = staffUserId;
+
+                if (dto.Resolution == PlagiarismResolutionEnum.Cleared)
+                {
+                    submission.Status = SubmissionStatusEnum.Finished.ToString();
+                }
+                else 
+                {
+                    submission.Status = STATUS_PLAGIARISM_CONFIRMED;
+                    submission.Score = 0;
+                }
+
+                await submissionRepo.UpdateAsync(submission);
+                await _unitOfWork.SaveAsync();
+
+                Guid roundId = submission.Problem.RoundId;
+                Guid studentId = submission.SubmittedByStudentId;
+                Guid contestId = submission.Problem.Round.ContestId;
+
+                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+                if (dto.Resolution == PlagiarismResolutionEnum.Cleared && dto.ApplyLeaderboard)
+                {
+                    await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, submission.Score);
+                }
+
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                _unitOfWork.RollBack();
+                if (ex is ErrorException) throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error resolving plagiarism submission: {ex.Message}");
+            }
+        }
+
+
         private async Task<(bool suspected, Guid? matchedSubmissionId)> CheckAndFlagPlagiarismAsync(
             Submission submission,
             Problem problem,
