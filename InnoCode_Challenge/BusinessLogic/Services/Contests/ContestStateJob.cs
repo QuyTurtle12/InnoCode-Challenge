@@ -22,80 +22,17 @@ namespace BusinessLogic.Services.Contests
             _serviceProvider = serviceProvider;
         }
 
-        public async Task UpdateAllContestStatesAsync()
-        {
-            try
-            {
-                _logger.LogInformation("Starting bulk contest state update job at {Time}", DateTime.UtcNow);
-
-                using IServiceScope scope = _serviceProvider.CreateScope();
-                IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
-
-                IGenericRepository<Contest> contestRepo = unitOfWork.GetRepository<Contest>();
-                IGenericRepository<Config> configRepo = unitOfWork.GetRepository<Config>();
-                DateTime now = DateTime.UtcNow;
-
-                List<Contest> contests = await contestRepo.Entities
-                    .Where(c => c.DeletedAt == null
-                        && c.Status != ContestStatusEnum.Completed.ToString()
-                        && c.Status != ContestStatusEnum.Cancelled.ToString())
-                    .Include(c => c.Rounds)
-                    .ToListAsync();
-
-                if (!contests.Any())
-                {
-                    _logger.LogDebug("No active contests found for state update");
-                    return;
-                }
-
-                List<Guid> contestIds = contests.Select(c => c.ContestId).ToList();
-
-                List<Config> configs = await configRepo.Entities
-                    .Where(c => contestIds.Any(id => c.Key.Contains(id.ToString()))
-                        && (c.Key.Contains("registration_start") || c.Key.Contains("registration_end"))
-                        && c.DeletedAt == null)
-                    .ToListAsync();
-
-                ILookup<string, Config> configLookup = configs.ToLookup(c => c.Key);
-
-                int updatedCount = 0;
-
-                foreach (Contest contest in contests)
-                {
-                    string? newStatus = DetermineContestStatus(contest, now, configLookup);
-
-                    if (newStatus != null && newStatus != contest.Status)
-                    {
-                        string oldStatus = contest.Status;
-                        contest.Status = newStatus;
-                        await contestRepo.UpdateAsync(contest);
-                        updatedCount++;
-
-                        _logger.LogInformation(
-                            "Contest {ContestId} ({ContestName}) status changed from {OldStatus} to {NewStatus}",
-                            contest.ContestId, contest.Name, oldStatus, newStatus);
-                    }
-                }
-
-                if (updatedCount > 0)
-                {
-                    await unitOfWork.SaveAsync();
-                    _logger.LogInformation("Updated {Count} contest(s) status at {Time}",
-                        updatedCount, DateTime.UtcNow);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in UpdateAllContestStatesAsync job");
-                throw;
-            }
-        }
-
+        /// <summary>
+        /// Updates a specific contest's state. Protected against concurrent execution.
+        /// This is the single source of truth for contest state transitions.
+        /// </summary>
+        [DisableConcurrentExecution(timeoutInSeconds: 60)]
+        [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 10, 30, 60 })]
         public async Task UpdateSpecificContestAsync(Guid contestId)
         {
             try
             {
-                _logger.LogInformation("Starting specific contest state update for {ContestId} at {Time}",
+                _logger.LogInformation("Processing contest state update for {ContestId} at {Time}",
                     contestId, DateTime.UtcNow);
 
                 using IServiceScope scope = _serviceProvider.CreateScope();
@@ -107,7 +44,6 @@ namespace BusinessLogic.Services.Contests
 
                 Contest? contest = await contestRepo.Entities
                     .Where(c => c.ContestId == contestId && c.DeletedAt == null)
-                    .Include(c => c.Rounds)
                     .FirstOrDefaultAsync();
 
                 if (contest == null)
@@ -146,8 +82,16 @@ namespace BusinessLogic.Services.Contests
                         "Contest {ContestId} ({ContestName}) status changed from {OldStatus} to {NewStatus}",
                         contest.ContestId, contest.Name, oldStatus, newStatus);
 
-                    // Schedule next state transition if needed
+                    // Schedule next state transition
                     await ScheduleNextStateTransitionAsync(contest, configLookup);
+
+                    // Perform status-specific actions
+                    await HandleStatusTransitionAsync(contest, oldStatus, newStatus);
+                }
+                else
+                {
+                    _logger.LogDebug("Contest {ContestId} status unchanged ({Status})",
+                        contestId, contest.Status);
                 }
             }
             catch (Exception ex)
@@ -196,6 +140,48 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        /// <summary>
+        /// Handles status-specific actions when a contest transitions to a new state.
+        /// </summary>
+        private async Task HandleStatusTransitionAsync(Contest contest, string oldStatus, string newStatus)
+        {
+            try
+            {
+                // Example: When contest completes, you might want to trigger certificate generation
+                if (newStatus == ContestStatusEnum.Completed.ToString())
+                {
+                    _logger.LogInformation(
+                        "Contest {ContestId} completed. Triggering post-completion tasks.",
+                        contest.ContestId);
+
+                    // Example: Enqueue certificate generation job
+                    // BackgroundJob.Enqueue<CertificateJob>(job => 
+                    //     job.GenerateCertificatesForContestAsync(contest.ContestId));
+                }
+
+                // Example: When registration opens, send notifications
+                if (newStatus == ContestStatusEnum.RegistrationOpen.ToString())
+                {
+                    _logger.LogInformation(
+                        "Registration opened for contest {ContestId}. Sending notifications.",
+                        contest.ContestId);
+
+                    // Example: Enqueue notification job
+                    // BackgroundJob.Enqueue<NotificationJob>(job => 
+                    //     job.SendRegistrationOpenNotificationsAsync(contest.ContestId));
+                }
+
+                await Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Error handling status transition for contest {ContestId} from {OldStatus} to {NewStatus}",
+                    contest.ContestId, oldStatus, newStatus);
+                // Don't throw - we don't want to fail the main status update
+            }
+        }
+
         private async Task ScheduleNextStateTransitionAsync(Contest contest, ILookup<string, Config> configLookup)
         {
             DateTime now = DateTime.UtcNow;
@@ -220,13 +206,13 @@ namespace BusinessLogic.Services.Contests
             // Contest start
             if (contest.Start.HasValue && contest.Start.Value > now)
             {
-                schedulePoints.Add((contest.Start.Value, "Contest Start"));
+                schedulePoints.Add((contest.Start.Value, "Contest Ongoing"));
             }
 
             // Contest end
             if (contest.End.HasValue && contest.End.Value > now)
             {
-                schedulePoints.Add((contest.End.Value, "Contest End"));
+                schedulePoints.Add((contest.End.Value, "Contest Completed"));
             }
 
             // Schedule jobs for each transition point
@@ -240,7 +226,7 @@ namespace BusinessLogic.Services.Contests
                         delay);
 
                     _logger.LogInformation(
-                        "Scheduled '{Description}' for contest {ContestId} at {Time} (in {Minutes} minutes)",
+                        "Scheduled '{Description}' for contest {ContestId} at {Time} (in {Minutes:F2} minutes)",
                         description, contest.ContestId, time, delay.TotalMinutes);
                 }
             }
@@ -251,6 +237,7 @@ namespace BusinessLogic.Services.Contests
             DateTime now,
             ILookup<string, Config> configLookup)
         {
+            // Don't change terminal or managed states
             if (contest.Status == ContestStatusEnum.Completed.ToString()
                 || contest.Status == ContestStatusEnum.Cancelled.ToString()
                 || contest.Status == ContestStatusEnum.Paused.ToString()
@@ -273,23 +260,27 @@ namespace BusinessLogic.Services.Contests
                 registrationEnd = regEnd;
             }
 
+            // Priority 1: Contest has ended
             if (contest.End.HasValue && now >= contest.End.Value)
             {
                 return ContestStatusEnum.Completed.ToString();
             }
 
-            if (contest.Start.HasValue && now >= contest.Start.Value && now < contest.End)
+            // Priority 2: Contest is ongoing
+            if (contest.Start.HasValue && contest.End.HasValue
+                && now >= contest.Start.Value && now < contest.End.Value)
             {
                 return ContestStatusEnum.Ongoing.ToString();
             }
 
+            // Priority 3: Registration closed, contest not started
             if (registrationEnd.HasValue && now >= registrationEnd.Value
-                && contest.Start.HasValue && now < contest.Start.Value
-                && contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+                && contest.Start.HasValue && now < contest.Start.Value)
             {
                 return ContestStatusEnum.RegistrationClosed.ToString();
             }
 
+            // Priority 4: Registration is open
             if (registrationStart.HasValue && registrationEnd.HasValue
                 && now >= registrationStart.Value && now < registrationEnd.Value
                 && contest.Status == ContestStatusEnum.Published.ToString())

@@ -1154,6 +1154,7 @@ namespace BusinessLogic.Services.Contests
                                 && !p.TestCases.Any(tc => tc.DeletedAt == null))
                     .ToList();
 
+                // Report manual problems missing rubric
                 if (manualProblemsWithoutRubrics.Any())
                 {
                     string problemInfo = string.Join(", ", manualProblemsWithoutRubrics.Select(p =>
@@ -1162,6 +1163,18 @@ namespace BusinessLogic.Services.Contests
                         return $"'{round?.Name ?? "Unknown Round"}'";
                     }));
                     result.Missing.Add($"Manual evaluation round(s) {problemInfo} missing rubric.");
+                }
+
+                // Check judge in contest
+                string contestJudgeKey = $"contest:{contestId}:judge:";
+                int judgeCount = await configRepo.Entities
+                    .Where(c => c.Key.StartsWith(contestJudgeKey) && c.DeletedAt == null)
+                    .CountAsync();
+
+                // Report if no judges assigned
+                if (judgeCount == 0)
+                {
+                    result.Missing.Add("No judges assigned to the contest for manual problems.");
                 }
             }
 

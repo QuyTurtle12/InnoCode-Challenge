@@ -11,18 +11,15 @@ namespace BusinessLogic.IServices
         Task<ConfigDTO> CreateAsync(CreateConfigDTO dto, string performedByRole);
         Task<ConfigDTO> UpdateAsync(string key, UpdateConfigDTO dto, string performedByRole);
         Task DeleteAsync(string key, string performedByRole);
-
         Task SetRegistrationWindowAsync(Guid contestId, SetRegistrationWindowDTO dto, string performedByRole);
         Task SetContestPolicyAsync(Guid contestId, SetContestPolicyDTO dto, string performedByRole);
-
         Task<bool> AreSubmissionsDistributedAsync(Guid roundId);
+        Task<List<Guid>> GetDistributedRoundIdsAsync();
         Task MarkSubmissionsAsDistributedAsync(Guid roundId);
         Task ResetDistributionStatusAsync(Guid roundId);
         Task<string> DownloadImportTemplate(ImportTemplateEnum template);
-
         Task<bool> IsStudentFinishedRoundAsync(Guid roundId, Guid studentId);
         Task MarkFinishedSubmissionAsync(Guid roundId, Guid studentId);
-
         Task<bool> HasStudentInputtedOpenCodeAsync(Guid roundId, Guid studentId);
         Task MarkStudentOpenCodeInputtedAsync(Guid roundId, Guid studentId);
     }

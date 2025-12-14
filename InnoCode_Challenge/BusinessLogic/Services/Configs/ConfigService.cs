@@ -360,5 +360,43 @@ namespace BusinessLogic.Services
             string key = ConfigKeys.RoundStudentOpenCodeInputted(roundId, studentId);
             await SetConfigValueAsync(key, "true", "round");
         }
+
+        public async Task<List<Guid>> GetDistributedRoundIdsAsync()
+        {
+            try
+            {
+                IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+
+                // Query all configs with the distribution marker pattern
+                List<Config> distributedConfigs = await configRepo.Entities
+                    .Where(c => c.Key.StartsWith("round:")
+                                && c.Key.EndsWith(":submissions_distributed")
+                                && c.Value == "true"
+                                && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Extract round IDs from config keys
+                List<Guid> distributedRoundIds = new List<Guid>();
+
+                foreach (Config config in distributedConfigs)
+                {
+                    // Key format: "round:{roundId}:submissions_distributed"
+                    string[] parts = config.Key.Split(':');
+                    if (parts.Length >= 2 && Guid.TryParse(parts[1], out Guid roundId))
+                    {
+                        distributedRoundIds.Add(roundId);
+                    }
+                }
+
+                return distributedRoundIds;
+            }
+            catch (Exception ex)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving distributed round IDs: {ex.Message}");
+            }
+        }
     }
 }
