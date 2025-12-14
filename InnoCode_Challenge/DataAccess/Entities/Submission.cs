@@ -29,6 +29,8 @@ public partial class Submission
 
     public virtual ICollection<SubmissionDetail> SubmissionDetails { get; set; } = new List<SubmissionDetail>();
 
+    public virtual ICollection<SubmissionFingerprint> SubmissionFingerprints { get; set; } = new List<SubmissionFingerprint>();
+
     public virtual Student SubmittedByStudent { get; set; } = null!;
 
     public virtual Team Team { get; set; } = null!;

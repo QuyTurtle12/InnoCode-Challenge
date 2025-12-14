@@ -134,25 +134,6 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
     }
 });
 
-// Schedule recurring job as fallback (every minute)
-RecurringJob.AddOrUpdate<ContestStateJob>(
-    "update-all-contest-states",
-    job => job.UpdateAllContestStatesAsync(),
-    "* * * * *", // Every minute as fallback
-    new RecurringJobOptions
-    {
-        TimeZone = TimeZoneInfo.Utc
-    });
-
-RecurringJob.AddOrUpdate<RoundStateJob>(
-    "update-all-round-states",
-    job => job.UpdateAllRoundStatesAsync(),
-    "* * * * *", // Every minute as fallback
-    new RecurringJobOptions
-    {
-        TimeZone = TimeZoneInfo.Utc
-    });
-
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 app.MapHub<NotificationsHub>("/hubs/notifications");
 app.MapHub<ActivityLogsHub>("/hubs/activity-logs");
