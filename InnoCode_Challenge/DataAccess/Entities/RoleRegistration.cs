@@ -31,6 +31,10 @@ public partial class RoleRegistration
 
     public DateTime? DeletedAt { get; set; }
 
+    public Guid? CreatedUserId { get; set; }
+
+    public virtual User? CreatedUser { get; set; }
+
     public virtual User? ReviewedByNavigation { get; set; }
 
     public virtual ICollection<RoleRegistrationEvidence> RoleRegistrationEvidences { get; set; } = new List<RoleRegistrationEvidence>();

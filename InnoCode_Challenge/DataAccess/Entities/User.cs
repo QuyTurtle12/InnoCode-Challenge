@@ -29,13 +29,23 @@ public partial class User
 
     public virtual ICollection<JudgeInvite> JudgeInvites { get; set; } = new List<JudgeInvite>();
 
+    public virtual ICollection<Mentor> MentorCreatedByNavigations { get; set; } = new List<Mentor>();
+
     public virtual ICollection<MentorRegistration> MentorRegistrations { get; set; } = new List<MentorRegistration>();
 
-    public virtual ICollection<Mentor> Mentors { get; set; } = new List<Mentor>();
+    public virtual ICollection<Mentor> MentorUsers { get; set; } = new List<Mentor>();
 
     public virtual ICollection<Notification> Notifications { get; set; } = new List<Notification>();
 
-    public virtual ICollection<RoleRegistration> RoleRegistrations { get; set; } = new List<RoleRegistration>();
+    public virtual ICollection<RoleRegistration> RoleRegistrationCreatedUsers { get; set; } = new List<RoleRegistration>();
+
+    public virtual ICollection<RoleRegistration> RoleRegistrationReviewedByNavigations { get; set; } = new List<RoleRegistration>();
+
+    public virtual ICollection<SchoolCreationRequest> SchoolCreationRequestRequestedByUsers { get; set; } = new List<SchoolCreationRequest>();
+
+    public virtual ICollection<SchoolCreationRequest> SchoolCreationRequestReviewedByNavigations { get; set; } = new List<SchoolCreationRequest>();
+
+    public virtual ICollection<School> Schools { get; set; } = new List<School>();
 
     public virtual ICollection<Student> Students { get; set; } = new List<Student>();
 

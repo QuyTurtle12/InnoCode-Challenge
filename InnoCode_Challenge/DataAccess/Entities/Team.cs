@@ -33,6 +33,8 @@ public partial class Team
 
     public virtual School School { get; set; } = null!;
 
+    public virtual ICollection<SubmissionFingerprint> SubmissionFingerprints { get; set; } = new List<SubmissionFingerprint>();
+
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();
 
     public virtual ICollection<TeamInvite> TeamInvites { get; set; } = new List<TeamInvite>();

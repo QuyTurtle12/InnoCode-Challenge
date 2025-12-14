@@ -25,6 +25,8 @@ public partial class Problem
 
     public virtual Round Round { get; set; } = null!;
 
+    public virtual ICollection<SubmissionFingerprint> SubmissionFingerprints { get; set; } = new List<SubmissionFingerprint>();
+
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();
 
     public virtual ICollection<TestCase> TestCases { get; set; } = new List<TestCase>();

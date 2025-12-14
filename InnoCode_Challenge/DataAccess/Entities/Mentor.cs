@@ -17,6 +17,10 @@ public partial class Mentor
 
     public DateTime? DeletedAt { get; set; }
 
+    public Guid? CreatedBy { get; set; }
+
+    public virtual User? CreatedByNavigation { get; set; }
+
     public virtual School School { get; set; } = null!;
 
     public virtual ICollection<Team> Teams { get; set; } = new List<Team>();
