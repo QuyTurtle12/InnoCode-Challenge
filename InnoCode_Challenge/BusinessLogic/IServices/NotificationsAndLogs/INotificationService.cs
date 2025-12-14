@@ -10,5 +10,10 @@ namespace BusinessLogic.IServices.NotificationsAndLogs
         // Staff/Admin view
         Task<PaginatedList<GetNotificationDTO>> GetCreatedNotificationsAsync(int pageNumber, int pageSize, Guid? idSearch, string? recipientEmailSearch);
         Task CreateNotificationAsync(CreateGeneralNotificationDTO dto);
+        //Create in-app notification to multiple users
+        Task CreateInAppToUsersAsync( IEnumerable<Guid> userIds, string type, object payload);
+        //Create in-app notification to single user
+        Task CreateInAppToUserAsync(Guid userId,string type,object payload);
+
     }
 }

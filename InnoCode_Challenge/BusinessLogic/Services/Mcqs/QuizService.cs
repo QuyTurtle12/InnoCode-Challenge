@@ -614,7 +614,7 @@ namespace BusinessLogic.Services.Mcqs
                     {
                         QuestionId = q.QuestionId,
                         Weight = q.Weight,
-                        OrderIndex = ((pageNumber - 1) * pageSize) + index + 1, // Global order index
+                        OrderIndex = (pageNumber - 1) * pageSize + index + 1, // Global order index
                         Text = q.Question?.Text ?? string.Empty,
                         Options = q.Question?.McqOptions
                             .ToList()

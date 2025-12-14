@@ -199,6 +199,90 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
             return new PaginatedList<GetNotificationDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
+
+        public async Task CreateInAppToUserAsync(Guid userId, string type, object payload)
+            => await CreateInAppToUsersAsync(new[] { userId }, type, payload);
+
+        public async Task CreateInAppToUsersAsync(IEnumerable<Guid> userIds, string type, object payloadObj)
+        {
+            if (userIds == null) throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "UserIds cannot be null.");
+            if (string.IsNullOrWhiteSpace(type)) throw new ErrorException(StatusCodes.Status400BadRequest, "BAD_REQUEST", "Type cannot be empty.");
+
+            var ids = userIds.Where(x => x != Guid.Empty).Distinct().ToList();
+            if (ids.Count == 0) return;
+
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                var userRepo = _unitOfWork.GetRepository<User>();
+                var notifRepo = _unitOfWork.GetRepository<Notification>();
+
+                // validate users exist
+                var existing = await userRepo.Entities
+                    .Where(u => u.DeletedAt == null && ids.Contains(u.UserId))
+                    .Select(u => u.UserId)
+                    .ToListAsync();
+
+                var missing = ids.Except(existing).ToList();
+                if (missing.Count > 0)
+                    throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", $"Some users not found.{missing}");
+
+                var now = DateTime.UtcNow;
+                var payload = JsonSerializer.Serialize(payloadObj);
+
+                // create notification rows
+                var pushed = new List<(Guid UserId, GetNotificationDTO Dto)>();
+
+                foreach (var uid in existing)
+                {
+                    var entity = new Notification
+                    {
+                        NotificationId = Guid.NewGuid(),
+                        UserId = uid,
+                        Type = type,
+                        Channel = NotificationChannels.InApp,
+                        Payload = payload,
+                        SentAt = now
+                    };
+
+                    await notifRepo.InsertAsync(entity);
+
+                    pushed.Add((uid, new GetNotificationDTO
+                    {
+                        NotificationId = entity.NotificationId,
+                        Type = entity.Type,
+                        Channel = entity.Channel,
+                        Payload = entity.Payload,
+                        SentAt = entity.SentAt,
+                        recipientEmailList = new List<string>() // optional for realtime
+                    }));
+                }
+
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+
+                // realtime push (after commit)
+                foreach (var item in pushed)
+                {
+                    await _hub.Clients
+                        .Group($"notifications_{item.UserId}")
+                        .SendAsync("notification:new", item.Dto);
+                }
+            }
+            catch (ErrorException)
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _unitOfWork.RollBack();
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error creating Notifications: {ex.Message}");
+            }
+        }
     }
 
 }

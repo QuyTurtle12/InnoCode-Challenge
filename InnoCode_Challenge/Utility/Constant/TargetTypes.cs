@@ -6,6 +6,7 @@
         public const string Contest = "contest";
         public const string Round = "round";
         public const string Team = "team";
+        public const string TeamInvite = "team_invite";
         public const string Submission = "submission";
         public const string Problem = "problem";
         public const string McqTest = "mcq_test";

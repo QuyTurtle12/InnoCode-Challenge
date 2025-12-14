@@ -1,10 +1,13 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using Repository.IRepositories;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.TeamInviteDTOs;
+using Repository.IRepositories;
+using System;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
@@ -15,6 +18,9 @@ namespace BusinessLogic.Services
     {
         private readonly IUOW _uow;
         private readonly IMapper _mapper;
+        private readonly INotificationService _notificationService;
+        private readonly ILogger<TeamInviteService> _logger;
+        private readonly IActivityLogWriter _logWriter;
 
         private const string Pending = "pending";
         private const string Accepted = "accepted";
@@ -22,11 +28,20 @@ namespace BusinessLogic.Services
         private const string Revoked = "revoked";
         private const string Expired = "expired";
 
-        public TeamInviteService(IUOW uow, IMapper mapper)
+        public TeamInviteService(
+            IUOW uow,
+            IMapper mapper,
+            INotificationService notificationService,
+            ILogger<TeamInviteService> logger,
+            IActivityLogWriter logWriter)
         {
             _uow = uow;
             _mapper = mapper;
+            _notificationService = notificationService;
+            _logger = logger;
+            _logWriter = logWriter;
         }
+
 
         public async Task<PaginatedList<TeamInviteDTO>> GetForTeamAsync(
             Guid teamId,
@@ -89,13 +104,14 @@ namespace BusinessLogic.Services
 
             // Policy checks
             await EnsureRegistrationOpenAsync(team.ContestId, _uow.GetRepository<Contest>(), configRepo);
-            var maxMembers = await GetMaxTeamMembersAsync(team.ContestId, configRepo); 
+            var maxMembers = await GetMaxTeamMembersAsync(team.ContestId, configRepo);
             var currentMembers = await memberRepo.Entities.CountAsync(m => m.TeamId == teamId);
             if (currentMembers >= maxMembers)
                 throw new ErrorException(StatusCodes.Status409Conflict, "TEAM_FULL", "Team member limit reached.");
 
             // Resolve target student/email
             Guid? studentId = null;
+            Guid? inviteeUserId = null;
             string? inviteeEmail = null;
 
             if (dto.StudentId.HasValue)
@@ -107,8 +123,9 @@ namespace BusinessLogic.Services
                 if (student == null)
                     throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", $"No student with ID={dto.StudentId}");
 
-                inviteeEmail = student.User.Email.Trim().ToLowerInvariant(); 
+                inviteeEmail = student.User.Email.Trim().ToLowerInvariant();
                 studentId = student.StudentId;
+                inviteeUserId = student.UserId;
             }
             else
             {
@@ -120,6 +137,7 @@ namespace BusinessLogic.Services
 
                 if (user != null && user.Role == RoleConstants.Student)
                 {
+                    inviteeUserId = user.UserId;
                     var student = await studentRepo.Entities.FirstOrDefaultAsync(s => s.UserId == user.UserId && s.DeletedAt == null);
                     if (student != null) studentId = student.StudentId;
                 }
@@ -157,7 +175,7 @@ namespace BusinessLogic.Services
                                                 : i.InviteeEmail != null && i.InviteeEmail.ToLower() == inviteeEmail));
 
             var now = DateTime.UtcNow;
-            var ttlDays = dto.TtlDays ?? await GetInviteTtlDaysAsync(configRepo, team.ContestId); 
+            var ttlDays = dto.TtlDays ?? await GetInviteTtlDaysAsync(configRepo, team.ContestId);
             var newExp = now.AddDays(ttlDays);
 
             if (pending != null)
@@ -166,6 +184,13 @@ namespace BusinessLogic.Services
                 pending.Token = Guid.NewGuid().ToString("N");
                 inviteRepo.Update(pending);
                 await _uow.SaveAsync();
+                await TryNotifyInviteeAsync(inviteeUserId, team, pending);
+
+                await _logWriter.TryWriteAsync(invitedByUserId,
+                    ActivityActions.TeamInviteResent,
+                    TargetTypes.TeamInvite,
+                    pending.InviteId.ToString());
+
 
                 return await ProjectWithTokenAsync(pending.InviteId);
             }
@@ -185,6 +210,13 @@ namespace BusinessLogic.Services
 
             await inviteRepo.InsertAsync(invite);
             await _uow.SaveAsync();
+            await TryNotifyInviteeAsync(inviteeUserId, team, invite);
+
+            await _logWriter.TryWriteAsync(invitedByUserId,
+                ActivityActions.TeamInviteCreated,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
+
 
             return await ProjectWithTokenAsync(invite.InviteId);
         }
@@ -230,6 +262,12 @@ namespace BusinessLogic.Services
                 };
                 await repo.InsertAsync(newInvite);
                 await _uow.SaveAsync();
+                var inviteeUserId = await ResolveInviteeUserIdAsync(newInvite);
+                await TryNotifyInviteeAsync(inviteeUserId, invite.Team, newInvite);
+                await _logWriter.TryWriteAsync(requesterUserId,
+                    ActivityActions.TeamInviteResent,
+                    TargetTypes.TeamInvite,
+                    newInvite.InviteId.ToString());
 
                 return await ProjectWithTokenAsync(newInvite.InviteId);
             }
@@ -239,6 +277,14 @@ namespace BusinessLogic.Services
                 invite.ExpiresAt = now.AddDays(ttlDays);
                 repo.Update(invite);
                 await _uow.SaveAsync();
+                var inviteeUserId = await ResolveInviteeUserIdAsync(invite);
+                await TryNotifyInviteeAsync(inviteeUserId, invite.Team, invite);
+
+                await _logWriter.TryWriteAsync(requesterUserId,
+                    ActivityActions.TeamInviteResent,
+                    TargetTypes.TeamInvite,
+                    invite.InviteId.ToString());
+
                 return await ProjectWithTokenAsync(invite.InviteId);
             }
         }
@@ -262,6 +308,11 @@ namespace BusinessLogic.Services
             invite.Status = Revoked;
             repo.Update(invite);
             await _uow.SaveAsync();
+            await _logWriter.TryWriteAsync(requesterUserId,
+                ActivityActions.TeamInviteRevoked,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
+
         }
 
         public async Task AcceptByTokenAsync(string token, string email)
@@ -304,7 +355,7 @@ namespace BusinessLogic.Services
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail && u.DeletedAt == null);
 
             if (user == null)
-                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register/log in with the invited email first.");
+                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register with the invited email first.");
 
             if (user.Role != RoleConstants.Student)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_STUDENT", "Only students can accept team invites.");
@@ -355,32 +406,114 @@ namespace BusinessLogic.Services
             inviteRepo.Update(invite);
 
             await _uow.SaveAsync();
+            await _logWriter.TryWriteAsync(user.UserId,
+                ActivityActions.TeamInviteAccepted,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
+
+            // notify inviter
+            var inviterUserId = invite.InvitedByUserId;
+
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(inviterUserId, NotificationTypes.TeamInvitationAccepted, new
+                {
+                    inviteId = invite.InviteId,
+                    teamId = invite.TeamId,
+                    teamName = invite.Team?.Name,
+                    contestId = invite.Team?.ContestId,
+                    contestName = invite.Team?.Contest?.Name,
+                    studentId = student.StudentId,
+                    studentName = user.Fullname,
+                    studentEmail = user.Email,
+                    targetType = TargetTypes.TeamInvite,
+                    targetId = invite.InviteId.ToString(),
+                    message = $"{user.Fullname} accepted your team invitation."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send invite accepted notification. InviteId={InviteId}, InviterUserId={InviterUserId}",
+                    invite.InviteId, invite.InvitedByUserId);
+            }
+
+            
+
         }
 
 
         public async Task DeclineByTokenAsync(string token, string email)
         {
             var inviteRepo = _uow.GetRepository<TeamInvite>();
+            var userRepo = _uow.GetRepository<User>();
 
             if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(email))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_INPUT", "Token and Email are required.");
 
             var normEmail = email.Trim().ToLowerInvariant();
 
-            var invite = await inviteRepo.Entities.FirstOrDefaultAsync(i => i.Token == token);
+            var invite = await inviteRepo.Entities.Include(i => i.Team).ThenInclude(t => t.Contest).FirstOrDefaultAsync(i => i.Token == token);
             if (invite == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "INVITE_NOT_FOUND", "Invalid invite token.");
 
             if (invite.Status != Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVITE_NOT_PENDING", "Invite is not pending.");
+            
+            if (invite.ExpiresAt <= DateTime.UtcNow)
+            {
+                invite.Status = Expired;
+                inviteRepo.Update(invite);
+                await _uow.SaveAsync();
+                throw new ErrorException(StatusCodes.Status410Gone, "INVITE_EXPIRED", "Invite has expired.");
+            }
 
             if (!string.IsNullOrWhiteSpace(invite.InviteeEmail)
                 && !string.Equals(invite.InviteeEmail.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
                 throw new ErrorException(StatusCodes.Status403Forbidden, "EMAIL_MISMATCH", "This invite does not belong to your email.");
+            
+            var user = await userRepo.Entities
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == normEmail && u.DeletedAt == null);
+
+            if (user == null)
+                throw new ErrorException(StatusCodes.Status409Conflict, "ACCOUNT_REQUIRED", "Please register with the invited email first.");
+
+            if (user.Role != RoleConstants.Student)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_STUDENT", "Only students can accept team invites.");
+
 
             invite.Status = Declined; // (cancelled)
             inviteRepo.Update(invite);
             await _uow.SaveAsync();
+            await _logWriter.TryWriteAsync(user.UserId,
+                ActivityActions.TeamInviteDeclined,
+                TargetTypes.TeamInvite,
+                invite.InviteId.ToString());
+
+            //notify inviter
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(invite.InvitedByUserId, NotificationTypes.TeamInvitationDenied, new
+                {
+                    inviteId = invite.InviteId,
+                    teamId = invite.TeamId,
+                    teamName = invite.Team?.Name,
+                    contestId = invite.Team?.ContestId,
+                    contestName = invite.Team?.Contest?.Name,
+                    inviteeEmail = normEmail,
+                    targetType = TargetTypes.TeamInvite,
+                    targetId = invite.InviteId.ToString(),
+                    message = $"A student declined your team invitation."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send invite denied notification. InviteId={InviteId}, InviterUserId={InviterUserId}",
+                    invite.InviteId, invite.InvitedByUserId);
+            }
+            
+
         }
 
         // ---------- helpers ----------
@@ -526,5 +659,77 @@ namespace BusinessLogic.Services
 
             return _mapper.Map<TeamInviteCreatedDTO>(entity);
         }
+
+        private async Task TryNotifyInviteeAsync(Guid? inviteeUserId, Team team, TeamInvite invite)
+        {
+            if (!inviteeUserId.HasValue) return;
+
+            try
+            {
+                var email = invite.InviteeEmail?.Trim().ToLowerInvariant();
+
+                await _notificationService.CreateInAppToUserAsync(inviteeUserId.Value, NotificationTypes.TeamInvitation, new
+                {
+                    inviteId = invite.InviteId,
+                    token = invite.Token,
+                    status = invite.Status,
+                    expiresAt = invite.ExpiresAt,
+                    inviteeEmail = email,
+
+                    contestId = team.ContestId,
+                    contestName = team.Contest?.Name,
+                    teamId = team.TeamId,
+                    teamName = team.Name,
+
+                    targetType = TargetTypes.TeamInvite,
+                    targetId = invite.InviteId.ToString(),
+                    actions = new
+                    {
+                        accept = new { method = "POST", url = "/api/team-invites/accept", query = new { token = invite.Token, email } },
+                        decline = new { method = "POST", url = "/api/team-invites/decline", query = new { token = invite.Token, email } }
+                    },
+
+                    message = $"You have been invited to join team '{team.Name}'."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send team invitation notification. InviteId={InviteId}, TeamId={TeamId}, InviteeUserId={InviteeUserId}",
+                    invite.InviteId, team.TeamId, inviteeUserId.Value);
+            }
+
+
+        }
+
+        private async Task<Guid?> ResolveInviteeUserIdAsync(TeamInvite invite)
+        {
+            var studentRepo = _uow.GetRepository<Student>();
+            var userRepo = _uow.GetRepository<User>();
+
+            if (invite.StudentId.HasValue)
+            {
+                var uid = await studentRepo.Entities
+                    .Where(s => s.StudentId == invite.StudentId.Value && s.DeletedAt == null)
+                    .Select(s => s.UserId)
+                    .FirstOrDefaultAsync();
+
+                return uid == Guid.Empty ? null : uid;
+            }
+
+            if (!string.IsNullOrWhiteSpace(invite.InviteeEmail))
+            {
+                var email = invite.InviteeEmail.Trim().ToLowerInvariant();
+                var uid = await userRepo.Entities
+                    .Where(u => u.Email.ToLower() == email && u.DeletedAt == null && u.Role == RoleConstants.Student)
+                    .Select(u => u.UserId)
+                    .FirstOrDefaultAsync();
+
+                return uid == Guid.Empty ? null : uid;
+            }
+
+            return null;
+        }
+
     }
 }
