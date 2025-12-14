@@ -8,12 +8,13 @@
         public const string Admin = "Admin";
         public const string Staff = "Staff";
         public const string ContestOrganizer = "Organizer";
+        public const string SchoolManager = "SchoolManager";
 
         public const string RoleRegexPattern =
-        "^(" + Student + "|" + Mentor + "|" + Judge + "|" + Staff + "|" + Admin + "|" + ContestOrganizer + ")$";
+        "^(" + Student + "|" + Mentor + "|" + Judge + "|" + Staff + "|" + Admin + "|" + ContestOrganizer + "|" + SchoolManager + ")$";
 
         public const string RoleRegexErrorMessage =
-            "Role must be one of: " + Student + ", " + Mentor + ", " + Judge + ", " + Staff + ", " + Admin + ", " + ContestOrganizer + ".";
+            "Role must be one of: " + Student + ", " + Mentor + ", " + Judge + ", " + Staff + ", " + Admin + ", " + ContestOrganizer + "," + SchoolManager + ".";
 
     }
 }

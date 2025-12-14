@@ -37,6 +37,7 @@ namespace InnoCode_Challenge_API.Controllers.Users
 
 
         [HttpPost("register-judge")]
+        [Authorize(Roles = RoleConstants.Admin)]
         public async Task<IActionResult> RegisterJudge([FromBody] RegisterUserDTO dto)
         {
             var result = await _authService.RegisterJudgeAsync(dto);
@@ -52,6 +53,7 @@ namespace InnoCode_Challenge_API.Controllers.Users
         }
 
         [HttpPost("register-admin")]
+        [Authorize(Roles = RoleConstants.Admin)]
         public async Task<IActionResult> RegisterAdmin([FromBody] RegisterUserDTO dto)
         {
             var result = await _authService.RegisterAdminAsync(dto);
@@ -67,6 +69,7 @@ namespace InnoCode_Challenge_API.Controllers.Users
         }
 
         [HttpPost("register-staff")]
+        [Authorize(Roles = RoleConstants.Admin)]
         public async Task<IActionResult> RegisterStaff([FromBody] RegisterUserDTO dto)
         {
             var result = await _authService.RegisterStaffAsync(dto);
@@ -82,6 +85,7 @@ namespace InnoCode_Challenge_API.Controllers.Users
         }
 
         [HttpPost("register-organizer")]
+        [Authorize(Roles = RoleConstants.Admin)]
         public async Task<IActionResult> RegisterOrganizer([FromBody] RegisterUserDTO dto)
         {
             var result = await _authService.RegisterOrganizerAsync(dto);

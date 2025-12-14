@@ -344,6 +344,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IContestJudgeService, ContestJudgeService>();
             services.AddScoped<IJudgeInviteService, JudgeInviteService>();
             services.AddScoped<IActivityLogWriter, ActivityLogWriter>();
+            services.AddScoped<IRoleRegistrationService, RoleRegistrationService>();
         }
     }
 }
