@@ -68,6 +68,19 @@ namespace BusinessLogic.Services.Contests
                     "Rate limit exceeded. Please try again in a few moments."
                 );
             }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"An error occurred while processing the submission: {ex.Message}"
+                );
+            }
         }
 
         private async Task ProcessBatchSubmissions(JudgeSubmissionRequestDTO request, JudgeSubmissionResultDTO result)
@@ -266,16 +279,42 @@ namespace BusinessLogic.Services.Contests
                 memory_limit = memoryLimitKb
             };
 
-            HttpResponseMessage response = await _httpClient.PostAsJsonAsync(
-                $"{_judge0BaseUrl}/submissions?base64_encoded=false&wait=false",
-                submissionRequest);
+            try
+            {
+                HttpResponseMessage response = await _httpClient.PostAsJsonAsync(
+                    $"{_judge0BaseUrl}/submissions?base64_encoded=false&wait=false",
+                    submissionRequest);
 
-            response.EnsureSuccessStatusCode();
+                // Capture the response body for 422 errors
+                if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
 
-            return await response.Content.ReadFromJsonAsync<JudgeSubmissionTokenDTO>()
-                ?? throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    throw new ErrorException(
+                        StatusCodes.Status422UnprocessableEntity,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Judge0 validation failed. Details: {errorContent}. " +
+                        $"Params: languageId={languageId}, timeLimitSec={timeLimitSec}, memoryLimitKb={memoryLimitKb}");
+                }
+
+                response.EnsureSuccessStatusCode();
+
+                return await response.Content.ReadFromJsonAsync<JudgeSubmissionTokenDTO>()
+                    ?? throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                        "Failed to deserialize Judge0 submission response");
+            }
+            catch (ErrorException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    "Failed to deserialize Judge0 submission response");
+                    $"Judge0 submission failed: {ex.Message}");
+            }
         }
 
         private async Task<JudgeCaseResultDTO> PollSubmissionResult(string token, JudgeTestCaseDTO testCase)
