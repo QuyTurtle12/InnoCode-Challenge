@@ -246,11 +246,15 @@ namespace BusinessLogic.Services.Appeals
         {
             try
             {
+                // Get repositories
                 IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
 
+                // Get appeal
                 Appeal? appeal = await appealRepo.Entities
                     .Where(a => a.AppealId == appealId && a.DeletedAt == null)
                     .Include(a => a.Team)
+                        .ThenInclude(t => t.Mentor)
+                            .ThenInclude(m => m.User)
                     .Include(a => a.Owner)
                     .Include(a => a.Target)
                     .Include(a => a.AppealEvidences.Where(e => e.DeletedAt == null))
@@ -271,6 +275,10 @@ namespace BusinessLogic.Services.Appeals
 
                 // Map Appeal to GetAppealDTO
                 GetAppealDTO result = _mapper.Map<GetAppealDTO>(appeal);
+
+                // Set Mentor info
+                result.MentorId = Guid.Parse(appeal.CreatedBy!);
+                result.MentorName = appeal.Team.Mentor.User.Fullname;
 
                 return result;
             }
@@ -308,8 +316,11 @@ namespace BusinessLogic.Services.Appeals
                         "Page number and page size must be greater than or equal to 1.");
                 }
 
+                // Get repositories
+                IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
                 IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
 
+                // Build base query
                 IQueryable<Appeal> query = appealRepo.Entities
                     .Where(a => a.DeletedAt == null)
                     .Include(a => a.Team)
@@ -321,14 +332,16 @@ namespace BusinessLogic.Services.Appeals
                 // Filter by current user's teams if requested
                 if (isMyAppeals)
                 {
+                    // Get current user ID
                     string currentUserId = GetCurrentUserIdOrThrow();
 
-                    IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                    // Get current mentor ID
                     string? currentMentorId = await mentorRepo.Entities
                         .Where(m => m.UserId.ToString() == currentUserId && m.DeletedAt == null)
                         .Select(m => m.MentorId.ToString().ToLower())
                         .FirstOrDefaultAsync();
 
+                    // Filter appeals by mentor ID
                     query = query.Where(a => a.CreatedBy!.ToLower() == currentMentorId);
                 }
 
@@ -371,8 +384,33 @@ namespace BusinessLogic.Services.Appeals
                 // Get paginated results
                 PaginatedList<Appeal> paginatedAppeals = await appealRepo.GetPagingAsync(query, pageNumber, pageSize);
 
+                // Get list of mentor users for the appeals
+                List<Mentor> mentorList = await mentorRepo.Entities
+                    .Where(m => paginatedAppeals.Items
+                        .Select(a => a.CreatedBy!.ToLower())
+                        .Contains(m.MentorId.ToString().ToLower()))
+                    .Include(m => m.User)
+                    .ToListAsync();
+
+                // Create a dictionary for quick lookup
+                Dictionary<string, string> mentorDict = mentorList.ToDictionary(
+                    m => m.MentorId.ToString().ToLower(),
+                    m => m.User.Fullname);
+
                 // Map to DTOs using AutoMapper
-                List<GetAppealDTO> items = _mapper.Map<List<GetAppealDTO>>(paginatedAppeals.Items);
+                IReadOnlyCollection<GetAppealDTO> items = paginatedAppeals.Items.Select(item =>
+                {
+                    // Map each Appeal to GetAppealDTO
+                    GetAppealDTO dto = _mapper.Map<GetAppealDTO>(item);
+
+                    // Set MentorId and MentorName
+                    dto.MentorId = Guid.Parse(item.CreatedBy!);
+                    dto.MentorName = mentorDict.ContainsKey(item.CreatedBy!.ToLower())
+                        ? mentorDict[item.CreatedBy!.ToLower()]
+                        : "Unknown Mentor";
+
+                    return dto;
+                }).ToList();
 
                 return new PaginatedList<GetAppealDTO>(
                     items,

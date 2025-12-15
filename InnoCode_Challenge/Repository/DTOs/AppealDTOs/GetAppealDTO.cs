@@ -15,6 +15,8 @@ namespace Repository.DTOs.AppealDTOs
         public string TargetType { get; set; } = string.Empty;
         public Guid OwnerId { get; set; }
         public string OwnerName { get; set; } = string.Empty;
+        public Guid MentorId { get; set; }
+        public string MentorName { get; set; } = string.Empty;
         public string State { get; set; } = string.Empty;
         public string Reason { get; set; } = string.Empty;
         public string? Decision { get; set; }
