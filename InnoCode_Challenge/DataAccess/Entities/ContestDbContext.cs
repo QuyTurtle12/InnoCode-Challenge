@@ -846,9 +846,7 @@ public partial class ContestDbContext : DbContext
                 .HasMaxLength(20)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("channel");
-            entity.Property(e => e.IsRead)
-                .HasDefaultValue(true)
-                .HasColumnName("is_read");
+            entity.Property(e => e.IsRead).HasColumnName("is_read");
             entity.Property(e => e.Payload)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("payload");
