@@ -85,7 +85,11 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                         Type = dto.Type.ToString(),
                         Channel = dto.Channel.ToString(),
                         Payload = payload,
-                        SentAt = now
+                        SentAt = now,
+
+                        IsRead = false,
+                        ReadAt = null
+
                     };
 
                     await notifRepo.InsertAsync(entity);
@@ -97,6 +101,10 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                         Channel = entity.Channel,
                         Payload = entity.Payload,
                         SentAt = entity.SentAt,
+
+                        IsRead = entity.IsRead,
+                        ReadAt = entity.ReadAt,
+
                         recipientEmailList = new List<string> { u.Email }
                     });
                 }
@@ -146,7 +154,9 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             if (idSearch.HasValue)
                 q = q.Where(n => n.NotificationId == idSearch.Value);
 
-            q = q.OrderByDescending(n => n.SentAt);
+            q = q
+                .OrderBy(n => n.IsRead)            // unread first
+                .ThenByDescending(n => n.SentAt);  // newest first
 
             var page = await repo.GetPagingAsync(q, pageNumber, pageSize);
 
@@ -157,6 +167,10 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 Channel = n.Channel,
                 Payload = n.Payload,
                 SentAt = n.SentAt,
+
+                IsRead = n.IsRead,
+                ReadAt = n.ReadAt,
+
                 recipientEmailList = new List<string> { n.User.Email }
             }).ToList();
 
@@ -183,7 +197,9 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 q = q.Where(n => n.User.Email.ToLower().Contains(email));
             }
 
-            q = q.OrderByDescending(n => n.SentAt);
+            q = q
+                .OrderBy(n => n.IsRead)
+                .ThenByDescending(n => n.SentAt);
 
             var page = await repo.GetPagingAsync(q, pageNumber, pageSize);
 
@@ -194,6 +210,10 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 Channel = n.Channel,
                 Payload = n.Payload,
                 SentAt = n.SentAt,
+
+                IsRead = n.IsRead,
+                ReadAt = n.ReadAt,
+
                 recipientEmailList = new List<string> { n.User.Email }
             }).ToList();
 
@@ -243,7 +263,11 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                         Type = type,
                         Channel = NotificationChannels.InApp,
                         Payload = payload,
-                        SentAt = now
+                        SentAt = now,
+
+                        IsRead = false,
+                        ReadAt = null
+
                     };
 
                     await notifRepo.InsertAsync(entity);
@@ -255,6 +279,10 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                         Channel = entity.Channel,
                         Payload = entity.Payload,
                         SentAt = entity.SentAt,
+
+                        IsRead = entity.IsRead,
+                        ReadAt = entity.ReadAt,
+
                         recipientEmailList = new List<string>() // optional for realtime
                     }));
                 }
@@ -283,6 +311,79 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                     $"Error creating Notifications: {ex.Message}");
             }
         }
+        public async Task<MarkReadResultDTO> MarkAsReadAsync(Guid notificationId)
+        {
+            if (notificationId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "NotificationId is required.");
+
+            var userIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "User not authenticated.");
+
+            var repo = _unitOfWork.GetRepository<Notification>();
+            var now = DateTime.UtcNow;
+
+            var updated = await repo.Entities
+                .Where(n => n.NotificationId == notificationId && n.UserId == userId && !n.IsRead)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(n => n.IsRead, true)
+                    .SetProperty(n => n.ReadAt, now));
+
+            if (updated == 0)
+            {
+                var row = await repo.Entities
+                    .AsNoTracking()
+                    .Where(n => n.NotificationId == notificationId && n.UserId == userId)
+                    .Select(n => new { n.IsRead, n.ReadAt })
+                    .FirstOrDefaultAsync();
+
+                if (row == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, "NOTIFICATION_NOT_FOUND", "Notification not found.");
+
+                return new MarkReadResultDTO
+                {
+                    UpdatedCount = 0,
+                    ReadAt = row.ReadAt ?? now 
+                };
+            }
+
+
+            return new MarkReadResultDTO { UpdatedCount = 1, ReadAt = now };
+        }
+        public async Task<MarkReadResultDTO> MarkAllAsReadAsync(DateTime? upTo = null)
+        {
+            var userIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "User not authenticated.");
+
+            var repo = _unitOfWork.GetRepository<Notification>();
+            var now = DateTime.UtcNow;
+            var cutoff = upTo ?? now;
+
+            var updated = await repo.Entities
+                .Where(n => n.UserId == userId && !n.IsRead && n.SentAt <= cutoff)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(n => n.IsRead, true)
+                    .SetProperty(n => n.ReadAt, now));
+
+            return new MarkReadResultDTO { UpdatedCount = updated, ReadAt = now };
+        }
+
+        public async Task<UnreadCountDTO> GetUnreadCountAsync()
+        {
+            var userIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "User not authenticated.");
+
+            var repo = _unitOfWork.GetRepository<Notification>();
+
+            var count = await repo.Entities
+                .AsNoTracking()
+                .CountAsync(n => n.UserId == userId && !n.IsRead);
+
+            return new UnreadCountDTO { Count = count };
+        }
+
     }
 
 }

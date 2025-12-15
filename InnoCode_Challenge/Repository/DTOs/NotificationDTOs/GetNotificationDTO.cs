@@ -8,5 +8,8 @@
         public string Channel { get; set; } = null!;
         public string? Payload { get; set; }
         public DateTime SentAt { get; set; }
+        public bool IsRead { get; set; }
+        public DateTime? ReadAt { get; set; }
+
     }
 }

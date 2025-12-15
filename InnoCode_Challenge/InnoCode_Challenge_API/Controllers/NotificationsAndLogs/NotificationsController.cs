@@ -70,5 +70,48 @@ namespace InnoCode_Challenge_API.Controllers.NotificationsAndLogs
             ));
         }
 
+        [Authorize]
+        [HttpPost("{id:guid}/read")]
+        public async Task<IActionResult> MarkAsRead(Guid id)
+        {
+            var result = await _notificationService.MarkAsReadAsync(id);
+
+            return Ok(new BaseResponseModel<MarkReadResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Notification marked as read."
+            ));
+        }
+
+        [Authorize]
+        [HttpPost("read-all")]
+        public async Task<IActionResult> MarkAllAsRead()
+        {
+            var result = await _notificationService.MarkAllAsReadAsync(DateTime.Now);
+
+            return Ok(new BaseResponseModel<MarkReadResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "All notifications marked as read."
+            ));
+        }
+
+        [Authorize]
+        [HttpGet("unread-count")]
+        public async Task<IActionResult> GetUnreadCount()
+        {
+            var result = await _notificationService.GetUnreadCountAsync();
+
+            return Ok(new BaseResponseModel<UnreadCountDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "OK"
+            ));
+        }
+
+
     }
 }

@@ -14,6 +14,9 @@ namespace BusinessLogic.IServices.NotificationsAndLogs
         Task CreateInAppToUsersAsync( IEnumerable<Guid> userIds, string type, object payload);
         //Create in-app notification to single user
         Task CreateInAppToUserAsync(Guid userId,string type,object payload);
+        Task<MarkReadResultDTO> MarkAsReadAsync(Guid notificationId);
+        Task<MarkReadResultDTO> MarkAllAsReadAsync(DateTime? upTo = null);
+        Task<UnreadCountDTO> GetUnreadCountAsync();
 
     }
 }
