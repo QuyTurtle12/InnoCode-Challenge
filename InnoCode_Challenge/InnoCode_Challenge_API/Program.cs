@@ -140,4 +140,3 @@ app.MapHub<ActivityLogsHub>("/hubs/activity-logs");
 
 app.MapControllers();
 app.Run();
-      

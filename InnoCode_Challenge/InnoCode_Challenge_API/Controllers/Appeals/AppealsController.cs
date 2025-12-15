@@ -9,7 +9,7 @@ using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Appeals
 {
-    [Route("api/[controller]")]
+    [Route("api/")]
     [ApiController]
     public class AppealsController : ControllerBase
     {
@@ -26,7 +26,7 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// </summary>
         /// <param name="dto">Appeal creation data with evidences</param>
         /// <returns>Created appeal details</returns>
-        [HttpPost]
+        [HttpPost("appeals")]
         [Authorize(Policy = "RequireMentorRole")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> CreateAppeal([FromForm] CreateAppealDTO dto)
@@ -46,7 +46,7 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// </summary>
         /// <param name="appealId">Appeal ID</param>
         /// <returns>Appeal details</returns>
-        [HttpGet("{appealId}")]
+        [HttpGet("appeals/{appealId}")]
         [Authorize]
         public async Task<IActionResult> GetAppealById(Guid appealId)
         {
@@ -72,15 +72,15 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <param name="state">Optional state filter (Opened/Closed)</param>
         /// <param name="decision">Optional decision filter (Approved/Rejected)</param>
         /// <returns>Paginated list of appeals</returns>
-        [HttpGet]
+        [HttpGet("contests/{contestId}/appeals")]
         [Authorize]
         public async Task<IActionResult> GetPaginatedAppeals(
+            Guid contestId,
             int pageNumber = 1,
             int pageSize = 10,
             Guid? appealId = null,
             Guid? teamId = null,
             Guid? roundId = null,
-            Guid? contestId = null,
             AppealStateEnum? state = null,
             AppealDecisionEnum? decision = null)
         {
@@ -116,13 +116,13 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <param name="state">Optional state filter (Opened/Closed)</param>
         /// <param name="decision">Optional decision filter (Approved/Rejected)</param>
         /// <returns>Paginated list of current mentor's appeals</returns>
-        [HttpGet("my-appeal")]
+        [HttpGet("contests/{contestId}/appeals/my-appeal")]
         [Authorize(Policy = "RequireMentorRole")]
         public async Task<IActionResult> GetMyAppeals(
+            Guid contestId,
             int pageNumber = 1,
             int pageSize = 10,
             Guid? roundId = null,
-            Guid? contestId = null,
             AppealStateEnum? state = null,
             AppealDecisionEnum? decision = null)
         {
@@ -154,7 +154,7 @@ namespace InnoCode_Challenge_API.Controllers.Appeals
         /// <param name="appealId">Appeal ID</param>
         /// <param name="dto">Review decision</param>
         /// <returns>Updated appeal details</returns>
-        [HttpPut("{appealId}/review")]
+        [HttpPut("appeals/{appealId}/review")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> ReviewAppeal(Guid appealId, ReviewAppealDTO dto)
         {
