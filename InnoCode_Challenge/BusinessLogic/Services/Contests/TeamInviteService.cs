@@ -503,7 +503,7 @@ namespace BusinessLogic.Services
                     inviteeEmail = normEmail,
                     targetType = TargetTypes.TeamInvite,
                     targetId = invite.InviteId.ToString(),
-                    message = $"A student declined your team invitation."
+                    message = $"{user.Fullname} declined your team invitation."
                 });
             }
             catch (Exception ex)
