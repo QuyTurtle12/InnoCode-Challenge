@@ -312,7 +312,7 @@ namespace BusinessLogic.Services.Users
                 return RoleConstants.Judge;
 
             if (r == "schoolmanager" || r == RoleConstants.SchoolManager.ToLowerInvariant())
-                return RoleConstants.Judge;
+                return RoleConstants.SchoolManager;
 
             throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_ROLE", "RequestedRole must be staff, organizer, or judge.");
         }
