@@ -23,5 +23,14 @@ namespace Utility.Constant
         public const string CertificateIssued = "certificate.issued";
         public const string SchoolApproved = "school.approved";
         public const string SchoolRejected = "school.rejected";
+
+        public const string SchoolCreationRequestSubmitted = "school.creation_request.submitted";
+        public const string SchoolCreationRequestApproved = "school.creation_request.approved";
+        public const string SchoolCreationRequestDenied = "school.creation_request.denied";
+
+        public const string RoleRegistrationSubmitted = "role_registration.submitted";
+        public const string RoleRegistrationApproved = "role_registration.approved";
+        public const string RoleRegistrationDenied = "role_registration.denied";
+
     }
 }

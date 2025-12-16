@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Schools;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -22,13 +23,23 @@ namespace BusinessLogic.Services.Schools
         private readonly IUOW _uow;
         private readonly ICloudinaryService _cloudinary;
         private readonly ILogger<SchoolCreationRequestService> _logger;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
 
-        public SchoolCreationRequestService(IUOW uow, ICloudinaryService cloudinary, ILogger<SchoolCreationRequestService> logger)
+        public SchoolCreationRequestService(
+            IUOW uow,
+            ICloudinaryService cloudinary,
+            ILogger<SchoolCreationRequestService> logger,
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _uow = uow;
             _cloudinary = cloudinary;
             _logger = logger;
+            _notificationService = notificationService;
+            _logWriter = logWriter;
         }
+
 
         private static string DetectTypeFromFileName(string fileName)
         {
@@ -93,6 +104,32 @@ namespace BusinessLogic.Services.Schools
                 _uow.RollBack();
                 throw;
             }
+
+            try
+            {
+                var staffAdminIds = await GetStaffAdminIdsAsync();
+
+                await _notificationService.CreateInAppToUsersAsync(
+                    staffAdminIds,
+                    NotificationTypes.SchoolCreationRequestSubmitted,
+                    new
+                    {
+                        requestId = req.RequestId,
+                        requestedByUserId = req.RequestedByUserId,
+                        name = req.Name,
+                        provinceId = req.ProvinceId,
+                        status = req.Status,
+                        targetType = TargetTypes.SchoolCreationRequest,
+                        targetId = req.RequestId.ToString(),
+                        message = $"New school creation request: {req.Name}"
+                    });
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send notifications for school request create. RequestId={RequestId}", req.RequestId);
+            }
+
 
             return await GetByIdAsync(req.RequestId, requestedByUserId, RoleConstants.SchoolManager);
         }
@@ -221,6 +258,10 @@ namespace BusinessLogic.Services.Schools
             if (req.Status != SchoolCreationRequestStatus.Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "NOT_PENDING", "Only pending requests can be approved.");
 
+            Guid createdSchoolId;
+            var requesterId = req.RequestedByUserId;
+            var schoolName = req.Name;
+
             _uow.BeginTransaction();
             try
             {
@@ -250,13 +291,42 @@ namespace BusinessLogic.Services.Schools
                 await _uow.SaveAsync();
 
                 _uow.CommitTransaction();
+
+                createdSchoolId = school.SchoolId;
             }
             catch
             {
                 _uow.RollBack();
                 throw;
             }
+
+            await _logWriter.TryWriteAsync(
+                reviewerUserId,
+                ActivityActions.SchoolRequestApprove,
+                TargetTypes.SchoolCreationRequest,
+                requestId.ToString());
+
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(
+                    requesterId,
+                    NotificationTypes.SchoolApproved,
+                    new
+                    {
+                        requestId,
+                        createdSchoolId,
+                        name = schoolName,
+                        targetType = TargetTypes.School,
+                        targetId = createdSchoolId.ToString(),
+                        message = $"Your school '{schoolName}' has been approved."
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to notify requester after approve. RequestId={RequestId}", requestId);
+            }
         }
+
 
         public async Task DenyAsync(Guid requestId, Guid reviewerUserId, string denyReason)
         {
@@ -270,13 +340,55 @@ namespace BusinessLogic.Services.Schools
             if (req.Status != SchoolCreationRequestStatus.Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "NOT_PENDING", "Only pending requests can be denied.");
 
+            var requesterId = req.RequestedByUserId;
+            var schoolName = req.Name;
+            var reason = denyReason.Trim();
+
             req.Status = SchoolCreationRequestStatus.Denied;
             req.ReviewedBy = reviewerUserId;
             req.ReviewedAt = DateTime.UtcNow;
-            req.DenyReason = denyReason.Trim();
+            req.DenyReason = reason;
 
             reqRepo.Update(req);
             await _uow.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                reviewerUserId,
+                ActivityActions.SchoolRequestDeny,
+                TargetTypes.SchoolCreationRequest,
+                requestId.ToString());
+
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(
+                    requesterId,
+                    NotificationTypes.SchoolRejected,
+                    new
+                    {
+                        requestId,
+                        denyReason = reason,
+                        name = schoolName,
+                        targetType = TargetTypes.SchoolCreationRequest,
+                        targetId = requestId.ToString(),
+                        message = $"Your school creation request '{schoolName}' was rejected."
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to notify requester after deny. RequestId={RequestId}", requestId);
+            }
         }
+
+        private async Task<List<Guid>> GetStaffAdminIdsAsync()
+        {
+            var userRepo = _uow.GetRepository<User>();
+            return await userRepo.Entities
+                .AsNoTracking()
+                .Where(u => u.DeletedAt == null
+                    && (u.Role == RoleConstants.Admin || u.Role == RoleConstants.Staff))
+                .Select(u => u.UserId)
+                .ToListAsync();
+        }
+
     }
 }

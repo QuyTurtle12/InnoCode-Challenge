@@ -61,6 +61,14 @@
 
         // Admin
         public const string AdminConfigChange = "admin.config_change";
+
+        public const string SchoolRequestCreate = "school_request.create";
+        public const string SchoolRequestApprove = "school_request.approve";
+        public const string SchoolRequestDeny = "school_request.deny";
+
+        public const string RoleRegistrationApprove = "role_registration.approve";
+        public const string RoleRegistrationDeny = "role_registration.deny";
+
     }
 
 }
