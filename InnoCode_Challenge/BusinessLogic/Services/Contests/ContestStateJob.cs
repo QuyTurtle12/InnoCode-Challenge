@@ -1,4 +1,5 @@
-﻿using DataAccess.Entities;
+﻿using BusinessLogic.IServices.NotificationsAndLogs;
+using DataAccess.Entities;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -86,7 +87,7 @@ namespace BusinessLogic.Services.Contests
                     await ScheduleNextStateTransitionAsync(contest, configLookup);
 
                     // Perform status-specific actions
-                    await HandleStatusTransitionAsync(contest, oldStatus, newStatus);
+                    await HandleStatusTransitionAsync(scope, unitOfWork, contest, oldStatus, newStatus, configLookup);
                 }
                 else
                 {
@@ -143,44 +144,128 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Handles status-specific actions when a contest transitions to a new state.
         /// </summary>
-        private async Task HandleStatusTransitionAsync(Contest contest, string oldStatus, string newStatus)
+        private async Task HandleStatusTransitionAsync(
+            IServiceScope scope,
+            IUOW unitOfWork,
+            Contest contest,
+            string oldStatus,
+            string newStatus,
+            ILookup<string, Config> configLookup)
         {
             try
             {
-                // Example: When contest completes, you might want to trigger certificate generation
-                if (newStatus == ContestStatusEnum.Completed.ToString())
-                {
-                    _logger.LogInformation(
-                        "Contest {ContestId} completed. Triggering post-completion tasks.",
-                        contest.ContestId);
+                var notif = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
-                    // Example: Enqueue certificate generation job
-                    // BackgroundJob.Enqueue<CertificateJob>(job => 
-                    //     job.GenerateCertificatesForContestAsync(contest.ContestId));
+                async Task<List<Guid>> GetParticipantIdsAsync()
+                {
+                    var teamRepo = unitOfWork.GetRepository<Team>();
+
+                    var studentIds = await teamRepo.Entities
+                        .AsNoTracking()
+                        .Where(t => t.ContestId == contest.ContestId && t.DeletedAt == null)
+                        .SelectMany(t => t.TeamMembers
+                            .Select(tm => tm.Student.UserId))
+                        .ToListAsync();
+
+                    var mentorIds = await teamRepo.Entities
+                        .AsNoTracking()
+                        .Where(t => t.ContestId == contest.ContestId && t.DeletedAt == null && t.MentorId != null)
+                        .Select(t => t.Mentor.UserId)
+                        .ToListAsync();
+
+                    return studentIds.Concat(mentorIds).Where(x => x != Guid.Empty).Distinct().ToList();
                 }
 
-                // Example: When registration opens, send notifications
+                var payloadBase = new
+                {
+                    contestId = contest.ContestId,
+                    name = contest.Name,
+                    oldStatus,
+                    newStatus,
+                    targetType = TargetTypes.Contest,
+                    targetId = contest.ContestId.ToString()
+                };
+
+                // 1) Registration Open 
                 if (newStatus == ContestStatusEnum.RegistrationOpen.ToString())
                 {
-                    _logger.LogInformation(
-                        "Registration opened for contest {ContestId}. Sending notifications.",
-                        contest.ContestId);
-
-                    // Example: Enqueue notification job
-                    // BackgroundJob.Enqueue<NotificationJob>(job => 
-                    //     job.SendRegistrationOpenNotificationsAsync(contest.ContestId));
+                    // Notify organizer
+                    if (Guid.TryParse(contest.CreatedBy, out var organizerId) && organizerId != Guid.Empty)
+                    {
+                        await notif.CreateInAppToUserAsync(organizerId, NotificationTypes.ContestRegistrationOpen, new
+                        {
+                            payloadBase.contestId,
+                            payloadBase.name,
+                            payloadBase.targetType,
+                            payloadBase.targetId,
+                            message = $"Registration opened for '{contest.Name}'."
+                        });
+                    }
                 }
 
-                await Task.CompletedTask;
+                // 2) Registration Closed 
+                if (newStatus == ContestStatusEnum.RegistrationClosed.ToString())
+                {
+                    var participantIds = await GetParticipantIdsAsync();
+
+                    // Notify participants
+                    if (participantIds.Count > 0)
+                    {
+                        await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.ContestRegistrationClosed, new
+                        {
+                            payloadBase.contestId,
+                            payloadBase.name,
+                            payloadBase.targetType,
+                            payloadBase.targetId,
+                            message = $"Registration closed for '{contest.Name}'."
+                        });
+                    }
+                }
+
+                // 3) Contest Ongoing 
+                if (newStatus == ContestStatusEnum.Ongoing.ToString())
+                {
+                    // Notify participants
+                    var participantIds = await GetParticipantIdsAsync();
+                    if (participantIds.Count > 0)
+                    {
+                        await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.ContestStarted, new
+                        {
+                            payloadBase.contestId,
+                            payloadBase.name,
+                            payloadBase.targetType,
+                            payloadBase.targetId,
+                            message = $"Contest '{contest.Name}' has started."
+                        });
+                    }
+                }
+
+                // 4) Contest Completed 
+                if (newStatus == ContestStatusEnum.Completed.ToString())
+                {
+                    // Notify participants
+                    var participantIds = await GetParticipantIdsAsync();
+                    if (participantIds.Count > 0)
+                    {
+                        await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.ContestEnded, new
+                        {
+                            payloadBase.contestId,
+                            payloadBase.name,
+                            payloadBase.targetType,
+                            payloadBase.targetId,
+                            message = $"Contest '{contest.Name}' has ended."
+                        });
+                    }
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "Error handling status transition for contest {ContestId} from {OldStatus} to {NewStatus}",
+                    "Error sending contest transition notifications. ContestId={ContestId}, Old={Old}, New={New}",
                     contest.ContestId, oldStatus, newStatus);
-                // Don't throw - we don't want to fail the main status update
             }
         }
+
 
         private async Task ScheduleNextStateTransitionAsync(Contest contest, ILookup<string, Config> configLookup)
         {

@@ -1,16 +1,19 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Hangfire;
 using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using System;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Utility.Constant;
@@ -27,17 +30,29 @@ namespace BusinessLogic.Services.Contests
         private readonly IUOW _unitOfWork;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _activityLogWriter;
+        private readonly ILogger<ContestService> _logger;
 
         private const int MIN_YEAR = 10;
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
 
-        // Constructor
-        public ContestService(IMapper mapper, IUOW uow, IHttpContextAccessor httpContextAccessor, ICloudinaryService cloudinaryService)
+        public ContestService(
+            IMapper mapper,
+            IUOW uow,
+            IHttpContextAccessor httpContextAccessor,
+            ICloudinaryService cloudinaryService,
+            INotificationService notificationService,
+            IActivityLogWriter activityLogWriter,
+            ILogger<ContestService> logger) 
         {
             _mapper = mapper;
             _unitOfWork = uow;
             _httpContextAccessor = httpContextAccessor;
             _cloudinaryService = cloudinaryService;
+            _notificationService = notificationService;
+            _activityLogWriter = activityLogWriter;
+            _logger = logger; 
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -83,6 +98,21 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
+
+
+                // Log contest cancellation activity
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, id.ToString());
+
+                // Notify participants about contest cancellation
+                await SafeNotifyParticipantsAsync(id, NotificationTypes.ContestCancelled, new
+                {
+                    contestId = id,
+                    targetType = TargetTypes.Contest,
+                    targetId = id.ToString(),
+                    message = "This contest has been cancelled."
+                });
+
             }
             catch (Exception ex)
             {
@@ -704,6 +734,12 @@ namespace BusinessLogic.Services.Contests
                     throw ex;
                 }
 
+                // Store old values for notification
+                var oldStart = existingContest.Start;
+                var oldEnd = existingContest.End;
+                var oldName = existingContest.Name;
+                var oldStatus = existingContest.Status;
+
                 // Update properties from DTO
                 _mapper.Map(contestDTO, existingContest);
 
@@ -770,12 +806,39 @@ namespace BusinessLogic.Services.Contests
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
+                // Log activity
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestUpdate, TargetTypes.Contest, existingContest.ContestId.ToString());
+
+                // Notify participants about the update if the contest is in relevant status
+                if (existingContest.Status == ContestStatusEnum.Published.ToString()
+                    || existingContest.Status == ContestStatusEnum.RegistrationOpen.ToString()
+                    || existingContest.Status == ContestStatusEnum.RegistrationClosed.ToString()
+                    || existingContest.Status == ContestStatusEnum.Ongoing.ToString())
+                {
+                    await SafeNotifyParticipantsAsync(existingContest.ContestId, NotificationTypes.ContestUpdated, new
+                    {
+                        contestId = existingContest.ContestId,
+                        name = existingContest.Name,
+                        oldName,
+                        oldStart,
+                        oldEnd,
+                        newStart = existingContest.Start,
+                        newEnd = existingContest.End,
+                        targetType = TargetTypes.Contest,
+                        targetId = existingContest.ContestId.ToString(),
+                        message = $"Contest '{existingContest.Name}' has been updated."
+                    });
+                }
+
                 // Return the updated contest DTO
                 PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
 
                 // Schedule state transitions using Hangfire
-                BackgroundJob.Enqueue<ContestStateJob>(job =>
-                    job.ScheduleContestStateTransitionsAsync(existingContest.ContestId));
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(existingContest.ContestId)),
+                    "ScheduleContestStateTransitionsAsync");
+
 
                 return result.Items.First();
             }
@@ -950,6 +1013,10 @@ namespace BusinessLogic.Services.Contests
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
+                // Log activity
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestCreate, TargetTypes.Contest, entity.ContestId.ToString());
+
                 // Map to created DTO
                 ContestCreatedDTO created = _mapper.Map<ContestCreatedDTO>(entity);
                 created.TeamMembersMin = teamMembersMin;
@@ -965,8 +1032,9 @@ namespace BusinessLogic.Services.Contests
                 created.imageUrl = imageUrl;
 
                 // Schedule state transitions using Hangfire
-                BackgroundJob.Enqueue<ContestStateJob>(job =>
-                    job.ScheduleContestStateTransitionsAsync(created.ContestId));
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(entity.ContestId)),
+                    "ScheduleContestStateTransitionsAsync");
 
                 // Return the created contest DTO
                 return created;
@@ -1299,7 +1367,7 @@ namespace BusinessLogic.Services.Contests
                     newStatus = ContestStatusEnum.Completed.ToString();
                 }
                 // Priority 2: Check if contest is ongoing
-                else if (contest.Start.HasValue && now >= contest.Start.Value && now < contest.End)
+                else if (contest.Start.HasValue && contest.End.HasValue && now >= contest.Start.Value && now < contest.End.Value)
                 {
                     newStatus = ContestStatusEnum.Ongoing.ToString();
                 }
@@ -1327,6 +1395,16 @@ namespace BusinessLogic.Services.Contests
                 contest.Status = newStatus;
                 await contestRepo.UpdateAsync(contest);
                 await _unitOfWork.SaveAsync();
+
+                // Schedule state transitions using Hangfire
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contestId)),
+                    "ScheduleContestStateTransitionsAsync");
+
+                //  Log activity
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestPublish, TargetTypes.Contest, contestId.ToString());
+
             }
             catch (Exception ex)
             {
@@ -1596,6 +1674,20 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
+
+                // Notify activity log
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, existingContest.ContestId.ToString());
+
+                // Notify participants
+                await SafeNotifyParticipantsAsync(existingContest.ContestId, NotificationTypes.ContestCancelled, new
+                {
+                    contestId = existingContest.ContestId,
+                    targetType = TargetTypes.Contest,
+                    targetId = existingContest.ContestId.ToString(),
+                    message = "This contest has been cancelled."
+                });
+
             }
             catch (Exception ex)
             {
@@ -1640,8 +1732,25 @@ namespace BusinessLogic.Services.Contests
 
                 _unitOfWork.CommitTransaction();
 
-                BackgroundJob.Enqueue<ContestStateJob>(job =>
-                    job.ScheduleContestStateTransitionsAsync(contest.ContestId));
+                // Log activity
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestStartNow, TargetTypes.Contest, contest.ContestId.ToString());
+
+                // Notify participants
+                await SafeNotifyParticipantsAsync(contest.ContestId, NotificationTypes.ContestStarted, new
+                {
+                    contestId = contest.ContestId,
+                    name = contest.Name,
+                    targetType = TargetTypes.Contest,
+                    targetId = contest.ContestId.ToString(),
+                    message = $"Contest '{contest.Name}' has started."
+                });
+
+                // Schedule state transitions
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contest.ContestId)),
+                    "ScheduleContestStateTransitionsAsync");
+
 
                 return await GetContestByIdAsync(contest.ContestId);
             }
@@ -1696,8 +1805,24 @@ namespace BusinessLogic.Services.Contests
 
                 _unitOfWork.CommitTransaction();
 
-                BackgroundJob.Enqueue<ContestStateJob>(job =>
-                    job.ScheduleContestStateTransitionsAsync(contest.ContestId));
+                // Log activity
+                var actorId = GetCurrentUserGuidOrThrow();
+                await SafeWriteActivityAsync(actorId, ActivityActions.ContestEndNow, TargetTypes.Contest, contest.ContestId.ToString());
+
+                // Notify participants
+                await SafeNotifyParticipantsAsync(contest.ContestId, NotificationTypes.ContestEnded, new
+                {
+                    contestId = contest.ContestId,
+                    name = contest.Name,
+                    targetType = TargetTypes.Contest,
+                    targetId = contest.ContestId.ToString(),
+                    message = $"Contest '{contest.Name}' has ended."
+                });
+
+                // Schedule state transitions
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contest.ContestId)),
+                    "ScheduleContestStateTransitionsAsync");
 
                 return await GetContestByIdAsync(contest.ContestId);
             }
@@ -1723,5 +1848,82 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
                     "TeamMembersMax must be >= TeamMembersMin.");
         }
+
+        // Get current user ID or throw if unauthenticated/invalid
+        private Guid GetCurrentUserGuidOrThrow()
+        {
+            var idStr = GetCurrentUserIdOrThrow();
+            if (!Guid.TryParse(idStr, out var id) || id == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Invalid user id.");
+            return id;
+        }
+
+        //  Get user IDs of all participants (students and mentors) in the contest
+        private async Task<List<Guid>> GetParticipantUserIdsAsync(Guid contestId)
+        {
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+
+            var studentIds = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .SelectMany(t => t.TeamMembers
+                .Select(tm => tm.Student.UserId))
+                .ToListAsync();
+
+            var mentorIds = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != null)
+                .Select(t => t.Mentor.UserId)
+                .ToListAsync();
+
+            return studentIds.Concat(mentorIds)
+                .Where(x => x != Guid.Empty)
+                .Distinct()
+                .ToList();
+        }
+
+        // Notify participants of an event
+        private async Task TryNotifyParticipantsAsync(Guid contestId, string type, object payload)
+        {
+            var ids = await GetParticipantUserIdsAsync(contestId);
+            if (ids.Count == 0) return;
+            await _notificationService.CreateInAppToUsersAsync(ids, type, payload);
+        }
+
+        // Write activity log safely, logging any exceptions
+        private async Task SafeWriteActivityAsync(Guid actorId, string action, string targetType, string targetId)
+        {
+            try
+            {
+                await _activityLogWriter.TryWriteAsync(actorId, action, targetType, targetId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Activity log failed. Action={Action}, Target={TargetType}, TargetId={TargetId}, ActorId={ActorId}",
+                    action, targetType, targetId, actorId);
+            }
+        }
+
+        // Notify participants safely, logging any exceptions
+        private async Task SafeNotifyParticipantsAsync(Guid contestId, string type, object payload)
+        {
+            try
+            {
+                await TryNotifyParticipantsAsync(contestId, type, payload);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Notify participants failed. ContestId={ContestId}, Type={Type}", contestId, type);
+            }
+        }
+
+        // Enqueue a Hangfire job safely, logging any exceptions    
+        private void SafeEnqueue(Action enqueue, string jobName)
+        {
+            try { enqueue(); }
+            catch (Exception ex) { _logger.LogError(ex, "Hangfire enqueue failed: {JobName}", jobName); }
+        }
+
     }
 }
