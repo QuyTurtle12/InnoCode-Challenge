@@ -203,6 +203,20 @@ namespace BusinessLogic.Services.Users
             if (entity == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "ROLE_REG_NOT_FOUND", $"No registration with ID={id}");
 
+            string? reviewerName = null;
+            string? reviewerEmail = null;
+
+            if (entity.ReviewedBy.HasValue)
+            {
+                var userRepo = _uow.GetRepository<User>();
+                var reviewer = await userRepo.Entities.AsNoTracking()
+                    .Where(u => u.DeletedAt == null && u.UserId == entity.ReviewedBy.Value)
+                    .Select(u => new { u.Fullname, u.Email })
+                    .FirstOrDefaultAsync();
+
+                reviewerName = reviewer?.Fullname;
+                reviewerEmail = reviewer?.Email;
+            }
             return new RoleRegistrationDetailDTO
             {
                 RegistrationId = entity.RegistrationId,
@@ -216,6 +230,12 @@ namespace BusinessLogic.Services.Users
                 ReviewedBy = entity.ReviewedBy,
                 ReviewedAt = entity.ReviewedAt,
                 CreatedAt = entity.CreatedAt,
+
+                ReviewedByName = reviewerName,
+                ReviewedByEmail = reviewerEmail,
+
+                EvidenceCount = entity.RoleRegistrationEvidences.Count(e => e.DeletedAt == null),
+
                 Evidences = entity.RoleRegistrationEvidences
                     .Where(e => e.DeletedAt == null)
                     .OrderByDescending(e => e.CreatedAt)

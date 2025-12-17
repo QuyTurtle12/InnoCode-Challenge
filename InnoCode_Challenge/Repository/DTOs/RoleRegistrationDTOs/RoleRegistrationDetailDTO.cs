@@ -16,9 +16,12 @@ namespace Repository.DTOs.RoleRegistrationDTOs
         public string? Payload { get; set; }
         public string Status { get; set; } = null!;
         public string? DenyReason { get; set; }
+        public string? ReviewedByName { get; set; }
+        public string? ReviewedByEmail { get; set; }
         public Guid? ReviewedBy { get; set; }
         public DateTime? ReviewedAt { get; set; }
         public DateTime CreatedAt { get; set; }
+        public int EvidenceCount { get; set; }
         public List<RoleRegistrationEvidenceDTO> Evidences { get; set; } = new();
     }
 }
