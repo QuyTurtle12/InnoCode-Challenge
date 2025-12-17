@@ -12,6 +12,7 @@ namespace Repository.DTOs.CertificateDTOs
         public Guid TemplateId { get; set; }
         public Guid? TeamId { get; set; }
         public Guid? StudentId { get; set; }
+        public string CertificateType { get; set; } = null!;
         public string RecipientName { get; set; } = null!;
         public string FileUrl { get; set; } = null!;
         public DateTime IssuedAt { get; set; }

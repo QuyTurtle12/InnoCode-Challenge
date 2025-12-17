@@ -75,6 +75,7 @@ namespace BusinessLogic.Services.Certificates
                     // Issue certificates to each recipient
                     for (int i = 0; i < dto.Recipients.Count; i++)
                     {
+                        
                         IssueRecipientDTO r = dto.Recipients[i];
                         _logger.LogDebug("Processing recipient {Index}/{Total}: StudentId={StudentId}, TeamId={TeamId}", 
                             i + 1, dto.Recipients.Count, r.StudentId, r.TeamId);
@@ -92,6 +93,8 @@ namespace BusinessLogic.Services.Certificates
                                 throw new ErrorException(StatusCodes.Status400BadRequest, "RECIPIENT_INVALID",
                                     "Specify exactly one of studentId or teamId.");
                             }
+
+                            string certType = isStudent ? CertificateTypeConstants.Student : CertificateTypeConstants.Team;
 
                             // Fetch recipient details
                             string recipientName;
@@ -146,13 +149,14 @@ namespace BusinessLogic.Services.Certificates
                                 bool exists = await certRepo.Entities.AnyAsync(c =>
                                     c.TemplateId == tpl.TemplateId &&
                                     c.StudentId == studentId &&
+                                    c.CertificateType == certType &&
                                     c.TeamId == teamId &&
                                     c.DeletedAt == null);
                                 if (exists)
                                 {
-                                    _logger.LogWarning("Duplicate certificate detected. TemplateId={TemplateId}, StudentId={StudentId}, TeamId={TeamId}", 
-                                        tpl.TemplateId, studentId, teamId);
-                                    throw new ErrorException(StatusCodes.Status409Conflict, CertificateErrorCodeConstants.DuplicateCertificate, "Certificate already exists for this recipient and template.");
+                                    throw new ErrorException(StatusCodes.Status409Conflict,
+                                        CertificateErrorCodeConstants.DuplicateCertificate,
+                                        "Certificate already exists for this recipient and template.");
                                 }
                             }
 
@@ -226,8 +230,13 @@ namespace BusinessLogic.Services.Certificates
                             {
                                 _logger.LogDebug("Reissue mode: checking for existing certificate");
                                 // Fetch existing certificate
+                                
                                 entity = await certRepo.Entities.FirstOrDefaultAsync(c =>
-                                    c.TemplateId == tpl.TemplateId && c.StudentId == studentId && c.TeamId == teamId && c.DeletedAt == null);
+                                    c.TemplateId == tpl.TemplateId &&
+                                    c.CertificateType == certType &&                 
+                                    c.StudentId == studentId &&
+                                    c.TeamId == teamId &&
+                                    c.DeletedAt == null);
 
                                 // If not found, create new
                                 if (entity == null)
@@ -239,6 +248,7 @@ namespace BusinessLogic.Services.Certificates
                                         TemplateId = tpl.TemplateId,
                                         StudentId = studentId,
                                         TeamId = teamId,
+                                        CertificateType = certType,
                                         FileUrl = url,
                                         IssuedAt = DateTime.UtcNow
                                     };
@@ -250,6 +260,11 @@ namespace BusinessLogic.Services.Certificates
                                     _logger.LogDebug("Existing certificate found. Updating CertificateId={CertificateId}", entity.CertificateId);
                                     entity.FileUrl = url;
                                     entity.IssuedAt = DateTime.UtcNow;
+
+                                    // Ensure CertificateType is set
+                                    if (string.IsNullOrWhiteSpace(entity.CertificateType))
+                                        entity.CertificateType = certType;
+
                                     certRepo.Update(entity);
                                 }
                             }
@@ -263,6 +278,7 @@ namespace BusinessLogic.Services.Certificates
                                     TemplateId = tpl.TemplateId,
                                     StudentId = studentId,
                                     TeamId = teamId,
+                                    CertificateType = certType,
                                     FileUrl = url,
                                     IssuedAt = DateTime.UtcNow
                                 };
@@ -292,6 +308,7 @@ namespace BusinessLogic.Services.Certificates
                                 TeamId = entity.TeamId,
                                 StudentId = entity.StudentId,
                                 RecipientName = recipientName,
+                                CertificateType = entity.CertificateType ?? certType,
                                 FileUrl = entity.FileUrl,
                                 IssuedAt = entity.IssuedAt
                             });
@@ -367,6 +384,8 @@ namespace BusinessLogic.Services.Certificates
                 TeamName = certificate.Team?.Name,
                 StudentId = certificate.StudentId,
                 StudentName = certificate.Student?.User?.Fullname,
+                CertificateType = certificate.CertificateType ?? (certificate.StudentId != null ? CertificateTypeConstants.Student : CertificateTypeConstants.Team),
+
                 FileUrl = certificate.FileUrl,
                 IssuedAt = certificate.IssuedAt
             };
@@ -420,8 +439,18 @@ namespace BusinessLogic.Services.Certificates
                     .Select(s => s.StudentId)
                     .FirstOrDefaultAsync();
 
-                // Get certificates for the current logged-in student
-                q = q.Where(c => c.StudentId == currentStudentId);
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                // Get team IDs for the current student
+                List<Guid> myTeamIds = await teamMemberRepo.Entities
+                    .Where(tm => tm.StudentId == currentStudentId)
+                    .Select(tm => tm.TeamId)
+                    .Distinct()
+                    .ToListAsync();
+
+                // Filter certificates for the current student or their teams
+                q = q.Where(c =>
+                    c.StudentId == currentStudentId ||
+                    (c.TeamId != null && myTeamIds.Contains(c.TeamId.Value)));
             }
 
             // Apply filters
@@ -451,6 +480,7 @@ namespace BusinessLogic.Services.Certificates
                 TeamName = c.Team?.Name,
                 StudentId = c.StudentId,
                 StudentName = c.Student?.User?.Fullname,
+                CertificateType = c.CertificateType ?? (c.StudentId != null ? CertificateTypeConstants.Student : CertificateTypeConstants.Team),
                 FileUrl = c.FileUrl,
                 IssuedAt = c.IssuedAt
             }).ToList();
@@ -518,6 +548,15 @@ namespace BusinessLogic.Services.Certificates
             repo.Update(cert);
             await _unitOfWork.SaveAsync();
         }
+
+        // Helper to build a unique key for recipient
+        private static string BuildRecipientKey(Guid? studentId, Guid? teamId)
+        {
+            if (studentId.HasValue) return $"S:{studentId.Value}";
+            if (teamId.HasValue) return $"T:{teamId.Value}";
+            return "INVALID";
+        }
+
 
     }
 }

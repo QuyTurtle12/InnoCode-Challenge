@@ -12,5 +12,6 @@
         public string? StudentName { get; set; }
         public string FileUrl { get; set; } = null!;
         public DateTime IssuedAt { get; set; }
+        public string CertificateType { get; set; } = null!;// Team | Student
     }
 }
