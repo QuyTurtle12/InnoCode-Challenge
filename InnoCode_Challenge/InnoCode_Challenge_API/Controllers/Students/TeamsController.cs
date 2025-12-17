@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.TeamDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Students
 {
@@ -18,10 +19,48 @@ namespace InnoCode_Challenge_API.Controllers.Students
             _teamService = teamService;
         }
 
-        [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] TeamQueryParams queryParams)
+        [HttpGet("/api/contests/{contestId}/teams")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetAll(
+            Guid contestId,
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? mentorIdSearch = null,
+            Guid? schoolIdSearch = null,
+            string? nameSearch = null)
         {
-            var paged = await _teamService.GetAsync(queryParams);
+            PaginatedList<TeamWithMembersDTO> paged = await _teamService.GetAsync(pageNumber, pageSize, contestId, mentorIdSearch, schoolIdSearch, nameSearch, false);
+
+            var paging = new
+            {
+                paged.PageNumber,
+                paged.PageSize,
+                paged.TotalPages,
+                paged.TotalCount,
+                paged.HasPreviousPage,
+                paged.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: paged.Items,
+                additionalData: paging,
+                message: "Teams retrieved successfully."
+            ));
+        }
+
+        [HttpGet("my-team")]
+        [Authorize(Policy = "RequireMentorOrStudent")]
+        public async Task<IActionResult> GetMyTeam(
+            int pageNumber = 1,
+            int pageSize = 10,
+            Guid? contestIdSearch = null,
+            Guid? mentorIdSearch = null,
+            Guid? schoolIdSearch = null,
+            string? nameSearch = null)
+        {
+            PaginatedList<TeamWithMembersDTO> paged = await _teamService.GetAsync(pageNumber, pageSize, contestIdSearch, mentorIdSearch, schoolIdSearch, nameSearch, true);
 
             var paging = new
             {

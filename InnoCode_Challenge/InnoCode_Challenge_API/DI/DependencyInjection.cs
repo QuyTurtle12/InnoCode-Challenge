@@ -172,6 +172,9 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireStudentRole",
                     policy => policy.RequireRole(RoleConstants.Student));
 
+                options.AddPolicy("RequireMentorOrStudent",
+                    policy => policy.RequireRole(RoleConstants.Mentor, RoleConstants.Student));
+
                 options.AddPolicy("RequireJudgeRole",
                     policy => policy.RequireRole(RoleConstants.Judge));
 
@@ -327,7 +330,6 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IStudentService, StudentService>();
             services.AddScoped<ITeamService, TeamService>();
             services.AddScoped<IMentorService, MentorService>();
-            services.AddScoped<ITeamMemberService, TeamMemberService>();
             services.AddScoped<ISubmissionService, SubmissionService>();
             services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
             services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();

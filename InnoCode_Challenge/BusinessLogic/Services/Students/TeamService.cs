@@ -8,6 +8,7 @@ using Repository.DTOs.TeamDTOs;
 using Repository.DTOs.TeamMemberDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -28,67 +29,119 @@ namespace BusinessLogic.Services.Students
             _httpContextAccessor = httpContextAccessor; 
         }
 
-
-        public async Task<PaginatedList<TeamDTO>> GetAsync(TeamQueryParams queryParams)
+        public async Task<PaginatedList<TeamWithMembersDTO>> GetAsync(
+            int pageNumber,
+            int pageSize,
+            Guid? contestIdSearch,
+            Guid? schoolIdSearch,
+            Guid? mentorIdSearch,
+            string? nameSearch,
+            bool IsMyTeam = false)
         {
-            var teamRepository = _unitOfWork.GetRepository<Team>();
+            // Get the repository
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
-            IQueryable<Team> teamsQuery = teamRepository.Entities
+            // Build a query
+            IQueryable<Team> query = teamRepo.Entities
                 .Where(t => t.DeletedAt == null)
                 .Include(t => t.Contest)
                 .Include(t => t.School)
-                .Include(t => t.Mentor).ThenInclude(m => m.User)
-                .AsNoTracking();
+                .Include(t => t.Mentor)
+                    .ThenInclude(m => m.User)
+                .Include(t => t.TeamMembers)
+                    .ThenInclude(tm => tm.Student)
+                        .ThenInclude(s => s.User);
 
-            if (queryParams.ContestId.HasValue)
-                teamsQuery = teamsQuery.Where(t => t.ContestId == queryParams.ContestId.Value);
-
-            if (queryParams.SchoolId.HasValue)
-                teamsQuery = teamsQuery.Where(t => t.SchoolId == queryParams.SchoolId.Value);
-
-            if (queryParams.MentorId.HasValue)
-                teamsQuery = teamsQuery.Where(t => t.MentorId == queryParams.MentorId.Value);
-
-            if (!string.IsNullOrWhiteSpace(queryParams.Search))
+            // Get current user teams only
+            if (IsMyTeam)
             {
-                string keyword = queryParams.Search.Trim().ToLower();
-                teamsQuery = teamsQuery.Where(t => t.Name.ToLower().Contains(keyword));
+                Guid currentUserId = Guid.Parse(GetCurrentUserIdOrThrow());
+
+                // Filter teams where the current user is either the mentor or a team member
+                query = query.Where(t =>
+                    t.Mentor != null && t.Mentor.UserId == currentUserId ||
+                    t.TeamMembers.Any(tm => tm.Student != null && tm.Student.UserId == currentUserId));
             }
 
-            teamsQuery = (queryParams.SortBy?.ToLowerInvariant()) switch
+            // Apply filters
+            if (contestIdSearch.HasValue)
             {
-                "name" => queryParams.Desc ? teamsQuery.OrderByDescending(t => t.Name)
-                                                   : teamsQuery.OrderBy(t => t.Name),
-                "contestname" => queryParams.Desc ? teamsQuery.OrderByDescending(t => t.Contest.Name)
-                                                   : teamsQuery.OrderBy(t => t.Contest.Name),
-                "schoolname" => queryParams.Desc ? teamsQuery.OrderByDescending(t => t.School.Name)
-                                                   : teamsQuery.OrderBy(t => t.School.Name),
-                "mentorname" => queryParams.Desc ? teamsQuery.OrderByDescending(t => t.Mentor.User.Fullname)
-                                                   : teamsQuery.OrderBy(t => t.Mentor.User.Fullname),
-                _ => queryParams.Desc ? teamsQuery.OrderByDescending(t => t.CreatedAt)
-                                                   : teamsQuery.OrderBy(t => t.CreatedAt),
-            };
+                query = query.Where(t => t.ContestId == contestIdSearch.Value);
+            }
 
-            var paged = await teamRepository.GetPagingAsync(teamsQuery, queryParams.Page, queryParams.PageSize);
-            var items = paged.Items.Select(_mapper.Map<TeamDTO>).ToList();
+            if (schoolIdSearch.HasValue)
+            {
+                query = query.Where(t => t.SchoolId == schoolIdSearch.Value);
+            }
 
-            return new PaginatedList<TeamDTO>(items, paged.TotalCount, paged.PageNumber, paged.PageSize);
+            if (mentorIdSearch.HasValue)
+            {
+                query = query.Where(t => t.MentorId == mentorIdSearch.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(nameSearch))
+            {
+                var trimmedName = nameSearch.Trim();
+                query = query.Where(t => t.Name.Contains(trimmedName));
+            }
+
+            // Order by creation date
+            query = query.OrderByDescending(t => t.CreatedAt);
+
+            // Apply pagination
+            PaginatedList<Team> resultQuery = await teamRepo.GetPagingAsync(query, pageNumber, pageSize);
+
+            // Map to DTOs using AutoMapper
+            IReadOnlyCollection<TeamWithMembersDTO> teamDTOs = resultQuery.Items.Select(team =>
+            {
+                // Map to DTO
+                TeamWithMembersDTO dto = _mapper.Map<TeamWithMembersDTO>(team);
+
+                // Sort members by leader first, then by fullname
+                dto.Members = dto.Members
+                    .OrderByDescending(m => m.MemberRole == MemberRoleEnum.Leader)
+                    .ThenBy(m => m.StudentFullname)
+                    .ToList();
+
+                return dto;
+            }).ToList();
+
+            return new PaginatedList<TeamWithMembersDTO>(teamDTOs, resultQuery.TotalCount, resultQuery.PageNumber, resultQuery.PageSize);
         }
 
-        public async Task<TeamDTO> GetByIdAsync(Guid id)
+        public async Task<TeamWithMembersDTO> GetByIdAsync(Guid id)
         {
-            var teamRepository = _unitOfWork.GetRepository<Team>();
-            var team = await teamRepository.Entities
+            // Get the repository
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Retrieve the team with related data
+            Team? team = await teamRepo.Entities
+                .Where(t => t.TeamId == id && t.DeletedAt == null)
                 .Include(t => t.Contest)
                 .Include(t => t.School)
-                .Include(t => t.Mentor).ThenInclude(m => m.User)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.TeamId == id && t.DeletedAt == null);
+                .Include(t => t.Mentor)
+                    .ThenInclude(m => m.User)
+                .Include(t => t.TeamMembers)
+                    .ThenInclude(tm => tm.Student)
+                        .ThenInclude(s => s.User)
+                .FirstOrDefaultAsync();
 
+            // Handle not found
             if (team == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={id}");
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"No team with ID={id}");
+            }
 
-            return _mapper.Map<TeamDTO>(team);
+            // Map to DTO using AutoMapper
+            TeamWithMembersDTO dto = _mapper.Map<TeamWithMembersDTO>(team);
+
+            // Sort members by leader first, then by fullname
+            dto.Members = dto.Members
+                .OrderByDescending(m => m.MemberRole == MemberRoleEnum.Leader)
+                .ThenBy(m => m.StudentFullname)
+                .ToList();
+
+            return dto;
         }
 
         public async Task<TeamDTO> CreateAsync(CreateTeamDTO dto)
@@ -366,16 +419,18 @@ namespace BusinessLogic.Services.Students
                 MentorName = t.Mentor?.User?.Fullname ?? "N/A",
                 CreatedAt = t.CreatedAt,
                 Members = t.TeamMembers
-                    .OrderByDescending(tm => tm.MemberRole == "Captain")
+                    .OrderByDescending(tm => tm.MemberRole == "Leader")
                     .ThenBy(tm => tm.Student.User.Fullname)
-                    .Select(tm => new Repository.DTOs.TeamMemberDTOs.TeamMemberDTO
+                    .Select(tm => new TeamMemberDTO
                     {
                         TeamId = tm.TeamId,
                         TeamName = t.Name,
                         StudentId = tm.StudentId,
                         StudentFullname = tm.Student.User.Fullname,
                         StudentEmail = tm.Student.User.Email,
-                        MemberRole = tm.MemberRole ?? "Member",
+                        MemberRole = tm.MemberRole!.Equals(MemberRoleEnum.Member.ToString()) 
+                            ? MemberRoleEnum.Member 
+                            : MemberRoleEnum.Leader,
                         JoinedAt = tm.JoinedAt
                     }).ToList()
             }).ToList();

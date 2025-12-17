@@ -1,4 +1,8 @@
-﻿namespace Repository.DTOs.TeamMemberDTOs
+﻿using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
+using Utility.Enums;
+
+namespace Repository.DTOs.TeamMemberDTOs
 {
     public class TeamMemberDTO
     {
@@ -9,7 +13,10 @@
         public string StudentFullname { get; set; } = null!;
         public string StudentEmail { get; set; } = null!;
 
-        public string MemberRole { get; set; } = null!; // Captain | Member
+        [Required]
+        [EnumDataType(typeof(MemberRoleEnum))]
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public MemberRoleEnum MemberRole { get; set; } = MemberRoleEnum.Member;
         public DateTime JoinedAt { get; set; }
     }
 }
