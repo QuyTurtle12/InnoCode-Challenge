@@ -1,4 +1,5 @@
 ﻿using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Schools;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -22,13 +23,23 @@ namespace BusinessLogic.Services.Schools
         private readonly IUOW _uow;
         private readonly ICloudinaryService _cloudinary;
         private readonly ILogger<SchoolCreationRequestService> _logger;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
 
-        public SchoolCreationRequestService(IUOW uow, ICloudinaryService cloudinary, ILogger<SchoolCreationRequestService> logger)
+        public SchoolCreationRequestService(
+            IUOW uow,
+            ICloudinaryService cloudinary,
+            ILogger<SchoolCreationRequestService> logger,
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _uow = uow;
             _cloudinary = cloudinary;
             _logger = logger;
+            _notificationService = notificationService;
+            _logWriter = logWriter;
         }
+
 
         private static string DetectTypeFromFileName(string fileName)
         {
@@ -94,6 +105,32 @@ namespace BusinessLogic.Services.Schools
                 throw;
             }
 
+            try
+            {
+                var staffAdminIds = await GetStaffAdminIdsAsync();
+
+                await _notificationService.CreateInAppToUsersAsync(
+                    staffAdminIds,
+                    NotificationTypes.SchoolCreationRequestSubmitted,
+                    new
+                    {
+                        requestId = req.RequestId,
+                        requestedByUserId = req.RequestedByUserId,
+                        name = req.Name,
+                        provinceId = req.ProvinceId,
+                        status = req.Status,
+                        targetType = TargetTypes.SchoolCreationRequest,
+                        targetId = req.RequestId.ToString(),
+                        message = $"New school creation request: {req.Name}"
+                    });
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send notifications for school request create. RequestId={RequestId}", req.RequestId);
+            }
+
+
             return await GetByIdAsync(req.RequestId, requestedByUserId, RoleConstants.SchoolManager);
         }
 
@@ -118,23 +155,67 @@ namespace BusinessLogic.Services.Schools
 
             var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
 
-            var items = page.Items.Select(x => new SchoolCreationRequestListDTO
+            var requestedByIds = page.Items.Select(x => x.RequestedByUserId).Distinct().ToList();
+            var reviewerIds = page.Items.Where(x => x.ReviewedBy.HasValue)
+                                        .Select(x => x.ReviewedBy!.Value)
+                                        .Distinct()
+                                        .ToList();
+            var allUserIds = requestedByIds.Concat(reviewerIds).Distinct().ToList();
+
+            var provinceIds = page.Items.Select(x => x.ProvinceId).Distinct().ToList();
+
+            var userRepo = _uow.GetRepository<User>();
+            var users = await userRepo.Entities.AsNoTracking()
+                .Where(u => u.DeletedAt == null && allUserIds.Contains(u.UserId))
+                .Select(u => new { u.UserId, u.Fullname, u.Email })
+                .ToDictionaryAsync(x => x.UserId);
+
+            var provinceRepo = _uow.GetRepository<Province>();
+            var provinces = await provinceRepo.Entities.AsNoTracking()
+                .Where(p => provinceIds.Contains(p.ProvinceId))
+                .Select(p => new { p.ProvinceId, Name = p.Name })
+                .ToDictionaryAsync(x => x.ProvinceId, x => x.Name);
+
+            var items = page.Items.Select(x =>
             {
-                RequestId = x.RequestId,
-                RequestedByUserId = x.RequestedByUserId,
-                Name = x.Name,
-                ProvinceId = x.ProvinceId,
-                Status = x.Status,
-                ReviewedBy = x.ReviewedBy,
-                ReviewedAt = x.ReviewedAt,
-                DenyReason = x.DenyReason,
-                CreatedSchoolId = x.CreatedSchoolId,
-                CreatedAt = x.CreatedAt
+                users.TryGetValue(x.RequestedByUserId, out var reqUser);
+
+                object? revUser = null;
+                if (x.ReviewedBy.HasValue)
+                    users.TryGetValue(x.ReviewedBy.Value, out var _revUser);
+
+                users.TryGetValue(x.ReviewedBy ?? Guid.Empty, out var reviewedUser);
+
+                provinces.TryGetValue(x.ProvinceId, out var provinceName);
+
+                return new SchoolCreationRequestListDTO
+                {
+                    RequestId = x.RequestId,
+
+                    RequestedByUserId = x.RequestedByUserId,
+                    RequestedByName = reqUser?.Fullname,
+                    RequestedByEmail = reqUser?.Email,
+
+                    Name = x.Name,
+
+                    ProvinceId = x.ProvinceId,
+                    ProvinceName = provinceName,
+
+                    Status = x.Status,
+
+                    ReviewedBy = x.ReviewedBy,
+                    ReviewedByName = reviewedUser?.Fullname,
+                    ReviewedByEmail = reviewedUser?.Email,
+
+                    ReviewedAt = x.ReviewedAt,
+                    DenyReason = x.DenyReason,
+                    CreatedSchoolId = x.CreatedSchoolId,
+                    CreatedAt = x.CreatedAt
+                };
             }).ToList();
 
             return new PaginatedList<SchoolCreationRequestListDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
-
         public async Task<PaginatedList<SchoolCreationRequestListDTO>> GetMyAsync(Guid requestedByUserId, SchoolCreationRequestQueryParams query)
         {
             var repo = _uow.GetRepository<SchoolCreationRequest>();
@@ -150,19 +231,65 @@ namespace BusinessLogic.Services.Schools
 
             var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
 
-            var items = page.Items.Select(x => new SchoolCreationRequestListDTO
+            var requestedByIds = page.Items.Select(x => x.RequestedByUserId).Distinct().ToList();
+            var reviewerIds = page.Items.Where(x => x.ReviewedBy.HasValue)
+                                        .Select(x => x.ReviewedBy!.Value)
+                                        .Distinct()
+                                        .ToList();
+            var allUserIds = requestedByIds.Concat(reviewerIds).Distinct().ToList();
+
+            var provinceIds = page.Items.Select(x => x.ProvinceId).Distinct().ToList();
+
+            var userRepo = _uow.GetRepository<User>();
+            var users = await userRepo.Entities.AsNoTracking()
+                .Where(u => u.DeletedAt == null && allUserIds.Contains(u.UserId))
+                .Select(u => new { u.UserId, u.Fullname, u.Email })
+                .ToDictionaryAsync(x => x.UserId);
+
+            var provinceRepo = _uow.GetRepository<Province>();
+            var provinces = await provinceRepo.Entities.AsNoTracking()
+                .Where(p => provinceIds.Contains(p.ProvinceId))
+                .Select(p => new { p.ProvinceId, Name = p.Name })
+                .ToDictionaryAsync(x => x.ProvinceId, x => x.Name);
+
+            var items = page.Items.Select(x =>
             {
-                RequestId = x.RequestId,
-                RequestedByUserId = x.RequestedByUserId,
-                Name = x.Name,
-                ProvinceId = x.ProvinceId,
-                Status = x.Status,
-                ReviewedBy = x.ReviewedBy,
-                ReviewedAt = x.ReviewedAt,
-                DenyReason = x.DenyReason,
-                CreatedSchoolId = x.CreatedSchoolId,
-                CreatedAt = x.CreatedAt
+                users.TryGetValue(x.RequestedByUserId, out var reqUser);
+
+                object? revUser = null;
+                if (x.ReviewedBy.HasValue)
+                    users.TryGetValue(x.ReviewedBy.Value, out var _revUser);
+
+                users.TryGetValue(x.ReviewedBy ?? Guid.Empty, out var reviewedUser);
+
+                provinces.TryGetValue(x.ProvinceId, out var provinceName);
+
+                return new SchoolCreationRequestListDTO
+                {
+                    RequestId = x.RequestId,
+
+                    RequestedByUserId = x.RequestedByUserId,
+                    RequestedByName = reqUser?.Fullname,
+                    RequestedByEmail = reqUser?.Email,
+
+                    Name = x.Name,
+
+                    ProvinceId = x.ProvinceId,
+                    ProvinceName = provinceName,
+
+                    Status = x.Status,
+
+                    ReviewedBy = x.ReviewedBy,
+                    ReviewedByName = reviewedUser?.Fullname,
+                    ReviewedByEmail = reviewedUser?.Email,
+
+                    ReviewedAt = x.ReviewedAt,
+                    DenyReason = x.DenyReason,
+                    CreatedSchoolId = x.CreatedSchoolId,
+                    CreatedAt = x.CreatedAt
+                };
             }).ToList();
+
 
             return new PaginatedList<SchoolCreationRequestListDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
@@ -177,26 +304,54 @@ namespace BusinessLogic.Services.Schools
                 .FirstOrDefaultAsync(x => x.RequestId == requestId && x.DeletedAt == null)
                 ?? throw new ErrorException(StatusCodes.Status404NotFound, "REQ_NOT_FOUND", "School creation request not found.");
 
-            // access rule: staff/admin see all; school_manager sees own
             var role = (requesterRole ?? "").ToLowerInvariant();
-            var isStaffOrAdmin = role == RoleConstants.Admin || role == RoleConstants.Staff;
+            var isStaffOrAdmin = role == RoleConstants.Admin.ToLowerInvariant() || role == RoleConstants.Staff.ToLowerInvariant();
             if (!isStaffOrAdmin && req.RequestedByUserId != requesterUserId)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "You are not allowed to view this request.");
+            var userRepo = _uow.GetRepository<User>();
+            var ids = new List<Guid> { req.RequestedByUserId };
+            if (req.ReviewedBy.HasValue) ids.Add(req.ReviewedBy.Value);
+
+            var users = await userRepo.Entities.AsNoTracking()
+                .Where(u => u.DeletedAt == null && ids.Contains(u.UserId))
+                .Select(u => new { u.UserId, u.Fullname, u.Email })
+                .ToDictionaryAsync(x => x.UserId);
+
+            users.TryGetValue(req.RequestedByUserId, out var reqUser);
+            users.TryGetValue(req.ReviewedBy ?? Guid.Empty, out var revUser);
+
+            var provinceRepo = _uow.GetRepository<Province>();
+            var provinceName = await provinceRepo.Entities.AsNoTracking()
+                .Where(p => p.ProvinceId == req.ProvinceId)
+                .Select(p => p.Name)
+                .FirstOrDefaultAsync();
 
             return new SchoolCreationRequestDetailDTO
             {
                 RequestId = req.RequestId,
+
                 RequestedByUserId = req.RequestedByUserId,
+                RequestedByName = reqUser?.Fullname,
+                RequestedByEmail = reqUser?.Email,
+
                 Name = req.Name,
                 Address = req.Address,
+
                 ProvinceId = req.ProvinceId,
+                ProvinceName = provinceName,
+
                 Contact = req.Contact,
                 Status = req.Status,
+
                 ReviewedBy = req.ReviewedBy,
+                ReviewedByName = revUser?.Fullname,
+                ReviewedByEmail = revUser?.Email,
+
                 ReviewedAt = req.ReviewedAt,
                 DenyReason = req.DenyReason,
                 CreatedSchoolId = req.CreatedSchoolId,
                 CreatedAt = req.CreatedAt,
+
                 Evidences = req.SchoolCreationRequestEvidences
                     .Where(e => e.DeletedAt == null)
                     .OrderByDescending(e => e.CreatedAt)
@@ -208,6 +363,7 @@ namespace BusinessLogic.Services.Schools
                         CreatedAt = e.CreatedAt
                     }).ToList()
             };
+
         }
 
         public async Task ApproveAsync(Guid requestId, Guid reviewerUserId)
@@ -220,6 +376,10 @@ namespace BusinessLogic.Services.Schools
 
             if (req.Status != SchoolCreationRequestStatus.Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "NOT_PENDING", "Only pending requests can be approved.");
+
+            Guid createdSchoolId;
+            var requesterId = req.RequestedByUserId;
+            var schoolName = req.Name;
 
             _uow.BeginTransaction();
             try
@@ -250,13 +410,42 @@ namespace BusinessLogic.Services.Schools
                 await _uow.SaveAsync();
 
                 _uow.CommitTransaction();
+
+                createdSchoolId = school.SchoolId;
             }
             catch
             {
                 _uow.RollBack();
                 throw;
             }
+
+            await _logWriter.TryWriteAsync(
+                reviewerUserId,
+                ActivityActions.SchoolRequestApprove,
+                TargetTypes.SchoolCreationRequest,
+                requestId.ToString());
+
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(
+                    requesterId,
+                    NotificationTypes.SchoolApproved,
+                    new
+                    {
+                        requestId,
+                        createdSchoolId,
+                        name = schoolName,
+                        targetType = TargetTypes.School,
+                        targetId = createdSchoolId.ToString(),
+                        message = $"Your school '{schoolName}' has been approved."
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to notify requester after approve. RequestId={RequestId}", requestId);
+            }
         }
+
 
         public async Task DenyAsync(Guid requestId, Guid reviewerUserId, string denyReason)
         {
@@ -270,13 +459,55 @@ namespace BusinessLogic.Services.Schools
             if (req.Status != SchoolCreationRequestStatus.Pending)
                 throw new ErrorException(StatusCodes.Status409Conflict, "NOT_PENDING", "Only pending requests can be denied.");
 
+            var requesterId = req.RequestedByUserId;
+            var schoolName = req.Name;
+            var reason = denyReason.Trim();
+
             req.Status = SchoolCreationRequestStatus.Denied;
             req.ReviewedBy = reviewerUserId;
             req.ReviewedAt = DateTime.UtcNow;
-            req.DenyReason = denyReason.Trim();
+            req.DenyReason = reason;
 
             reqRepo.Update(req);
             await _uow.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                reviewerUserId,
+                ActivityActions.SchoolRequestDeny,
+                TargetTypes.SchoolCreationRequest,
+                requestId.ToString());
+
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(
+                    requesterId,
+                    NotificationTypes.SchoolRejected,
+                    new
+                    {
+                        requestId,
+                        denyReason = reason,
+                        name = schoolName,
+                        targetType = TargetTypes.SchoolCreationRequest,
+                        targetId = requestId.ToString(),
+                        message = $"Your school creation request '{schoolName}' was rejected."
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to notify requester after deny. RequestId={RequestId}", requestId);
+            }
         }
+
+        private async Task<List<Guid>> GetStaffAdminIdsAsync()
+        {
+            var userRepo = _uow.GetRepository<User>();
+            return await userRepo.Entities
+                .AsNoTracking()
+                .Where(u => u.DeletedAt == null
+                    && (u.Role == RoleConstants.Admin || u.Role == RoleConstants.Staff))
+                .Select(u => u.UserId)
+                .ToListAsync();
+        }
+
     }
 }

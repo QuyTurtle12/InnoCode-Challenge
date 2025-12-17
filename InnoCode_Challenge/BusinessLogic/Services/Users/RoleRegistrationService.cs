@@ -152,19 +152,40 @@ namespace BusinessLogic.Services.Users
 
             var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
 
-            var items = page.Items.Select(x => new RoleRegistrationDTO
+            var reviewerIds = page.Items
+                .Where(x => x.ReviewedBy.HasValue)
+                .Select(x => x.ReviewedBy!.Value)
+                .Distinct()
+                .ToList();
+
+            var userRepo = _uow.GetRepository<User>();
+            var reviewers = await userRepo.Entities.AsNoTracking()
+                .Where(u => u.DeletedAt == null && reviewerIds.Contains(u.UserId))
+                .Select(u => new { u.UserId, u.Fullname, u.Email })
+                .ToDictionaryAsync(x => x.UserId);
+
+            var items = page.Items.Select(x =>
             {
-                RegistrationId = x.RegistrationId,
-                RequestedRole = x.RequestedRole,
-                Fullname = x.Fullname,
-                Email = x.Email,
-                Phone = x.Phone,
-                Status = x.Status,
-                DenyReason = x.DenyReason,
-                ReviewedBy = x.ReviewedBy,
-                ReviewedAt = x.ReviewedAt,
-                CreatedAt = x.CreatedAt,
-                EvidenceCount = x.RoleRegistrationEvidences.Count(e => e.DeletedAt == null)
+                reviewers.TryGetValue(x.ReviewedBy ?? Guid.Empty, out var rv);
+
+                return new RoleRegistrationDTO
+                {
+                    RegistrationId = x.RegistrationId,
+                    RequestedRole = x.RequestedRole,
+                    Fullname = x.Fullname,
+                    Email = x.Email,
+                    Phone = x.Phone,
+                    Status = x.Status,
+                    DenyReason = x.DenyReason,
+                    ReviewedBy = x.ReviewedBy,
+                    ReviewedAt = x.ReviewedAt,
+                    CreatedAt = x.CreatedAt,
+                    EvidenceCount = x.RoleRegistrationEvidences.Count(e => e.DeletedAt == null),
+
+                    // NEW:
+                    ReviewedByName = rv?.Fullname,
+                    ReviewedByEmail = rv?.Email
+                };
             }).ToList();
 
             return new PaginatedList<RoleRegistrationDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
@@ -182,6 +203,20 @@ namespace BusinessLogic.Services.Users
             if (entity == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "ROLE_REG_NOT_FOUND", $"No registration with ID={id}");
 
+            string? reviewerName = null;
+            string? reviewerEmail = null;
+
+            if (entity.ReviewedBy.HasValue)
+            {
+                var userRepo = _uow.GetRepository<User>();
+                var reviewer = await userRepo.Entities.AsNoTracking()
+                    .Where(u => u.DeletedAt == null && u.UserId == entity.ReviewedBy.Value)
+                    .Select(u => new { u.Fullname, u.Email })
+                    .FirstOrDefaultAsync();
+
+                reviewerName = reviewer?.Fullname;
+                reviewerEmail = reviewer?.Email;
+            }
             return new RoleRegistrationDetailDTO
             {
                 RegistrationId = entity.RegistrationId,
@@ -195,6 +230,12 @@ namespace BusinessLogic.Services.Users
                 ReviewedBy = entity.ReviewedBy,
                 ReviewedAt = entity.ReviewedAt,
                 CreatedAt = entity.CreatedAt,
+
+                ReviewedByName = reviewerName,
+                ReviewedByEmail = reviewerEmail,
+
+                EvidenceCount = entity.RoleRegistrationEvidences.Count(e => e.DeletedAt == null),
+
                 Evidences = entity.RoleRegistrationEvidences
                     .Where(e => e.DeletedAt == null)
                     .OrderByDescending(e => e.CreatedAt)

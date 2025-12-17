@@ -51,7 +51,27 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             };
 
             var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
-            var items = page.Items.Select(_mapper.Map<ActivityLogDTO>).ToList();
+
+            // batch load users for this page
+            var userIds = page.Items.Select(x => x.UserId).Distinct().ToList();
+            var userRepo = _uow.GetRepository<User>();
+
+            var users = await userRepo.Entities.AsNoTracking()
+                .Where(u => u.DeletedAt == null && userIds.Contains(u.UserId))
+                .Select(u => new { u.UserId, u.Fullname, u.Email })
+                .ToDictionaryAsync(x => x.UserId);
+
+            var items = page.Items.Select(x =>
+            {
+                var dto = _mapper.Map<ActivityLogDTO>(x);
+                if (users.TryGetValue(x.UserId, out var u))
+                {
+                    dto.UserFullname = u.Fullname;
+                    dto.UserEmail = u.Email;
+                }
+                return dto;
+            }).ToList();
+
             return new PaginatedList<ActivityLogDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
 
@@ -64,7 +84,19 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             if (entity == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "LOG_NOT_FOUND", $"No log with ID={id}");
 
-            return _mapper.Map<ActivityLogDTO>(entity);
+            var dto = _mapper.Map<ActivityLogDTO>(entity);
+
+            // attach user display
+            var userRepo = _uow.GetRepository<User>();
+            var u = await userRepo.Entities.AsNoTracking()
+                .Where(x => x.DeletedAt == null && x.UserId == entity.UserId)
+                .Select(x => new { x.Fullname, x.Email })
+                .FirstOrDefaultAsync();
+
+            dto.UserFullname = u?.Fullname;
+            dto.UserEmail = u?.Email;
+
+            return dto;
         }
 
         public async Task<ActivityLogDTO> CreateAsync(CreateActivityLogDTO dto)
