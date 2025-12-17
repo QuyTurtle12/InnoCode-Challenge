@@ -17,6 +17,11 @@ namespace Utility.Constant
         public const string RoundStarted = "round.started";
         public const string RoundEnded = "round.ended";
 
+        public const string ContestRegistrationClosed = "contest.registration_closed";
+        public const string ContestRegistrationOpen = "contest.registration_open";
+        public const string ContestUpdated = "contest.updated";
+        public const string ContestCancelled = "contest.cancelled";
+
         public const string AppealCreated = "appeal.created";
         public const string AppealUpdated = "appeal.updated";
 
