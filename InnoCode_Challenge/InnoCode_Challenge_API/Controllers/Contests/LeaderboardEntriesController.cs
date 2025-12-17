@@ -111,12 +111,12 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// </summary>
         [HttpPut("contests/{contestId}/teams/{teamId}/score")]
         [Authorize(Policy = "RequireStaffOrAdmin")]
-        public async Task<IActionResult> UpdateTeamScore(
+        public async Task<IActionResult> SetTeamScore(
             Guid contestId,
             Guid teamId,
             double newScore)
         {
-            await _leaderboardService.UpdateTeamScoreAsync(contestId, teamId, newScore);
+            await _leaderboardService.SetTeamScoreAsync(contestId, teamId, newScore);
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,

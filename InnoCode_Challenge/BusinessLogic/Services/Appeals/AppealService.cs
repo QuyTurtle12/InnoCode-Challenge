@@ -548,8 +548,6 @@ namespace BusinessLogic.Services.Appeals
             bool isAutoEval = string.Equals(problemType, ProblemTypeEnum.AutoEvaluation.ToString(), StringComparison.OrdinalIgnoreCase);
             bool isManual = string.Equals(problemType, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
 
-            double scoreToDeduct = 0;
-
             // Manual: soft delete the latest submission for this student in the round
             if (isManual)
             {
@@ -564,8 +562,6 @@ namespace BusinessLogic.Services.Appeals
 
                 if (latest != null)
                 {
-                    scoreToDeduct = latest.Score;
-
                     latest.DeletedAt = DateTime.UtcNow;
                     await submissionRepo.UpdateAsync(latest);
 
@@ -602,10 +598,6 @@ namespace BusinessLogic.Services.Appeals
 
                 // Get the latest submission's score for deduction
                 Submission? latest = subs.OrderByDescending(s => s.CreatedAt).FirstOrDefault();
-                if (latest != null)
-                {
-                    scoreToDeduct = latest.Score;
-                }
 
                 foreach (Submission s in subs)
                 {
@@ -642,10 +634,6 @@ namespace BusinessLogic.Services.Appeals
 
                 // Get the latest attempt's score for deduction
                 McqAttempt? latest = attempts.OrderByDescending(a => a.End).FirstOrDefault();
-                if (latest != null)
-                {
-                    scoreToDeduct = latest.Score ?? 0;
-                }
 
                 foreach (McqAttempt at in attempts)
                 {
@@ -654,8 +642,11 @@ namespace BusinessLogic.Services.Appeals
                 }
             }
 
-            // Deduct the score from the leaderboard
-            await _leaderboardEntryService.DeductScoreFromStudentAsync(round!.ContestId, studentId.Value, scoreToDeduct);
+            // Get team ID
+            Guid teamId = appeal.TeamId;
+
+            // Refresh the team score after deduction from the leaderboard
+            await _leaderboardEntryService.UpdateTeamScoreAsync(round!.ContestId, teamId);
         }
 
         private string GetCurrentUserIdOrThrow()

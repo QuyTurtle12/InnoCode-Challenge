@@ -289,6 +289,10 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.CertificateId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("certificate_id");
+            entity.Property(e => e.CertificateType)
+                .HasMaxLength(255)
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
+                .HasColumnName("certificate_type");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.FileUrl)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")

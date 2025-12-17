@@ -859,7 +859,7 @@ namespace BusinessLogic.Services.Submissions
                 double score = submission.Score;
 
                 // Update team score in leaderboard
-                await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, score);
+                await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
 
                 // Mark finished round
                 await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
@@ -1094,7 +1094,7 @@ namespace BusinessLogic.Services.Submissions
                 try
                 {
                     // Update team score in leaderboard
-                    await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, submission.Score);
+                    await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }
                 catch (Exception ex)
                 {
@@ -2117,7 +2117,7 @@ namespace BusinessLogic.Services.Submissions
                 await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
                 if (dto.Resolution == PlagiarismResolutionEnum.Cleared && dto.ApplyLeaderboard)
                 {
-                    await _leaderboardService.AddScoreToTeamAsync(contestId, submission.TeamId, submission.Score);
+                    await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }
 
                 _unitOfWork.CommitTransaction();

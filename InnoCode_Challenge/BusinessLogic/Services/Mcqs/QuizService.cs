@@ -205,7 +205,7 @@ namespace BusinessLogic.Services.Mcqs
                 {
                     try
                     {
-                        await _leaderboardService.AddScoreToTeamAsync(contestId, teamId.Value, score);
+                        await _leaderboardService.UpdateTeamScoreAsync(contestId, teamId.Value);
                     }
                     catch (Exception ex)
                     {

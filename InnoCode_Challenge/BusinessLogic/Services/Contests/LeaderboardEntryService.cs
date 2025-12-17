@@ -613,7 +613,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task UpdateTeamScoreAsync(Guid contestId, Guid teamId, double newScore)
+        public async Task SetTeamScoreAsync(Guid contestId, Guid teamId, double newScore)
         {
             try
             {
@@ -637,7 +637,7 @@ namespace BusinessLogic.Services.Contests
                         $"Leaderboard entry not found for team {teamId} in contest {contestId}");
                 }
 
-                // Update score
+                // Update the score and snapshot time
                 entry.Score = newScore;
                 entry.SnapshotAt = DateTime.UtcNow;
 
@@ -662,53 +662,6 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error updating team score: {ex.Message}");
-            }
-        }
-
-        public async Task AddScoreToTeamAsync(Guid contestId, Guid teamId, double scoreToAdd)
-        {
-            try
-            {
-                // Validate that the leaderboard is not frozen
-                await ValidateLeaderboardNotFrozenAsync(contestId);
-                await ValidateTeamNotEliminatedAsync(contestId, teamId);
-
-                // Get the repository for LeaderboardEntry
-                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
-
-                // Find the team's leaderboard entry
-                LeaderboardEntry? entry = await leaderboardRepo.Entities
-                    .FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == teamId);
-
-                // If entry not found, throw an exception
-                if (entry == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Leaderboard entry not found for team {teamId} in contest {contestId}");
-                }
-
-                // Add to existing score
-                entry.Score = (entry.Score ?? 0) + scoreToAdd;
-                entry.SnapshotAt = DateTime.UtcNow;
-
-                // Save changes
-                leaderboardRepo.Update(entry);
-                await _unitOfWork.SaveAsync();
-
-                // Recalculate ranks and broadcast
-                await RecalculateRanksAsync(contestId);
-            }
-            catch (Exception ex)
-            {
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
-                throw new ErrorException(StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error adding score to team: {ex.Message}");
             }
         }
 
@@ -1276,38 +1229,17 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task DeductScoreFromStudentAsync(Guid contestId, Guid studentId, double scoreToDeduct)
+        public async Task UpdateTeamScoreAsync(Guid contestId, Guid teamId)
         {
             try
             {
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
-                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
-                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
-
-                // Find the student's team in this contest
-                TeamMember? teamMember = await teamMemberRepo.Entities
-                    .Where(tm => tm.StudentId == studentId
-                        && tm.Team.ContestId == contestId
-                        && tm.Team.DeletedAt == null)
-                    .Include(tm => tm.Team)
-                    .FirstOrDefaultAsync();
-
-                // Check if team member exists
-                if (teamMember == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Student {studentId} is not a member of any team in contest {contestId}");
-                }
-
-                Guid teamId = teamMember.TeamId;
 
                 // Find the leaderboard entry for the team
                 LeaderboardEntry? entry = await leaderboardRepo.Entities
                     .Where(e => e.ContestId == contestId && e.TeamId == teamId)
                     .FirstOrDefaultAsync();
 
-                // Check if leaderboard entry exists
                 if (entry == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
@@ -1315,8 +1247,9 @@ namespace BusinessLogic.Services.Contests
                         $"Leaderboard entry not found for team {teamId} in contest {contestId}");
                 }
 
-                // Deduct score (ensure it doesn't go below 0)
-                entry.Score = Math.Max(0, (entry.Score ?? 0) - scoreToDeduct);
+                // Recalculate average score
+                double averageScore = await CalculateTeamAverageScoreAsync(contestId, teamId);
+                entry.Score = averageScore;
                 entry.SnapshotAt = DateTime.UtcNow;
 
                 await leaderboardRepo.UpdateAsync(entry);
@@ -1334,8 +1267,86 @@ namespace BusinessLogic.Services.Contests
 
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error deducting score from student: {ex.Message}");
+                    $"Error refreshing leaderboard after score update: {ex.Message}");
             }
+        }
+
+        private async Task<double> CalculateTeamAverageScoreAsync(Guid contestId, Guid teamId)
+        {
+            IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            // Get team members count
+            List<TeamMember> teamMembers = await teamMemberRepo.Entities
+                .Where(tm => tm.TeamId == teamId)
+                .ToListAsync();
+
+            if (!teamMembers.Any())
+            {
+                return 0;
+            }
+
+            int teamSize = teamMembers.Count;
+
+            // Get all rounds for the contest
+            List<Round> rounds = await roundRepo.Entities
+                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
+                .ToListAsync();
+
+            double totalTeamScore = 0;
+
+            // Calculate total score across all members and rounds
+            foreach (TeamMember member in teamMembers)
+            {
+                foreach (Round round in rounds)
+                {
+                    // Check if student finished this round
+                    string configKey = ConfigKeys.RoundStudent(round.RoundId, member.StudentId);
+                    Config? config = await configRepo.GetByIdAsync(configKey);
+
+                    if (config == null || config.DeletedAt != null)
+                    {
+                        continue;
+                    }
+
+                    // Check MCQ attempt
+                    McqAttempt? mcqAttempt = await mcqAttemptRepo.Entities
+                        .Where(ma => ma.RoundId == round.RoundId
+                                    && ma.StudentId == member.StudentId
+                                    && ma.End.HasValue
+                                    && ma.DeletedAt == null)
+                        .OrderByDescending(ma => ma.End)
+                        .FirstOrDefaultAsync();
+
+                    if (mcqAttempt != null)
+                    {
+                        totalTeamScore += mcqAttempt.Score ?? 0;
+                        continue;
+                    }
+
+                    // Check submission
+                    Submission? submission = await submissionRepo.Entities
+                        .Include(s => s.Problem)
+                        .Where(s => s.Problem.RoundId == round.RoundId
+                                   && s.SubmittedByStudentId == member.StudentId
+                                   && s.TeamId == teamId
+                                   && s.Status == SubmissionStatusEnum.Finished.ToString()
+                                   && s.DeletedAt == null)
+                        .OrderByDescending(s => s.CreatedAt)
+                        .FirstOrDefaultAsync();
+
+                    if (submission != null)
+                    {
+                        totalTeamScore += submission.Score;
+                    }
+                }
+            }
+
+            // Return average score
+            return totalTeamScore / teamSize;
         }
     }
 }
