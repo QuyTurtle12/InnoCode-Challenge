@@ -322,7 +322,6 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ICertificateTemplateService, CertificateTemplateService>();
             services.AddScoped<ICertificateService, CertificateService>();
             services.AddScoped<IAppealService, AppealService>();
-            services.AddScoped<IAppealEvidenceService, AppealEvidenceService>();
             services.AddScoped<IProblemService, ProblemService>();
             services.AddScoped<ITestCaseService, TestCaseService>();
             services.AddScoped<IProvinceService, ProvinceService>();

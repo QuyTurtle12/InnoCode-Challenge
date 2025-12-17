@@ -197,7 +197,8 @@ namespace BusinessLogic.Services.Submissions
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 int previousSubmissionsCount = await submissionRepo.Entities
                     .Where(s => s.ProblemId == problem.ProblemId &&
-                           s.SubmittedByStudentId == studentId)
+                           s.SubmittedByStudentId == studentId
+                           && s.DeletedAt == null)
                     .CountAsync();
 
                 // Determine the source code and artifact details based on evaluation type
