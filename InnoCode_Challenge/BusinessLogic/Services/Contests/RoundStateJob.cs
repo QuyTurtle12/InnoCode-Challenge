@@ -1,11 +1,13 @@
 ﻿using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Repository.IRepositories;
+using Utility.Constant;
 using Utility.Enums;
 
 namespace BusinessLogic.Services.Contests
@@ -41,6 +43,7 @@ namespace BusinessLogic.Services.Contests
 
                 Round? round = await roundRepo.Entities
                     .Where(r => r.RoundId == roundId && r.DeletedAt == null)
+                    .Include(r => r.Contest)
                     .FirstOrDefaultAsync();
 
                 if (round == null)
@@ -57,13 +60,76 @@ namespace BusinessLogic.Services.Contests
                     round.Status = newStatus;
                     await roundRepo.UpdateAsync(round);
                     await unitOfWork.SaveAsync();
-
                     _logger.LogInformation(
                         "Round {RoundId} ({RoundName}) status changed from {OldStatus} to {NewStatus}",
                         round.RoundId, round.Name, oldStatus, newStatus);
 
-                    // Schedule next state transition
-                    await ScheduleNextStateTransitionAsync(round);
+                    try
+                    {
+
+                        var notif = scope.ServiceProvider.GetRequiredService<INotificationService>(); // [NEW]
+
+                        async Task<List<Guid>> GetParticipantIdsAsync()
+                        {
+                            var teamRepo = unitOfWork.GetRepository<Team>();
+
+                            var studentIds = await teamRepo.Entities.AsNoTracking()
+                                .Where(t => t.ContestId == round.ContestId && t.DeletedAt == null)
+                                .SelectMany(t => t.TeamMembers.Select(tm => tm.Student.UserId))
+                                .ToListAsync();
+
+                            var mentorIds = await teamRepo.Entities.AsNoTracking()
+                                .Where(t => t.ContestId == round.ContestId && t.DeletedAt == null && t.MentorId != null)
+                                .Select(t => t.Mentor.UserId)
+                                .ToListAsync();
+
+                            return studentIds.Concat(mentorIds).Where(x => x != Guid.Empty).Distinct().ToList();
+                        }
+
+                        var participantIds = await GetParticipantIdsAsync();
+                        if (participantIds.Count > 0)
+                        {
+                            if (newStatus == RoundStatusEnum.Opened.ToString())
+                            {
+                                await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.RoundStarted, new
+                                {
+                                    contestId = round.ContestId,
+                                    roundId = round.RoundId,
+                                    name = round.Name,
+                                    targetType = TargetTypes.Round,
+                                    targetId = round.RoundId.ToString(),
+                                    message = $"Round '{round.Name}' has started."
+                                });
+                            }
+
+                            if (newStatus == RoundStatusEnum.Closed.ToString())
+                            {
+                                await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.RoundEnded, new
+                                {
+                                    contestId = round.ContestId,
+                                    roundId = round.RoundId,
+                                    name = round.Name,
+                                    targetType = TargetTypes.Round,
+                                    targetId = round.RoundId.ToString(),
+                                    message = $"Round '{round.Name}' has ended."
+                                });
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Notify failed for round {RoundId}", roundId);
+                    }
+
+                    try
+                    {
+                        // Schedule next state transition
+                        await ScheduleNextStateTransitionAsync(round);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Scheduling next transition failed for round {RoundId}", roundId);
+                    }
 
                     // Generate open code if round just opened
                     if (newStatus == RoundStatusEnum.Opened.ToString())
