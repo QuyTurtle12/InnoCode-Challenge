@@ -51,12 +51,13 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
             Guid? templateId,
             Guid? teamId,
             Guid? studentId,
+            string? types = null,
             int page = 1,
             int pageSize = 20,
             string? sortBy = "issuedAt",
             bool desc = true)
         {
-            PaginatedList<CertificateDTO> paged = await _certificateService.GetAsync(contestId, templateId, teamId, studentId, page, pageSize, sortBy, desc, false);
+            PaginatedList<CertificateDTO> paged = await _certificateService.GetAsync(contestId, templateId, teamId, studentId, types, page, pageSize, sortBy, desc, false);
             
             var paging = new { paged.PageNumber, paged.PageSize, paged.TotalPages, paged.TotalCount, paged.HasPreviousPage, paged.HasNextPage };
             
@@ -75,12 +76,13 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
             Guid? templateId,
             Guid? teamId,
             Guid? studentId,
+            string? types = null,
             int page = 1,
             int pageSize = 20,
             string? sortBy = "issuedAt",
             bool desc = true)
         {
-            PaginatedList<CertificateDTO> paged = await _certificateService.GetAsync(contestId, templateId, teamId, studentId, page, pageSize, sortBy, desc, true);
+            PaginatedList<CertificateDTO> paged = await _certificateService.GetAsync(contestId, templateId, teamId, studentId, types, page, pageSize, sortBy, desc, true);
             
             var paging = new { paged.PageNumber, paged.PageSize, paged.TotalPages, paged.TotalCount, paged.HasPreviousPage, paged.HasNextPage };
             

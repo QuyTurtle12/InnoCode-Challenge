@@ -10,5 +10,8 @@ namespace BusinessLogic.IServices.Schools
         Task<SchoolDTO> CreateAsync(CreateSchoolDTO dto);
         Task<SchoolDTO> UpdateAsync(Guid id, UpdateSchoolDTO dto);
         Task DeleteAsync(Guid id);
+
+        Task<PaginatedList<SchoolDTO>> GetMyManagedSchoolsAsync(SchoolQueryParams queryParams);
+
     }
 }

@@ -3,10 +3,12 @@ using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
@@ -32,6 +34,9 @@ namespace BusinessLogic.Services.Contests
         private readonly IConfigService _configService;
         private readonly ICloudinaryService _cloudinaryService;
 
+        private readonly INotificationService _notificationService;   
+        private readonly IActivityLogWriter _activityLogWriter;       
+        private readonly ILogger<RoundService> _logger;               
         public RoundService(
             IMapper mapper,
             IUOW unitOfWork,
@@ -40,8 +45,12 @@ namespace BusinessLogic.Services.Contests
             IContestJudgeService contestJudgeService,
             IHttpContextAccessor httpContextAccessor,
             IConfigService configService,
-            ICloudinaryService cloudinaryService)
+            ICloudinaryService cloudinaryService,
+            INotificationService notificationService,               
+            IActivityLogWriter activityLogWriter,                     
+            ILogger<RoundService> logger)                             
         {
+
             _mapper = mapper;
             _unitOfWork = unitOfWork;
             _mcqTestService = mcqTestService;
@@ -50,10 +59,15 @@ namespace BusinessLogic.Services.Contests
             _httpContextAccessor = httpContextAccessor;
             _configService = configService;
             _cloudinaryService = cloudinaryService;
+            _notificationService = notificationService;               
+            _activityLogWriter = activityLogWriter;                   
+            _logger = logger;                                         
         }
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
         {
+            bool committed = false; 
+            Round? createdRound = null; 
             try
             {
                 // Begin transaction
@@ -127,14 +141,9 @@ namespace BusinessLogic.Services.Contests
                 DateTime now = DateTime.UtcNow;
 
                 // Set initial status based on current time
-                if (now < round.Start || now >= round.End)
-                {
-                    round.Status = RoundStatusEnum.Closed.ToString();
-                }
-                else
-                {
-                    round.Status = RoundStatusEnum.Opened.ToString();
-                }
+                if (now < round.Start) round.Status = RoundStatusEnum.Incoming.ToString();
+                else if (now >= round.End) round.Status = RoundStatusEnum.Closed.ToString();
+                else round.Status = RoundStatusEnum.Opened.ToString();
 
                 // Insert new round
                 await roundRepo.InsertAsync(round);
@@ -228,27 +237,33 @@ namespace BusinessLogic.Services.Contests
                 // Save all changes
                 await _unitOfWork.SaveAsync();
 
-                // Schedule background job for round state transitions
-                BackgroundJob.Enqueue<RoundStateJob>(job =>
-                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
-
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
+                committed = true;
+                createdRound = round;
+
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
+                if (!committed) _unitOfWork.RollBack();
+                if (ex is ErrorException) throw;
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Rounds: {ex.Message}");
             }
+
+            // Activity log
+            var actorId = GetCurrentUserGuidOrThrow();
+
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundCreate,       
+                TargetTypes.Round,                   
+                createdRound!.RoundId.ToString());
+
+            SafeEnqueue(() =>
+                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(createdRound.RoundId)),
+                "ScheduleRoundStateTransitionsAsync"); 
+
         }
 
         private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound)
@@ -297,6 +312,7 @@ namespace BusinessLogic.Services.Contests
 
         public async Task DeleteRoundAsync(Guid id)
         {
+            bool committed = false;
             try
             {
                 // Begin transaction
@@ -360,11 +376,31 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
+                committed = true;
+
+                var actorId = GetCurrentUserGuidOrThrow();
+
+                await SafeWriteActivityAsync(actorId,
+                    ActivityActions.RoundDelete,
+                    TargetTypes.Round,
+                    round.RoundId.ToString());
+
+                await SafeNotifyContestParticipantsAsync(round.ContestId,
+                    NotificationTypes.RoundDeleted,
+                    new
+                    {
+                        contestId = round.ContestId,
+                        roundId = round.RoundId,
+                        name = round.Name,
+                        targetType = TargetTypes.Round,
+                        targetId = round.RoundId.ToString(),
+                        message = $"Round '{round.Name}' has deleted."
+                    });
             }
             catch (Exception ex)
             {
                 // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
+                if (!committed) _unitOfWork.RollBack();
 
                 if (ex is ErrorException)
                 {
@@ -669,6 +705,7 @@ namespace BusinessLogic.Services.Contests
 
         public async Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO)
         {
+            bool committed = false;
             try
             {
                 // Begin transaction
@@ -828,17 +865,41 @@ namespace BusinessLogic.Services.Contests
                 // Save changes
                 await _unitOfWork.SaveAsync();
 
-                // Reschedule round state transitions
-                BackgroundJob.Enqueue<RoundStateJob>(job =>
-                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
-
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
+                committed = true;
+
+                // Activity log
+                var actorId = GetCurrentUserGuidOrThrow();
+
+                await SafeWriteActivityAsync(actorId,
+                    ActivityActions.RoundUpdate,
+                    TargetTypes.Round,
+                    round.RoundId.ToString());
+
+                // Notification to participants
+                await SafeNotifyContestParticipantsAsync(round.ContestId,
+                    NotificationTypes.RoundUpdated,
+                    new
+                    {
+                        contestId = round.ContestId,
+                        roundId = round.RoundId,
+                        name = round.Name,
+                        targetType = TargetTypes.Round,
+                        targetId = round.RoundId.ToString(),
+                        message = $"Round '{round.Name}' has updated."
+                    });
+
+                // Schedule background job to handle state transitions
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(round.RoundId)),
+                    "ScheduleRoundStateTransitionsAsync");
+
             }
             catch (Exception ex)
             {
                 // If something fails, roll back the transaction
-                _unitOfWork.RollBack();
+                if (!committed) _unitOfWork.RollBack();
 
                 if (ex is ErrorException)
                 {
@@ -1272,6 +1333,13 @@ namespace BusinessLogic.Services.Contests
         }
         public async Task<GetRoundDTO> StartRoundNowAsync(Guid roundId)
         {
+            bool committed = false;
+
+            // fields to track state
+            Guid contestId = Guid.Empty;
+            string roundName = string.Empty;
+            Guid persistedRoundId = roundId;
+
             try
             {
                 _unitOfWork.BeginTransaction();
@@ -1307,7 +1375,7 @@ namespace BusinessLogic.Services.Contests
                 foreach (var other in otherRounds)
                 {
                     if (now <= other.End && round.End >= other.Start)
-                        throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
+                            throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
                             $"New round time conflicts with existing round '{other.Name}' ({DateTimeHelpers.ToIso8601String(other.Start)} - {DateTimeHelpers.ToIso8601String(other.End)}).");
                 }
 
@@ -1319,20 +1387,58 @@ namespace BusinessLogic.Services.Contests
 
                 _unitOfWork.CommitTransaction();
 
-                BackgroundJob.Enqueue<RoundStateJob>(job =>
-                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
+                committed = true;
+                contestId = round.ContestId;
+                roundName = round.Name;
+                persistedRoundId = round.RoundId;
 
-                return await GetRoundByIdAsync(round.RoundId, null);
             }
             catch
             {
-                _unitOfWork.RollBack();
+                if (!committed) _unitOfWork.RollBack();
                 throw;
             }
+
+            // Activity log
+            var actorId = GetCurrentUserGuidOrThrow();
+
+                await SafeWriteActivityAsync(actorId,
+                    ActivityActions.RoundStartNow,
+                    TargetTypes.Round,
+                    persistedRoundId.ToString());
+
+                // Notification to participants
+                await SafeNotifyContestParticipantsAsync(contestId,
+                    NotificationTypes.RoundStarted,
+                    new
+                    {
+                        contestId = contestId,
+                        roundId = persistedRoundId,
+                        name = roundName,
+                        targetType = TargetTypes.Round,
+                        targetId = persistedRoundId.ToString(),
+                        message = $"Round '{roundName}' has started."
+                    });
+
+                // Schedule background job to handle state transitions
+                SafeEnqueue(() =>
+                    BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
+                    "ScheduleRoundStateTransitionsAsync");
+
+                return await GetRoundByIdAsync( persistedRoundId, null);
+
         }
 
         public async Task<GetRoundDTO> EndRoundNowAsync(Guid roundId)
         {
+
+            // fields to track state
+            bool committed = false;
+            Guid contestId = Guid.Empty;
+            string roundName = string.Empty;
+            Guid persistedRoundId = roundId;
+            bool isManual = false;
+
             try
             {
                 _unitOfWork.BeginTransaction();
@@ -1355,21 +1461,62 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+                committed = true;
 
-                // If manual round, distribute pending submissions immediately (idempotent)
-                if (round.Problem != null && round.Problem.Type == ProblemTypeEnum.Manual.ToString())
-                    await DistributeSubmissionsToJudgesAsync(roundId);
+                // cancel any pending open code regeneration jobs
+                RecurringJob.RemoveIfExists($"regenerate-open-code-{persistedRoundId}");
 
-                BackgroundJob.Enqueue<RoundStateJob>(job =>
-                    job.ScheduleRoundStateTransitionsAsync(round.RoundId));
-
-                return await GetRoundByIdAsync(round.RoundId, null);
+                // capture for later use
+                contestId = round.ContestId;
+                roundName = round.Name;
+                persistedRoundId = round.RoundId;
+                isManual = (round.Problem != null && round.Problem.Type == ProblemTypeEnum.Manual.ToString());
             }
             catch
             {
-                _unitOfWork.RollBack();
+                if (!committed) _unitOfWork.RollBack();
                 throw;
             }
+
+            // If manual round, distribute pending submissions immediately (idempotent)
+            if (isManual)
+                try
+                {
+                    await DistributeSubmissionsToJudgesAsync(persistedRoundId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "DistributeSubmissionsToJudgesAsync failed after ending round {RoundId}", persistedRoundId);
+                }
+
+            // activity log
+            var actorId = GetCurrentUserGuidOrThrow();
+
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundEndNow,
+                TargetTypes.Round,
+                persistedRoundId.ToString());
+
+            // notification to participants
+            await SafeNotifyContestParticipantsAsync(contestId,
+                NotificationTypes.RoundEnded,
+                new
+                {
+                    contestId = contestId,
+                    roundId = persistedRoundId,
+                    name = roundName,
+                    targetType = TargetTypes.Round,
+                    targetId = persistedRoundId.ToString(),
+                    message = $"Round '{roundName}' has ended."
+                });
+
+            // Schedule background job to handle state transitions
+            SafeEnqueue(() =>
+                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
+                "ScheduleRoundStateTransitionsAsync");
+
+            return await GetRoundByIdAsync(persistedRoundId, null);
+
         }
 
         private string GetCurrentUserIdOrThrow()
@@ -1406,6 +1553,72 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "Only the organizer who created this contest can modify rounds.");
 
             return round;
+        }
+
+        // Get current user GUID from JWT token or throw error
+        private Guid GetCurrentUserGuidOrThrow()
+        {
+            string idStr = GetCurrentUserIdOrThrow();
+            if (!Guid.TryParse(idStr, out var id) || id == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Invalid user id.");
+            return id;
+        }
+
+        // Get all participant user IDs (students and mentors) for a given contest
+        private async Task<List<Guid>> GetParticipantUserIdsByContestAsync(Guid contestId)
+        {
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+
+            var studentIds = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .SelectMany(t => t.TeamMembers.Select(tm => tm.Student.UserId))
+                .ToListAsync();
+
+            var mentorIds = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != null)
+                .Select(t => t.Mentor.UserId)
+                .ToListAsync();
+
+            return studentIds.Concat(mentorIds)
+                .Where(x => x != Guid.Empty)
+                .Distinct()
+                .ToList();
+        }
+
+        // Write activity log safely, logging any exceptions
+        private async Task SafeWriteActivityAsync(Guid actorId, string action, string targetType, string targetId)
+        {
+            try { await _activityLogWriter.TryWriteAsync(actorId, action, targetType, targetId); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Activity log failed. Action={Action}, Target={TargetType}, TargetId={TargetId}, ActorId={ActorId}",
+                    action, targetType, targetId, actorId);
+            }
+        }
+
+        // Notify contest participants safely, logging any exceptions
+        private async Task SafeNotifyContestParticipantsAsync(Guid contestId, string type, object payload)
+        {
+            try
+            {
+                var ids = await GetParticipantUserIdsByContestAsync(contestId);
+                if (ids.Count == 0) return;
+                await _notificationService.CreateInAppToUsersAsync(ids, type, payload);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Notify participants failed. ContestId={ContestId}, Type={Type}", contestId, type);
+            }
+        }
+
+        // Enqueue a Hangfire job safely, logging any exceptions
+        private void SafeEnqueue(Action enqueue, string jobName)
+        {
+            try { enqueue(); }
+            catch (Exception ex) { _logger.LogError(ex, "Hangfire enqueue failed: {JobName}", jobName); }
         }
 
     }
