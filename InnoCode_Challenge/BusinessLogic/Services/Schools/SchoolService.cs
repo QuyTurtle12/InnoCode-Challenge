@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.SchoolDTOs;
 using Repository.IRepositories;
+using System.Security.Claims;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -14,11 +15,13 @@ namespace BusinessLogic.Services.Schools
     {
         private readonly IUOW _unitOfWork;
         private readonly IMapper _mapper;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public SchoolService(IUOW unitOfWork, IMapper mapper)
+        public SchoolService(IUOW unitOfWork, IMapper mapper, IHttpContextAccessor httpContextAccessor)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task<PaginatedList<SchoolDTO>> GetAsync(SchoolQueryParams queryParams)
@@ -28,6 +31,7 @@ namespace BusinessLogic.Services.Schools
             IQueryable<School> schoolsQuery = schoolRepository.Entities
                 .Where(s => s.DeletedAt == null)
                 .Include(s => s.Province)
+                .Include(s => s.ManagerUser)
                 .AsNoTracking();
 
             if (queryParams.ProvinceId.HasValue)
@@ -64,6 +68,7 @@ namespace BusinessLogic.Services.Schools
             var schoolRepository = _unitOfWork.GetRepository<School>();
             var school = await schoolRepository.Entities
                 .Include(s => s.Province)
+                .Include(s => s.ManagerUser)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(s => s.SchoolId == id && s.DeletedAt == null);
 
@@ -182,5 +187,49 @@ namespace BusinessLogic.Services.Schools
             schoolRepository.Update(school);
             await _unitOfWork.SaveAsync();
         }
+
+        public async Task<PaginatedList<SchoolDTO>> GetMyManagedSchoolsAsync(SchoolQueryParams queryParams)
+        {
+
+            var schoolRepository = _unitOfWork.GetRepository<School>();
+
+            // Get current user ID 
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userId))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHORIZED", "User ID not found.");
+
+            if (!Guid.TryParse(userId, out Guid userGuid))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHORIZED", "Invalid user ID.");
+
+            IQueryable<School> q = schoolRepository.Entities
+                .Where(s => s.DeletedAt == null && s.ManagerUserId == userGuid)
+                .Include(s => s.Province)
+                .Include(s => s.ManagerUser)
+                .AsNoTracking();
+
+            if (queryParams.ProvinceId.HasValue)
+                q = q.Where(s => s.ProvinceId == queryParams.ProvinceId.Value);
+
+            if (!string.IsNullOrWhiteSpace(queryParams.Search))
+            {
+                string keyword = queryParams.Search.Trim().ToLower();
+                q = q.Where(s =>
+                    s.Name.ToLower().Contains(keyword) ||
+                    (s.Contact != null && s.Contact.ToLower().Contains(keyword)));
+            }
+
+            q = (queryParams.SortBy?.ToLowerInvariant()) switch
+            {
+                "createdat" => queryParams.Desc ? q.OrderByDescending(s => s.CreatedAt) : q.OrderBy(s => s.CreatedAt),
+                "provincename" => queryParams.Desc ? q.OrderByDescending(s => s.Province.Name) : q.OrderBy(s => s.Province.Name),
+                _ => queryParams.Desc ? q.OrderByDescending(s => s.Name) : q.OrderBy(s => s.Name),
+            };
+
+            var paged = await schoolRepository.GetPagingAsync(q, queryParams.Page, queryParams.PageSize);
+            var items = paged.Items.Select(_mapper.Map<SchoolDTO>).ToList();
+
+            return new PaginatedList<SchoolDTO>(items, paged.TotalCount, paged.PageNumber, paged.PageSize);
+        }
+
     }
 }

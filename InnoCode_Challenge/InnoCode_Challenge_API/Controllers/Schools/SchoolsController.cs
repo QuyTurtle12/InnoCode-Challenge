@@ -88,5 +88,32 @@ namespace InnoCode_Challenge_API.Controllers.Schools
             await _schoolService.DeleteAsync(id);
             return NoContent();
         }
+
+        [HttpGet("my-managed")]
+        [Authorize(Roles = RoleConstants.SchoolManager)]
+        public async Task<IActionResult> GetMyManagedSchools([FromQuery] SchoolQueryParams queryParams)
+        {
+
+            var paged = await _schoolService.GetMyManagedSchoolsAsync(queryParams);
+
+            var paging = new
+            {
+                paged.PageNumber,
+                paged.PageSize,
+                paged.TotalPages,
+                paged.TotalCount,
+                paged.HasPreviousPage,
+                paged.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: paged.Items,
+                additionalData: paging,
+                message: "Managed schools retrieved successfully."
+            ));
+        }
+
     }
 }
