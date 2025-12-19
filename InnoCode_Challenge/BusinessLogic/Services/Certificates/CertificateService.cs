@@ -396,6 +396,7 @@ namespace BusinessLogic.Services.Certificates
             Guid? templateId,
             Guid? teamId,
             Guid? studentId,
+            string? types,
             int page,
             int pageSize,
             string? sortBy,
@@ -433,23 +434,24 @@ namespace BusinessLogic.Services.Certificates
                 IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
 
                 // Find the student associated with the current user
-                Guid? currentStudentId = await studentRepo
-                    .Entities
+                Guid? currentStudentId = await studentRepo.Entities
                     .Where(s => s.UserId == userGuid && s.DeletedAt == null)
-                    .Select(s => s.StudentId)
+                    .Select(s => (Guid?)s.StudentId)
                     .FirstOrDefaultAsync();
+                if (currentStudentId == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", "Student profile not found.");
 
                 IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
                 // Get team IDs for the current student
                 List<Guid> myTeamIds = await teamMemberRepo.Entities
-                    .Where(tm => tm.StudentId == currentStudentId)
+                    .Where(tm => tm.StudentId == currentStudentId.Value)
                     .Select(tm => tm.TeamId)
                     .Distinct()
                     .ToListAsync();
 
                 // Filter certificates for the current student or their teams
                 q = q.Where(c =>
-                    c.StudentId == currentStudentId ||
+                    c.StudentId == currentStudentId.Value ||
                     (c.TeamId != null && myTeamIds.Contains(c.TeamId.Value)));
             }
 
@@ -458,6 +460,40 @@ namespace BusinessLogic.Services.Certificates
             if (contestId.HasValue) q = q.Where(c => c.Template.ContestId == contestId.Value);
             if (teamId.HasValue) q = q.Where(c => c.TeamId == teamId.Value);
             if (studentId.HasValue) q = q.Where(c => c.StudentId == studentId.Value);
+
+            // Filter by certificate types
+            if (!string.IsNullOrWhiteSpace(types))
+            {
+                var parts = types.Split(new[] { ',', ';', '|', ' ' },
+                        StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(x => x.ToLowerInvariant())
+                    .ToHashSet();
+
+                bool wantStudent = parts.Contains("student");
+                bool wantTeam = parts.Contains("team");
+
+                if (!wantStudent && !wantTeam)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        "CERTIFICATE_TYPE_INVALID",
+                        "types must contain 'student' and/or 'team' (e.g., types=student or types=team,student).");
+                }
+
+                // Apply type filtering
+                q = q.Where(c =>
+                    (wantStudent && (
+                        c.CertificateType == CertificateTypeConstants.Student ||
+                        (c.CertificateType == null && c.StudentId != null)
+                    )) ||
+                    (wantTeam && (
+                        c.CertificateType == CertificateTypeConstants.Team ||
+                        (c.CertificateType == null && c.TeamId != null)
+                    ))
+                );
+            }
+
+
 
             // Apply sorting
             q = (sortBy?.ToLowerInvariant()) switch
