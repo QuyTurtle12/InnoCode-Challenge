@@ -71,6 +71,9 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round name is required.");
                 }
 
+                // Validate retake round configuration
+                await ValidateRetakeRoundAsync(contestId, roundDTO.MainRoundId, roundDTO.IsRetakeRound);
+
                 // Validate Problem Type
                 if (roundDTO.ProblemType == ProblemTypeEnum.Manual || roundDTO.ProblemType == ProblemTypeEnum.AutoEvaluation)
                 {
@@ -85,7 +88,8 @@ namespace BusinessLogic.Services.Contests
                     {
                         throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Penalty rate must be between 0 and 1");
                     }
-                } else if (roundDTO.ProblemType == ProblemTypeEnum.McqTest)
+                }
+                else if (roundDTO.ProblemType == ProblemTypeEnum.McqTest)
                 {
                     // MCQ test configuration is required for this type
                     if (roundDTO.McqTestConfig == null)
@@ -115,6 +119,10 @@ namespace BusinessLogic.Services.Contests
 
                 // Assign contest ID
                 round.ContestId = contestId;
+
+                // Set retake round properties
+                round.IsRetakeRound = roundDTO.IsRetakeRound;
+                round.MainRoundId = roundDTO.MainRoundId;
 
                 DateTime now = DateTime.UtcNow;
 
@@ -163,7 +171,7 @@ namespace BusinessLogic.Services.Contests
                             Language = roundDTO.ProblemConfig?.Language ?? "python3",
                             PenaltyRate = roundDTO.ProblemConfig?.PenaltyRate ?? 0
                         });
-                            
+
                         // If template file provided, upload it
                         if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
                         {
@@ -240,6 +248,50 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating Rounds: {ex.Message}");
+            }
+        }
+
+        private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound)
+        {
+            if (!isRetakeRound)
+            {
+                return;
+            }
+
+            // Retake round must have a main round reference
+            if (!mainRoundId.HasValue || mainRoundId.Value == Guid.Empty)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Retake round must reference a valid main round ID."
+                );
+            }
+
+            // Validate main round exists and belongs to same contest
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? mainRound = await roundRepo.Entities
+                .FirstOrDefaultAsync(r => r.RoundId == mainRoundId.Value
+                    && r.ContestId == contestId
+                    && !r.DeletedAt.HasValue);
+
+            if (mainRound == null)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Main round not found or does not belong to this contest."
+                );
+            }
+
+            // Main round cannot itself be a retake round
+            if (mainRound.IsRetakeRound)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Cannot create a retake round for another retake round."
+                );
             }
         }
 
@@ -325,6 +377,21 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        private async Task<bool> HasApprovedRetakeAppealAsync(Guid studentUserId, Guid mainRoundId)
+        {
+            IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            bool hasApprovedRetake = await appealRepo.Entities
+                .AnyAsync(a => a.OwnerId == studentUserId
+                    && a.TargetId == mainRoundId
+                    && a.State == AppealStateEnum.Closed.ToString()
+                    && a.Decision == AppealDecisionEnum.Approved.ToString()
+                    && a.AppealResolution == AppealResolutionEnum.Retake.ToString()
+                    && a.DeletedAt == null);
+
+            return hasApprovedRetake;
+        }
+
         public async Task<GetRoundDTO> GetRoundByIdAsync(Guid id, string? openCode)
         {
             try
@@ -346,6 +413,7 @@ namespace BusinessLogic.Services.Contests
                     .Include(r => r.Contest)
                     .Include(r => r.Problem)
                     .Include(r => r.McqTest)
+                    .Include(r => r.MainRound)
                     .FirstOrDefaultAsync();
 
                 // Check if round exists
@@ -364,13 +432,8 @@ namespace BusinessLogic.Services.Contests
                     .Where(c => c.Key == tlKey && c.Scope == "contest" && c.DeletedAt == null)
                     .FirstOrDefaultAsync();
 
-                // Map entity to DTO
+                // Map entity to DTO using AutoMapper
                 GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
-
-                roundDTO.ContestName = round.Contest?.Name ?? "N/A";
-                roundDTO.RoundName = round.Name;
-                roundDTO.Start = round.Start;
-                roundDTO.End = round.End;
 
                 // Map time limit from config
                 if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
@@ -396,17 +459,32 @@ namespace BusinessLogic.Services.Contests
 
                     // Get student ID associated with this user
                     IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                    Guid studentId = await studentRepo.Entities
+                    Student? student = await studentRepo.Entities
                         .Where(s => s.UserId.ToString() == userId && !s.DeletedAt.HasValue)
-                        .Select(s => s.StudentId)
                         .FirstOrDefaultAsync();
 
                     // Check if student exists
-                    if (studentId == Guid.Empty)
+                    if (student == null)
                     {
                         throw new ErrorException(StatusCodes.Status404NotFound,
                             ResponseCodeConstants.NOT_FOUND,
                             "Student not found.");
+                    }
+
+                    Guid studentId = student.StudentId;
+                    Guid studentUserId = student.UserId;
+
+                    // If this is a retake round, validate student has approved retake appeal for main round
+                    if (round.IsRetakeRound && round.MainRoundId.HasValue)
+                    {
+                        bool hasApprovedRetake = await HasApprovedRetakeAppealAsync(studentUserId, round.MainRoundId.Value);
+
+                        if (!hasApprovedRetake)
+                        {
+                            throw new ErrorException(StatusCodes.Status403Forbidden,
+                                ResponseCodeConstants.FORBIDDEN,
+                                "You do not have permission to access this retake round. An approved appeal for the main round is required.");
+                        }
                     }
 
                     // Check if student has already finished this round
@@ -480,7 +558,8 @@ namespace BusinessLogic.Services.Contests
                     .Where(r => !r.DeletedAt.HasValue)
                     .Include(r => r.Contest)
                     .Include(r => r.Problem)
-                    .Include(r => r.McqTest);
+                    .Include(r => r.McqTest)
+                    .Include(r => r.MainRound);
 
                 // Apply filters if provided
                 if (idSearch.HasValue)
@@ -539,6 +618,8 @@ namespace BusinessLogic.Services.Contests
                     roundDTO.RoundName = item.Name;
                     roundDTO.Start = item.Start;
                     roundDTO.End = item.End;
+                    roundDTO.IsRetakeRound = item.IsRetakeRound;
+                    roundDTO.MainRoundId = item.MainRoundId;
 
                     // Map time limit from config
                     string tlKey = ConfigKeys.RoundTimeLimitSeconds(item.RoundId);

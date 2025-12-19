@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using Utility.Enums;
 
 namespace Repository.DTOs.AppealDTOs
 {
@@ -10,5 +11,7 @@ namespace Repository.DTOs.AppealDTOs
 
         [MaxLength(1000, ErrorMessage = "Decision reason cannot exceed 1000 characters")]
         public string? DecisionReason { get; set; }
+
+        public AppealResolutionEnum? AppealResolution { get; set; }
     }
 }

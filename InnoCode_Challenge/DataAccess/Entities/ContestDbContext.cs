@@ -164,9 +164,16 @@ public partial class ContestDbContext : DbContext
 
             entity.ToTable("appeals");
 
+            entity.HasIndex(e => new { e.AppealResolution, e.State }, "IX_appeals_resolution").HasFilter("([appeal_resolution] IS NOT NULL AND [DeletedAt] IS NULL)");
+
             entity.Property(e => e.AppealId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("appeal_id");
+            entity.Property(e => e.AppealResolution)
+                .HasMaxLength(20)
+                .HasComment("Resolution type for approved appeal: Retake (student retakes exam) or Rescore (submission is re-evaluated by different judge)")
+                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
+                .HasColumnName("appeal_resolution");
             entity.Property(e => e.CreatedAt)
                 .HasPrecision(0)
                 .HasColumnName("created_at");
@@ -1014,6 +1021,10 @@ public partial class ContestDbContext : DbContext
 
             entity.ToTable("rounds");
 
+            entity.HasIndex(e => new { e.IsRetakeRound, e.ContestId }, "IX_rounds_is_retake");
+
+            entity.HasIndex(e => e.MainRoundId, "IX_rounds_main_round_id").HasFilter("([main_round_id] IS NOT NULL)");
+
             entity.Property(e => e.RoundId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("round_id");
@@ -1022,6 +1033,12 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.End)
                 .HasPrecision(0)
                 .HasColumnName("end");
+            entity.Property(e => e.IsRetakeRound)
+                .HasComment("Indicates whether this round is a retake round for students with approved appeals")
+                .HasColumnName("is_retake_round");
+            entity.Property(e => e.MainRoundId)
+                .HasComment("Reference to the main round that this retake round is for (NULL if not a retake round)")
+                .HasColumnName("main_round_id");
             entity.Property(e => e.Name)
                 .HasMaxLength(100)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
@@ -1038,6 +1055,10 @@ public partial class ContestDbContext : DbContext
                 .HasForeignKey(d => d.ContestId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_rounds_contest");
+
+            entity.HasOne(d => d.MainRound).WithMany(p => p.RetakeRounds)
+                .HasForeignKey(d => d.MainRoundId)
+                .HasConstraintName("FK_rounds_main_round");
         });
 
         modelBuilder.Entity<Schema>(entity =>

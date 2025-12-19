@@ -2,6 +2,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.PlagiarismDTOs;
+using Repository.ResponseModel;
+using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers.Staffs
 {
@@ -29,21 +31,46 @@ namespace InnoCode_Challenge_API.Controllers.Staffs
             var result = await _submissionService.GetPlagiarismQueueAsync(
                 pageNumber, pageSize, contestId, roundId, studentName, teamName);
 
-            return Ok(result);
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result.Items,
+                additionalData: paging,
+                message: "Plagiarism queue retrieved successfully."
+            ));
         }
 
         [HttpGet("{submissionId:guid}")]
         public async Task<IActionResult> GetDetail(Guid submissionId)
         {
             var result = await _submissionService.GetPlagiarismSubmissionDetailAsync(submissionId);
-            return Ok(result);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Plagiarism submission detail retrieved successfully."
+            ));
         }
 
         [HttpPost("{submissionId:guid}/resolve")]
         public async Task<IActionResult> Resolve(Guid submissionId, [FromBody] ResolvePlagiarismDTO dto)
         {
             await _submissionService.ResolvePlagiarismSubmissionAsync(submissionId, dto);
-            return Ok(new { message = "Resolved successfully" });
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Plagiarism resolved successfully."
+            ));
         }
     }
 }

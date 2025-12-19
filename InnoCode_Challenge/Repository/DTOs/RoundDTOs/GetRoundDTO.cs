@@ -15,6 +15,12 @@ namespace Repository.DTOs.RoundDTOs
 
         public string Status { get; set; } = string.Empty;
 
+        public bool IsRetakeRound { get; set; }
+
+        public Guid? MainRoundId { get; set; }
+
+        public string? MainRoundName { get; set; }
+
         public string? ProblemType { get; set; }
 
         public GetProblemDTO? Problem { get; set; }

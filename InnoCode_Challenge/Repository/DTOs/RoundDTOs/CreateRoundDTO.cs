@@ -9,6 +9,10 @@ namespace Repository.DTOs.RoundDTOs
 {
     public class CreateRoundDTO : BaseRoundDTO
     {
+        public bool IsRetakeRound { get; set; } = false;
+
+        public Guid? MainRoundId { get; set; }
+
         [Required]
         [EnumDataType(typeof(ProblemTypeEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -17,6 +21,5 @@ namespace Repository.DTOs.RoundDTOs
         public CreateMcqTestDTO? McqTestConfig { get; set; }
 
         public CreateProblemDTO? ProblemConfig { get; set; }
-
     }
 }

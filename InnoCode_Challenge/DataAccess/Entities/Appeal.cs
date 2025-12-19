@@ -29,6 +29,8 @@ public partial class Appeal
 
     public string? DecisionReason { get; set; }
 
+    public string? AppealResolution { get; set; }
+
     public virtual ICollection<AppealEvidence> AppealEvidences { get; set; } = new List<AppealEvidence>();
 
     public virtual User Owner { get; set; } = null!;

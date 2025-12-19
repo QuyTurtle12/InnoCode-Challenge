@@ -448,7 +448,7 @@ namespace BusinessLogic.Services.Appeals
 
                 IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
 
-                // Get appeal (include Target to inspect round type)
+                // Get appeal with related entities
                 Appeal? appeal = await appealRepo.Entities
                     .Where(a => a.AppealId == appealId && a.DeletedAt == null)
                     .Include(a => a.Team)
@@ -457,6 +457,7 @@ namespace BusinessLogic.Services.Appeals
                         .ThenInclude(r => r.Problem)
                     .Include(a => a.Target)
                         .ThenInclude(r => r.McqTest)
+                    .Include(a => a.Target.Contest)
                     .FirstOrDefaultAsync();
 
                 if (appeal == null)
@@ -477,17 +478,17 @@ namespace BusinessLogic.Services.Appeals
                 // Update appeal
                 appeal.State = AppealStateEnum.Closed.ToString();
                 appeal.Decision = dto.Decision;
-                appeal.DecisionReason += dto.DecisionReason?.Trim() ?? string.Empty;
+                appeal.DecisionReason = dto.DecisionReason?.Trim() ?? string.Empty;
 
-                await appealRepo.UpdateAsync(appeal);
-
-                // If approved, process related soft-deletes and config updates
+                // If approved, process approval logic
                 if (dto.Decision == AppealDecisionEnum.Approved.ToString())
                 {
-                    await ProcessApprovedAppealAsync(appeal);
+                    await ProcessApprovedAppealLogicAsync(appeal, dto.AppealResolution);
                 }
 
+                await appealRepo.UpdateAsync(appeal);
                 await _unitOfWork.SaveAsync();
+
                 _unitOfWork.CommitTransaction();
 
                 return await GetAppealByIdAsync(appealId);
@@ -507,17 +508,49 @@ namespace BusinessLogic.Services.Appeals
             }
         }
 
-        private async Task ProcessApprovedAppealAsync(Appeal appeal)
+        private async Task ProcessApprovedAppealLogicAsync(Appeal appeal, AppealResolutionEnum? appealResolution)
         {
             if (appeal == null) return;
 
+            Round? round = appeal.Target;
+            string? problemType = round?.Problem?.Type;
+            bool isMcq = round?.McqTest != null;
+            bool isAutoEval = string.Equals(problemType, ProblemTypeEnum.AutoEvaluation.ToString(), StringComparison.OrdinalIgnoreCase);
+            bool isManual = string.Equals(problemType, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
+
+            // Determine and set appeal resolution
+            if (isManual)
+            {
+                // For manual rounds, resolution must be specified
+                if (!appealResolution.HasValue)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeal resolution (Retake or Rescore) must be specified for manual problem type.");
+                }
+
+                appeal.AppealResolution = appealResolution.Value.ToString();
+
+                // If Rescore, reassign submission to different judge and return
+                if (appealResolution.Value == AppealResolutionEnum.Rescore)
+                {
+                    await ReassignSubmissionToNewJudgeAsync(appeal);
+                    return;
+                }
+            }
+            else
+            {
+                // For MCQ or AutoEvaluation, default to Retake
+                appeal.AppealResolution = AppealResolutionEnum.Retake.ToString();
+            }
+
+            // For Retake resolution (Manual, MCQ, AutoEval), clean up existing data
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
             IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
             IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
             IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
             IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
             IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
-            IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
 
             Guid roundId = appeal.TargetId;
 
@@ -532,7 +565,6 @@ namespace BusinessLogic.Services.Appeals
 
             // Soft delete finished mark for this specific student only
             string finishKey = ConfigKeys.RoundStudent(roundId, studentId.Value);
-
             Config? finishConfig = await configRepo.Entities
                 .FirstOrDefaultAsync(c => c.Key == finishKey);
 
@@ -540,13 +572,6 @@ namespace BusinessLogic.Services.Appeals
             {
                 configRepo.Delete(finishConfig);
             }
-
-            // Determine round type
-            Round? round = appeal.Target;
-            string? problemType = round?.Problem?.Type;
-            bool isMcq = round?.McqTest != null;
-            bool isAutoEval = string.Equals(problemType, ProblemTypeEnum.AutoEvaluation.ToString(), StringComparison.OrdinalIgnoreCase);
-            bool isManual = string.Equals(problemType, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
 
             // Manual: soft delete the latest submission for this student in the round
             if (isManual)
@@ -565,7 +590,6 @@ namespace BusinessLogic.Services.Appeals
                     latest.DeletedAt = DateTime.UtcNow;
                     await submissionRepo.UpdateAsync(latest);
 
-                    // Soft delete related artifacts & details
                     foreach (SubmissionArtifact art in latest.SubmissionArtifacts)
                     {
                         if (art.DeletedAt == null)
@@ -595,9 +619,6 @@ namespace BusinessLogic.Services.Appeals
                                 && s.SubmittedByStudentId == studentId.Value
                                 && s.DeletedAt == null)
                     .ToListAsync();
-
-                // Get the latest submission's score for deduction
-                Submission? latest = subs.OrderByDescending(s => s.CreatedAt).FirstOrDefault();
 
                 foreach (Submission s in subs)
                 {
@@ -632,9 +653,6 @@ namespace BusinessLogic.Services.Appeals
                                 && a.DeletedAt == null)
                     .ToListAsync();
 
-                // Get the latest attempt's score for deduction
-                McqAttempt? latest = attempts.OrderByDescending(a => a.End).FirstOrDefault();
-
                 foreach (McqAttempt at in attempts)
                 {
                     at.DeletedAt = DateTime.UtcNow;
@@ -642,11 +660,54 @@ namespace BusinessLogic.Services.Appeals
                 }
             }
 
-            // Get team ID
+            // Refresh the team score after data cleanup
             Guid teamId = appeal.TeamId;
-
-            // Refresh the team score after deduction from the leaderboard
             await _leaderboardEntryService.UpdateTeamScoreAsync(round!.ContestId, teamId);
+        }
+
+        private async Task ReassignSubmissionToNewJudgeAsync(Appeal appeal)
+        {
+            // Get the student's submission for this round
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            Submission? submission = await submissionRepo.Entities
+                .Where(s => s.TeamId == appeal.TeamId
+                    && s.Problem.RoundId == appeal.TargetId
+                    && !s.DeletedAt.HasValue)
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            // If no submission found, nothing to reassign
+            if (submission == null)
+            {
+                return;
+            }
+
+            // Get current judge ID
+            string? currentJudgeId = submission.JudgedBy;
+
+            // Get available judges for this contest (excluding current judge)
+            IGenericRepository<JudgeInvite> judgeInviteRepo = _unitOfWork.GetRepository<JudgeInvite>();
+
+            List<string> availableJudges = await judgeInviteRepo.Entities
+                .Where(ji => ji.ContestId == appeal.Target.ContestId
+                    && ji.Status == JudgeInviteStatusEnum.Accepted.ToString().ToLower()
+                    && ji.JudgeId.ToString() != currentJudgeId)
+                .Select(ji => ji.JudgeId.ToString())
+                .ToListAsync();
+
+            if (availableJudges.Any())
+            {
+                // Assign to a random different judge
+                Random random = new Random();
+                string newJudgeId = availableJudges[random.Next(availableJudges.Count)];
+
+                submission.JudgedBy = newJudgeId;
+                submission.Status = SubmissionStatusEnum.Pending.ToString();
+                submission.Score = 0;
+
+                await submissionRepo.UpdateAsync(submission);
+            }
         }
 
         private string GetCurrentUserIdOrThrow()

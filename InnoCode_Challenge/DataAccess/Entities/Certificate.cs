@@ -19,7 +19,7 @@ public partial class Certificate
 
     public DateTime? DeletedAt { get; set; }
 
-    public string? CertificateType { get; set; } //Team or Student
+    public string? CertificateType { get; set; }
 
     public virtual Student? Student { get; set; }
 

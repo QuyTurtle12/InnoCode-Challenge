@@ -19,9 +19,17 @@ public partial class Round
 
     public string? Status { get; set; }
 
+    public bool IsRetakeRound { get; set; }
+
+    public Guid? MainRoundId { get; set; }
+
     public virtual ICollection<Appeal> Appeals { get; set; } = new List<Appeal>();
 
     public virtual Contest Contest { get; set; } = null!;
+
+    public virtual ICollection<Round> RetakeRounds { get; set; } = new List<Round>();
+
+    public virtual Round? MainRound { get; set; }
 
     public virtual ICollection<McqAttempt> McqAttempts { get; set; } = new List<McqAttempt>();
 

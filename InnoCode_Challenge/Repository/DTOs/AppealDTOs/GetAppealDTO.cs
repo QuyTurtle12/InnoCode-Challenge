@@ -21,6 +21,7 @@ namespace Repository.DTOs.AppealDTOs
         public string Reason { get; set; } = string.Empty;
         public string? Decision { get; set; }
         public string? DecisionReason { get; set; }
+        public string? AppealResolution { get; set; }
         public DateTime CreatedAt { get; set; }
         public List<AppealEvidenceDTO> Evidences { get; set; } = new();
     }
