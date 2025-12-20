@@ -44,6 +44,13 @@
         public const string TeamInviteAccepted = "team_invite.accepted";
         public const string TeamInviteDeclined = "team_invite.declined";
 
+        // Judge invite
+        public const string JudgeInviteCreated = "judge_invite.created";
+        public const string JudgeInviteResent = "judge_invite.resent";
+        public const string JudgeInviteRevoked = "judge_invite.revoked";
+        public const string JudgeInviteAccepted = "judge_invite.accepted";
+        public const string JudgeInviteDeclined = "judge_invite.declined";
+
         // Notifications
         public const string NotificationCreated = "notification.created";
 

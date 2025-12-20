@@ -8,6 +8,11 @@ namespace Utility.Constant
         public const string TeamInvitationAccepted = "team.invitation_accepted";
         public const string TeamInvitationDenied = "team.invitation_denied";
 
+        public const string JudgeInvitation = "judge.invitation";
+        public const string JudgeInvitationAccepted = "judge.invitation_accepted";
+        public const string JudgeInvitationDenied = "judge.invitation_denied";
+        public const string JudgeInvitationRevoked = "judge.invitation_revoked";
+
         public const string SubmissionResult = "submission.result";
         public const string SubmissionStatusChanged = "submission.status_changed";
         public const string ManualGradingAssigned = "manual_grading.assigned";

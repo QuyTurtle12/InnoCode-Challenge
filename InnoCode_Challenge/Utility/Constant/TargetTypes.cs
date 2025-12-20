@@ -17,6 +17,7 @@
         public const string Leaderboard = "leaderboard";
         public const string Report = "report";
         public const string SystemConfig = "system_config";
+        public const string JudgeInvite = "judge_invite";
 
         public const string SchoolCreationRequest = "school_creation_request";
         public const string RoleRegistration = "role_registration";

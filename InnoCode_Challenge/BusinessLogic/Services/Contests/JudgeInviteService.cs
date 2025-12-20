@@ -1,8 +1,10 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.JudgeInviteDTOs;
 using Repository.IRepositories;
 using System.Security.Claims;
@@ -18,6 +20,9 @@ namespace BusinessLogic.Services.Contests
         private readonly IUOW _uow;
         private readonly IMapper _mapper;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly INotificationService _notificationService;
+        private readonly ILogger<JudgeInviteService> _logger;
+        private readonly IActivityLogWriter _logWriter;
 
         private const string Pending = "pending";
         private const string Accepted = "accepted";
@@ -25,12 +30,22 @@ namespace BusinessLogic.Services.Contests
         private const string Revoked = "revoked";
         private const string Expired = "expired";
 
-        public JudgeInviteService(IUOW uow, IMapper mapper, IHttpContextAccessor httpContextAccessor)
+        public JudgeInviteService(
+            IUOW uow,
+            IMapper mapper,
+            IHttpContextAccessor httpContextAccessor,
+            INotificationService notificationService,
+            ILogger<JudgeInviteService> logger,
+            IActivityLogWriter logWriter)
         {
             _uow = uow;
             _mapper = mapper;
             _httpContextAccessor = httpContextAccessor;
+            _notificationService = notificationService;
+            _logger = logger;
+            _logWriter = logWriter;
         }
+
 
         public async Task<PaginatedList<JudgeInviteDTO>> GetForContestAsync(
             Guid contestId,
@@ -129,6 +144,8 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                var actorId = GetCurrentUserId();
+
                 // Get repositories
                 IGenericRepository<Contest> contestRepo = _uow.GetRepository<Contest>();
                 IGenericRepository<User> userRepo = _uow.GetRepository<User>();
@@ -170,6 +187,18 @@ namespace BusinessLogic.Services.Contests
                     inviteRepo.Update(existingInvite);
                     await _uow.SaveAsync();
 
+                    // Notify judge about the refreshed invite
+                    await TryNotifyJudgeInvitationAsync(existingInvite.JudgeId, existingInvite);
+
+                    // Log activity
+                    if (actorId.HasValue)
+                    {
+                        await _logWriter.TryWriteAsync(actorId.Value,
+                            ActivityActions.JudgeInviteResent,
+                            TargetTypes.JudgeInvite,
+                            existingInvite.InviteId.ToString());
+                    }
+
                     // Use AutoMapper
                     return _mapper.Map<JudgeInviteDTO>(existingInvite);
                 }
@@ -199,6 +228,7 @@ namespace BusinessLogic.Services.Contests
                 await inviteRepo.InsertAsync(newInvite);
                 await _uow.SaveAsync();
 
+
                 // Load navigation properties for response
                 JudgeInvite createdInvite = await inviteRepo.Entities
                     .Where(i => i.InviteId == newInvite.InviteId)
@@ -206,6 +236,18 @@ namespace BusinessLogic.Services.Contests
                     .Include(i => i.Judge)
                     .AsNoTracking()
                     .FirstAsync();
+
+                // Notify judge about the new invite
+                await TryNotifyJudgeInvitationAsync(createdInvite.JudgeId, createdInvite);
+
+                // Log activity
+                if (actorId.HasValue)
+                {
+                    await _logWriter.TryWriteAsync(actorId.Value,
+                        ActivityActions.JudgeInviteCreated,
+                        TargetTypes.JudgeInvite,
+                        createdInvite.InviteId.ToString());
+                }
 
                 // Use AutoMapper
                 return _mapper.Map<JudgeInviteDTO>(createdInvite);
@@ -244,7 +286,7 @@ namespace BusinessLogic.Services.Contests
                 // Get requester Id from HttpContext
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
 
-                if (invite.ExpiresAt <= now)
+                if (!invite.ExpiresAt.HasValue || invite.ExpiresAt.Value <= now)
                 {
                     // Expire old, create new
                     invite.Status = Expired;
@@ -275,6 +317,19 @@ namespace BusinessLogic.Services.Contests
                         .AsNoTracking()
                         .FirstAsync();
 
+                    // Notify judge about the new invite
+                    await TryNotifyJudgeInvitationAsync(createdInvite.JudgeId, createdInvite);
+
+                    //  Log activity
+                    var actorId = GetCurrentUserId();
+                    if (actorId.HasValue)
+                    {
+                        await _logWriter.TryWriteAsync(actorId.Value,
+                            ActivityActions.JudgeInviteResent,
+                            TargetTypes.JudgeInvite,
+                            createdInvite.InviteId.ToString());
+                    }
+
                     // Use AutoMapper
                     return _mapper.Map<JudgeInviteDTO>(createdInvite);
                 }
@@ -286,6 +341,18 @@ namespace BusinessLogic.Services.Contests
                     repo.Update(invite);
                     await _uow.SaveAsync();
 
+                    // Notify judge about the refreshed invite
+                    await TryNotifyJudgeInvitationAsync(invite.JudgeId, invite);
+
+                    // Log activity
+                    var actorId = GetCurrentUserId();
+                    if (actorId.HasValue)
+                    {
+                        await _logWriter.TryWriteAsync(actorId.Value,
+                            ActivityActions.JudgeInviteResent,
+                            TargetTypes.JudgeInvite,
+                            invite.InviteId.ToString());
+                    }
                     // Use AutoMapper
                     return _mapper.Map<JudgeInviteDTO>(invite);
                 }
@@ -308,13 +375,9 @@ namespace BusinessLogic.Services.Contests
             {
                 // Get invite
                 IGenericRepository<JudgeInvite> repo = _uow.GetRepository<JudgeInvite>();
-                JudgeInvite? invite = await repo.Entities
-                    .Where(i => i.InviteId == inviteId && i.ContestId == contestId)
-                    .FirstOrDefaultAsync();
-
-                // Validate invite
-                if (invite == null)
-                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invite not found.");
+                var invite = await repo.Entities
+                    .FirstOrDefaultAsync(i => i.InviteId == inviteId && i.ContestId == contestId)
+                    ?? throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invite not found.");
 
                 // Only pending invites can be revoked
                 if (invite.Status != Pending)
@@ -325,6 +388,28 @@ namespace BusinessLogic.Services.Contests
                 invite.Status = Revoked;
                 repo.Update(invite);
                 await _uow.SaveAsync();
+
+                // Load navigation properties
+                var inviteWithNav = await repo.Entities
+                    .Where(i => i.InviteId == inviteId)
+                    .Include(i => i.Contest)
+                    .Include(i => i.Judge)
+                    .AsNoTracking()
+                    .FirstAsync();
+
+                // Notify judge about the revoked invite
+                await TryNotifyJudgeInvitationRevokedAsync(inviteWithNav.JudgeId, inviteWithNav);
+
+                // Log activity
+                var actorId = GetCurrentUserId();
+                if (actorId.HasValue)
+                {
+                    await _logWriter.TryWriteAsync(actorId.Value,
+                        ActivityActions.JudgeInviteRevoked,
+                        TargetTypes.JudgeInvite,
+                        inviteId.ToString());
+                }
+
             }
             catch (Exception ex)
             {
@@ -357,7 +442,7 @@ namespace BusinessLogic.Services.Contests
             if (invite.Status != Pending)
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invite is not pending.");
 
-            if (invite.ExpiresAt <= DateTime.UtcNow)
+            if (!invite.ExpiresAt.HasValue || invite.ExpiresAt.Value <= DateTime.UtcNow)
             {
                 invite.Status = Expired;
                 inviteRepo.Update(invite);
@@ -394,8 +479,20 @@ namespace BusinessLogic.Services.Contests
             inviteRepo.Update(invite);
 
             await _uow.SaveAsync();
-        }
 
+            // log activity
+            await _logWriter.TryWriteAsync(invite.JudgeId,
+                ActivityActions.JudgeInviteAccepted,
+                TargetTypes.JudgeInvite,
+                invite.InviteId.ToString());
+
+            // notify inviter
+            var inviterId = TryParseGuid(invite.CreatedBy);
+            if (inviterId.HasValue)
+            {
+                await TryNotifyInviterAcceptedAsync(inviterId.Value, invite);
+            }
+        }
 
         public async Task DeclineByCodeAsync(string inviteCode, string email)
         {
@@ -408,6 +505,7 @@ namespace BusinessLogic.Services.Contests
 
             var invite = await inviteRepo.Entities
                 .Where(i => i.InviteCode == inviteCode)
+                .Include(i => i.Contest)
                 .Include(i => i.Judge)
                 .FirstOrDefaultAsync();
 
@@ -426,6 +524,20 @@ namespace BusinessLogic.Services.Contests
             invite.Status = Declined;
             inviteRepo.Update(invite);
             await _uow.SaveAsync();
+
+            // log activity
+            await _logWriter.TryWriteAsync(invite.JudgeId,
+                ActivityActions.JudgeInviteDeclined,
+                TargetTypes.JudgeInvite,
+                invite.InviteId.ToString());
+
+            // notify inviter
+            var inviterId = TryParseGuid(invite.CreatedBy);
+            if (inviterId.HasValue)
+            {
+                await TryNotifyInviterDeclinedAsync(inviterId.Value, invite, normEmail);
+            }
+
         }
 
 
@@ -544,7 +656,7 @@ namespace BusinessLogic.Services.Contests
                     .ToListAsync();
 
                 // Create a dictionary for faster lookup
-                Dictionary<Guid, JudgeInvite> inviteLookup = invites.ToDictionary(i => i.JudgeId);
+                Dictionary<Guid, JudgeInvite> inviteLookup = invites.GroupBy(i => i.JudgeId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First());
 
                 // Map judges to DTOs with invite status
                 List<JudgeWithInviteStatusDTO> judgeWithInvites = allJudges.Select(judge =>
@@ -642,5 +754,140 @@ namespace BusinessLogic.Services.Contests
                     $"Error retrieving judges with invite status: {ex.Message}");
             }
         }
+
+        private Guid? GetCurrentUserId()
+        {
+            var str = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(str, out var g)) return g;
+            return null;
+        }
+
+        private static Guid? TryParseGuid(string? str)
+        {
+            if (Guid.TryParse(str, out var g)) return g;
+            return null;
+        }
+
+        private async Task TryNotifyJudgeInvitationAsync(Guid judgeUserId, JudgeInvite invite)
+        {
+            try
+            {
+                var email = invite.Judge?.Email?.Trim().ToLowerInvariant();
+
+                await _notificationService.CreateInAppToUserAsync(judgeUserId, NotificationTypes.JudgeInvitation, new
+                {
+                    inviteId = invite.InviteId,
+                    inviteCode = invite.InviteCode,
+                    status = invite.Status,
+                    expiresAt = invite.ExpiresAt,
+
+                    contestId = invite.ContestId,
+                    contestName = invite.Contest?.Name,
+
+                    judgeId = invite.JudgeId,
+                    judgeName = invite.Judge?.Fullname,
+                    judgeEmail = email,
+
+                    targetType = TargetTypes.JudgeInvite,
+                    targetId = invite.InviteId.ToString(),
+
+                    actions = new
+                    {
+                        accept = new { method = "POST", url = "/api/judge-invites/accept", query = new { inviteCode = invite.InviteCode, email } },
+                        decline = new { method = "POST", url = "/api/judge-invites/decline", query = new { inviteCode = invite.InviteCode, email } }
+                    },
+
+                    message = $"You have been invited to judge contest '{invite.Contest?.Name}'."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send judge invitation notification. InviteId={InviteId}, ContestId={ContestId}, JudgeId={JudgeId}",
+                    invite.InviteId, invite.ContestId, judgeUserId);
+            }
+        }
+
+        private async Task TryNotifyJudgeInvitationRevokedAsync(Guid judgeUserId, JudgeInvite invite)
+        {
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(judgeUserId, NotificationTypes.JudgeInvitationRevoked, new
+                {
+                    inviteId = invite.InviteId,
+                    contestId = invite.ContestId,
+                    contestName = invite.Contest?.Name,
+
+                    targetType = TargetTypes.JudgeInvite,
+                    targetId = invite.InviteId.ToString(),
+
+                    message = $"Your judge invitation for contest '{invite.Contest?.Name}' has been revoked."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send judge invitation revoked notification. InviteId={InviteId}, JudgeId={JudgeId}",
+                    invite.InviteId, judgeUserId);
+            }
+        }
+
+        private async Task TryNotifyInviterAcceptedAsync(Guid inviterUserId, JudgeInvite invite)
+        {
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(inviterUserId, NotificationTypes.JudgeInvitationAccepted, new
+                {
+                    inviteId = invite.InviteId,
+                    contestId = invite.ContestId,
+                    contestName = invite.Contest?.Name,
+
+                    judgeId = invite.JudgeId,
+                    judgeName = invite.Judge?.Fullname,
+                    judgeEmail = invite.Judge?.Email,
+
+                    acceptedAt = invite.AcceptedAt,
+                    targetType = TargetTypes.JudgeInvite,
+                    targetId = invite.InviteId.ToString(),
+
+                    message = $"{invite.Judge?.Fullname} accepted your judge invitation."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send judge invite accepted notification. InviteId={InviteId}, InviterUserId={InviterUserId}",
+                    invite.InviteId, inviterUserId);
+            }
+        }
+
+        private async Task TryNotifyInviterDeclinedAsync(Guid inviterUserId, JudgeInvite invite, string normEmail)
+        {
+            try
+            {
+                await _notificationService.CreateInAppToUserAsync(inviterUserId, NotificationTypes.JudgeInvitationDenied, new
+                {
+                    inviteId = invite.InviteId,
+                    contestId = invite.ContestId,
+                    contestName = invite.Contest?.Name,
+
+                    judgeId = invite.JudgeId,
+                    judgeName = invite.Judge?.Fullname,
+                    judgeEmail = normEmail,
+
+                    targetType = TargetTypes.JudgeInvite,
+                    targetId = invite.InviteId.ToString(),
+
+                    message = $"{invite.Judge?.Fullname} declined your judge invitation."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to send judge invite denied notification. InviteId={InviteId}, InviterUserId={InviterUserId}",
+                    invite.InviteId, inviterUserId);
+            }
+        }
+
     }
 }
