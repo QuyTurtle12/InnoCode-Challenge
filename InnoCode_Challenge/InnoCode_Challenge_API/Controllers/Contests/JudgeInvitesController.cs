@@ -1,14 +1,12 @@
 ﻿using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.JudgeInviteDTOs;
 using Repository.ResponseModel;
 using System.ComponentModel.DataAnnotations;
-using System.Net.NetworkInformation;
 using Utility.Constant;
 using Utility.Enums;
-using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
@@ -18,10 +16,12 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     public class JudgeInvitesController : ControllerBase
     {
         private readonly IJudgeInviteService _judgeInviteService;
+        private readonly IContestJudgeService _contestJudgeService;
 
-        public JudgeInvitesController(IJudgeInviteService judgeInviteService)
+        public JudgeInvitesController(IJudgeInviteService judgeInviteService, IContestJudgeService contestJudgeService)
         {
             _judgeInviteService = judgeInviteService;
+            _contestJudgeService = contestJudgeService;
         }
 
         /// <summary>
@@ -249,6 +249,22 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 additionalData: paging,
                 message: "Judges with invite status retrieved successfully."
             ));
+        }
+
+        [Authorize(Policy = "RequireOrganizerRole")]
+        [HttpGet("contests/{contestId}/judges")]
+        public async Task<IActionResult> GetJudges(Guid contestId)
+        {
+            var data = await _contestJudgeService.GetJudgesByContestAsync(contestId);
+
+            var response = new BaseResponseModel<IList<JudgeInContestDTO>>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: data,
+                message: "Judges retrieved."
+            );
+
+            return Ok(response);
         }
     }
 }
