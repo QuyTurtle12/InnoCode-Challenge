@@ -70,7 +70,7 @@ namespace BusinessLogic.Services.Contests
 
                 ILookup<string, Config> configLookup = configs.ToLookup(c => c.Key);
 
-                string? newStatus = DetermineContestStatus(contest, now, configLookup);
+                string? newStatus = await DetermineContestStatusAsync(unitOfWork, contest, now, configLookup);
 
                 if (newStatus != null && newStatus != contest.Status)
                 {
@@ -83,8 +83,20 @@ namespace BusinessLogic.Services.Contests
                         "Contest {ContestId} ({ContestName}) status changed from {OldStatus} to {NewStatus}",
                         contest.ContestId, contest.Name, oldStatus, newStatus);
 
-                    // Schedule next state transition
-                    await ScheduleNextStateTransitionAsync(contest, configLookup);
+                    // If transitioning to Delayed, cancel all scheduled jobs
+                    if (newStatus == ContestStatusEnum.Delayed.ToString())
+                    {
+                        await DeleteContestScheduledJobsAsync(unitOfWork, contestId);
+
+                        _logger.LogWarning(
+                            "Contest {ContestId} ({ContestName}) moved to Delayed status due to no team registrations. All scheduled jobs cancelled.",
+                            contest.ContestId, contest.Name);
+                    }
+                    else
+                    {
+                        // Schedule next state transition for other statuses
+                        await ScheduleNextStateTransitionAsync(contest, configLookup);
+                    }
 
                     // Perform status-specific actions
                     await HandleStatusTransitionAsync(scope, unitOfWork, contest, oldStatus, newStatus, configLookup);
@@ -99,6 +111,50 @@ namespace BusinessLogic.Services.Contests
             {
                 _logger.LogError(ex, "Error in UpdateSpecificContestAsync for contest {ContestId}", contestId);
                 throw;
+            }
+        }
+
+        private static async Task<bool> CheckContestHasTeamsAsync(IUOW unitOfWork, Guid contestId)
+        {
+            IGenericRepository<Team> teamRepo = unitOfWork.GetRepository<Team>();
+
+            // Check if contest has at least 1 non-deleted team
+            int teamCount = await teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .CountAsync();
+
+            return teamCount > 0;
+        }
+
+        private async Task DeleteContestScheduledJobsAsync(IUOW unitOfWork, Guid contestId)
+        {
+            try
+            {
+                // Get all rounds for the contest
+                IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
+                List<Guid> roundIds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestId && r.DeletedAt == null)
+                    .Select(r => r.RoundId)
+                    .ToListAsync();
+
+                // Delete contest state transition jobs
+                string contestJobId = $"contest-state-{contestId}";
+                BackgroundJob.Delete(contestJobId);
+
+                // Delete round state transition jobs
+                foreach (Guid roundId in roundIds)
+                {
+                    string roundJobId = $"round-state-{roundId}";
+                    BackgroundJob.Delete(roundJobId);
+                }
+
+                _logger.LogInformation(
+                    "Deleted scheduled jobs for contest {ContestId} and {RoundCount} rounds",
+                    contestId, roundIds.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete scheduled jobs for contest {ContestId}", contestId);
             }
         }
 
@@ -186,7 +242,7 @@ namespace BusinessLogic.Services.Contests
                     targetId = contest.ContestId.ToString()
                 };
 
-                // 1) Registration Open 
+                // Registration Open 
                 if (newStatus == ContestStatusEnum.RegistrationOpen.ToString())
                 {
                     // Notify organizer
@@ -203,7 +259,7 @@ namespace BusinessLogic.Services.Contests
                     }
                 }
 
-                // 2) Registration Closed 
+                // Registration Closed 
                 if (newStatus == ContestStatusEnum.RegistrationClosed.ToString())
                 {
                     var participantIds = await GetParticipantIdsAsync();
@@ -222,7 +278,7 @@ namespace BusinessLogic.Services.Contests
                     }
                 }
 
-                // 3) Contest Ongoing 
+                // Contest Ongoing 
                 if (newStatus == ContestStatusEnum.Ongoing.ToString())
                 {
                     // Notify participants
@@ -240,7 +296,7 @@ namespace BusinessLogic.Services.Contests
                     }
                 }
 
-                // 4) Contest Completed 
+                // Contest Completed 
                 if (newStatus == ContestStatusEnum.Completed.ToString())
                 {
                     // Notify participants
@@ -254,6 +310,23 @@ namespace BusinessLogic.Services.Contests
                             payloadBase.targetType,
                             payloadBase.targetId,
                             message = $"Contest '{contest.Name}' has ended."
+                        });
+                    }
+                }
+
+                // Contest Delayed
+                if (newStatus == ContestStatusEnum.Delayed.ToString())
+                {
+                    // Notify organizer
+                    if (Guid.TryParse(contest.CreatedBy, out var organizerId) && organizerId != Guid.Empty)
+                    {
+                        await notif.CreateInAppToUserAsync(organizerId, NotificationTypes.ContestDelayed, new
+                        {
+                            payloadBase.contestId,
+                            payloadBase.name,
+                            payloadBase.targetType,
+                            payloadBase.targetId,
+                            message = $"Contest '{contest.Name}' has been delayed due to insufficient team registrations."
                         });
                     }
                 }
@@ -317,7 +390,8 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        private static string? DetermineContestStatus(
+        private static async Task<string?> DetermineContestStatusAsync(
+            IUOW unitOfWork,
             Contest contest,
             DateTime now,
             ILookup<string, Config> configLookup)
@@ -326,7 +400,8 @@ namespace BusinessLogic.Services.Contests
             if (contest.Status == ContestStatusEnum.Completed.ToString()
                 || contest.Status == ContestStatusEnum.Cancelled.ToString()
                 || contest.Status == ContestStatusEnum.Paused.ToString()
-                || contest.Status == ContestStatusEnum.Draft.ToString())
+                || contest.Status == ContestStatusEnum.Draft.ToString()
+                || contest.Status == ContestStatusEnum.Delayed.ToString())
                 return null;
 
             string regStartKey = ConfigKeys.ContestRegStart(contest.ContestId);
@@ -362,6 +437,15 @@ namespace BusinessLogic.Services.Contests
             if (registrationEnd.HasValue && now >= registrationEnd.Value
                 && contest.Start.HasValue && now < contest.Start.Value)
             {
+                // Check if contest has at least 1 team
+                bool hasTeams = await CheckContestHasTeamsAsync(unitOfWork, contest.ContestId);
+
+                if (!hasTeams)
+                {
+                    // No teams registered, move to Delayed status
+                    return ContestStatusEnum.Delayed.ToString();
+                }
+
                 return ContestStatusEnum.RegistrationClosed.ToString();
             }
 
