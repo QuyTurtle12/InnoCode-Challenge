@@ -1,5 +1,4 @@
-﻿using Repository.DTOs.PlagiarismDTOs.Repository.DTOs.PlagiarismDTOs;
-using Repository.DTOs.SubmissionArtifactDTOs;
+﻿using Repository.DTOs.SubmissionArtifactDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using System;
 using System.Collections.Generic;
