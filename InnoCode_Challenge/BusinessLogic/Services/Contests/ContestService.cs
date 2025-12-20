@@ -1064,18 +1064,14 @@ namespace BusinessLogic.Services.Contests
         {
             // Get repositories
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
-            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-            IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-            IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
 
             // Fetch the contest with its rounds
             Contest? contest = await contestRepo.Entities
                 .Where(c => c.ContestId == contestId && c.DeletedAt == null)
                 .Include(c => c.Rounds)
                     .ThenInclude(r => r.Problem)
-                        .ThenInclude(p => p.TestCases)
+                        .ThenInclude(p => p!.TestCases)
                 .FirstOrDefaultAsync();
 
             // Validate contest existence
@@ -1085,10 +1081,8 @@ namespace BusinessLogic.Services.Contests
             // Initialize result DTO
             PublishReadinessDTO result = new PublishReadinessDTO { ContestId = contestId };
 
-            // Get rounds
-            List<Round> rounds = contest.Rounds
-                .Where(r => !r.DeletedAt.HasValue)
-                .ToList();
+            // Get non-deleted rounds
+            List<Round> rounds = contest.Rounds.Where(r => !r.DeletedAt.HasValue).ToList();
 
             // Check if there are any rounds
             if (!rounds.Any())
@@ -1101,6 +1095,59 @@ namespace BusinessLogic.Services.Contests
             // Extract round IDs
             List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
 
+            // Validate time limits
+            await ValidateRoundTimeLimitsAsync(configRepo, rounds, roundIds, result);
+
+            // Get problems and MCQ tests
+            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+            IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
+
+            List<Problem> problems = await problemRepo.Entities
+                .Where(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null)
+                .Include(p => p.TestCases)
+                .ToListAsync();
+
+            List<McqTest> mcqTests = await mcqTestRepo.Entities
+                .Where(t => roundIds.Contains(t.RoundId) && t.DeletedAt == null)
+                .Include(t => t.Round)
+                .Include(t => t.McqTestQuestions)
+                .ToListAsync();
+
+            // Validate retake round weights
+            await ValidateRetakeRoundWeightsAsync(rounds, problems, mcqTests, result);
+
+            // Validate round content
+            ValidateRoundContent(rounds, problems, mcqTests, result);
+
+            // Validate MCQ tests
+            ValidateMcqTests(mcqTests, result);
+
+            // Validate auto-evaluation problems
+            ValidateAutoEvaluationProblems(problems, rounds, result);
+
+            // Validate manual problems and judges
+            await ValidateManualProblemsAsync(contestId, configRepo, problems, rounds, result);
+
+            // Validate contest configuration
+            await ValidateContestConfigurationAsync(contestId, configRepo, result);
+
+            // Validate contest image
+            if (string.IsNullOrWhiteSpace(contest.ImgUrl))
+            {
+                result.Missing.Add("Contest image not uploaded.");
+            }
+
+            // Final readiness determination
+            result.IsReady = result.Missing.Count == 0;
+            return result;
+        }
+
+        private static async Task ValidateRoundTimeLimitsAsync(
+            IGenericRepository<Config> configRepo,
+            List<Round> rounds,
+            List<Guid> roundIds,
+            PublishReadinessDTO result)
+        {
             // Check for time limit configuration on all rounds
             List<Config> timeLimitConfigs = await configRepo.Entities
                 .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
@@ -1112,7 +1159,6 @@ namespace BusinessLogic.Services.Contests
             HashSet<Guid> roundsWithTimeLimit = new HashSet<Guid>();
             foreach (Config config in timeLimitConfigs)
             {
-                // Extract round ID from key and validate the value
                 if (!string.IsNullOrEmpty(config.Value) && int.TryParse(config.Value, out int timeLimit))
                 {
                     foreach (Guid roundId in roundIds)
@@ -1131,46 +1177,131 @@ namespace BusinessLogic.Services.Contests
                 .Where(r => !roundsWithTimeLimit.Contains(r.RoundId))
                 .ToList();
 
-            // Report rounds missing time limit
             if (roundsWithoutTimeLimit.Any())
             {
                 string roundNames = string.Join(", ", roundsWithoutTimeLimit.Select(r => $"'{r.Name}'"));
                 result.Missing.Add($"Round(s) {roundNames} missing time limit configuration.");
             }
+        }
 
-            // Store Auto Evaluation, Manual problem in problems list
-            List<Problem> problems = await problemRepo.Entities
-                .Where(p => roundIds.Contains(p.RoundId) && p.DeletedAt == null)
-                .Include(p => p.TestCases)
+        private async Task ValidateRetakeRoundWeightsAsync(
+            List<Round> rounds,
+            List<Problem> problems,
+            List<McqTest> mcqTests,
+            PublishReadinessDTO result)
+        {
+            List<Round> retakeRounds = rounds.Where(r => r.IsRetakeRound && r.MainRoundId.HasValue).ToList();
+            if (!retakeRounds.Any())
+                return;
+
+            // Get repositories for weight calculation
+            IGenericRepository<McqTestQuestion> mcqTestQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+            IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+            // Load all weights
+            List<Guid> mcqTestIds = mcqTests.Select(t => t.TestId).ToList();
+            List<McqTestQuestion> allMcqTestQuestions = await mcqTestQuestionRepo.Entities
+                .Where(q => mcqTestIds.Contains(q.TestId))
                 .ToListAsync();
 
-            // Get MCQ tests
-            List<McqTest> mcqTests = await mcqTestRepo.Entities
-                .Where(t => roundIds.Contains(t.RoundId) && t.DeletedAt == null)
-                .Include(t => t.Round)
-                .Include(t => t.McqTestQuestions)
+            List<Guid> problemIds = problems.Select(p => p.ProblemId).ToList();
+            List<TestCase> allTestCases = await testCaseRepo.Entities
+                .Where(tc => problemIds.Contains(tc.ProblemId) && tc.DeletedAt == null)
                 .ToListAsync();
 
-            // Create a lookup for rounds that have problems or MCQ tests
+            // Calculate weights for each round
+            Dictionary<Guid, double> roundWeights = CalculateRoundWeights(rounds, problems, mcqTests, allMcqTestQuestions, allTestCases);
+
+            // Validate each retake round against its main round
+            foreach (Round retakeRound in retakeRounds)
+            {
+                if (!retakeRound.MainRoundId.HasValue)
+                    continue;
+
+                double retakeWeight = roundWeights.GetValueOrDefault(retakeRound.RoundId, 0);
+                double mainWeight = roundWeights.GetValueOrDefault(retakeRound.MainRoundId.Value, 0);
+
+                Round? mainRound = rounds.FirstOrDefault(r => r.RoundId == retakeRound.MainRoundId);
+                string mainRoundName = mainRound?.Name ?? "Unknown";
+
+                // Validate weights
+                if (retakeWeight <= 0)
+                {
+                    result.Missing.Add($"Retake round '{retakeRound.Name}' has no weight (missing questions/test cases/criteria).");
+                }
+                else if (mainWeight <= 0)
+                {
+                    result.Missing.Add($"Main round '{mainRoundName}' for retake round '{retakeRound.Name}' has no weight (missing questions/test cases/criteria).");
+                }
+                else if (Math.Abs(retakeWeight - mainWeight) > 0.0001)
+                {
+                    result.Missing.Add($"Retake round '{retakeRound.Name}' total weight ({retakeWeight}) does not match its main round '{mainRoundName}' weight ({mainWeight}).");
+                }
+            }
+        }
+
+        private static Dictionary<Guid, double> CalculateRoundWeights(
+            List<Round> rounds,
+            List<Problem> problems,
+            List<McqTest> mcqTests,
+            List<McqTestQuestion> allMcqTestQuestions,
+            List<TestCase> allTestCases)
+        {
+            Dictionary<Guid, double> roundWeights = new Dictionary<Guid, double>();
+
+            foreach (Round round in rounds)
+            {
+                double totalWeight = 0;
+
+                // Check if round has MCQ test
+                McqTest? mcqTest = mcqTests.FirstOrDefault(t => t.RoundId == round.RoundId);
+                if (mcqTest != null)
+                {
+                    totalWeight = allMcqTestQuestions
+                        .Where(q => q.TestId == mcqTest.TestId)
+                        .Sum(q => q.Weight);
+                }
+                else
+                {
+                    // Check if round has problem (auto-evaluation or manual)
+                    Problem? problem = problems.FirstOrDefault(p => p.RoundId == round.RoundId);
+                    if (problem != null)
+                    {
+                        totalWeight = allTestCases
+                            .Where(tc => tc.ProblemId == problem.ProblemId)
+                            .Sum(tc => tc.Weight);
+                    }
+                }
+
+                roundWeights[round.RoundId] = totalWeight;
+            }
+
+            return roundWeights;
+        }
+
+        private static void ValidateRoundContent(
+            List<Round> rounds,
+            List<Problem> problems,
+            List<McqTest> mcqTests,
+            PublishReadinessDTO result)
+        {
             HashSet<Guid> roundsWithProblems = problems.Select(p => p.RoundId).ToHashSet();
             HashSet<Guid> roundsWithMcqTests = mcqTests.Select(t => t.RoundId).ToHashSet();
-
-            // Combine both sets to find rounds with any content
             HashSet<Guid> roundsWithContent = roundsWithProblems.Union(roundsWithMcqTests).ToHashSet();
 
-            // Find rounds without any problems or MCQ tests
             List<Round> roundsWithoutContent = rounds
                 .Where(r => !roundsWithContent.Contains(r.RoundId))
                 .ToList();
 
-            // Report rounds missing content
             if (roundsWithoutContent.Any())
             {
                 string roundNames = string.Join(", ", roundsWithoutContent.Select(r => $"'{r.Name}'"));
                 result.Missing.Add($"Round(s) {roundNames} missing a problem or MCQ test.");
             }
+        }
 
-            // Check if MCQ tests contain questions
+        private static void ValidateMcqTests(List<McqTest> mcqTests, PublishReadinessDTO result)
+        {
             List<McqTest> mcqTestsWithoutQuestions = mcqTests
                 .Where(t => !t.McqTestQuestions.Any())
                 .ToList();
@@ -1181,72 +1312,76 @@ namespace BusinessLogic.Services.Contests
                     $"'{t.Name ?? "Unnamed"}' in round '{t.Round.Name}'"));
                 result.Missing.Add($"MCQ test(s) {testInfo} have no questions.");
             }
+        }
 
-            // Check if Auto Evaluation problems have rubric
-            List<Problem> autoEvaluationProblems = problems
-                .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString())
+        private static void ValidateAutoEvaluationProblems(
+            List<Problem> problems,
+            List<Round> rounds,
+            PublishReadinessDTO result)
+        {
+            List<Problem> autoEvalProblemsWithoutTestCases = problems
+                .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                            && !p.TestCases.Any(tc => tc.DeletedAt == null))
                 .ToList();
 
-            if (autoEvaluationProblems.Any())
+            if (autoEvalProblemsWithoutTestCases.Any())
             {
-                // Check if Auto Evaluation problems have test cases
-                List<Problem> autoEvalProblemsWithoutTestCases = problems
-                    .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                                && !p.TestCases.Any(tc => tc.DeletedAt == null))
-                    .ToList();
-
-                if (autoEvalProblemsWithoutTestCases.Any())
+                string problemInfo = string.Join(", ", autoEvalProblemsWithoutTestCases.Select(p =>
                 {
-                    string problemInfo = string.Join(", ", autoEvalProblemsWithoutTestCases.Select(p =>
-                    {
-                        Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
-                        return $"'{round?.Name ?? "Unknown Round"}'";
-                    }));
-                    result.Missing.Add($"Auto-evaluation round(s) {problemInfo} missing test cases.");
-                }
+                    Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
+                    return $"'{round?.Name ?? "Unknown Round"}'";
+                }));
+                result.Missing.Add($"Auto-evaluation round(s) {problemInfo} missing test cases.");
             }
+        }
 
-            // Check if Manual evaluation problems have rubric
+        private static async Task ValidateManualProblemsAsync(
+            Guid contestId,
+            IGenericRepository<Config> configRepo,
+            List<Problem> problems,
+            List<Round> rounds,
+            PublishReadinessDTO result)
+        {
             List<Problem> manualProblems = problems
                 .Where(p => p.Type == ProblemTypeEnum.Manual.ToString())
                 .ToList();
 
-            if (manualProblems.Any())
+            if (!manualProblems.Any())
+                return;
+
+            // Check for rubrics (test cases)
+            List<Problem> manualProblemsWithoutRubrics = manualProblems
+                .Where(p => !p.TestCases.Any(tc => tc.DeletedAt == null))
+                .ToList();
+
+            if (manualProblemsWithoutRubrics.Any())
             {
-                // Get problem IDs for manual evaluation
-                List<Guid> manualProblemIds = manualProblems.Select(p => p.ProblemId).ToList();
-
-                // Check for rubric attachments
-                List<Problem> manualProblemsWithoutRubrics = problems
-                    .Where(p => p.Type == ProblemTypeEnum.Manual.ToString()
-                                && !p.TestCases.Any(tc => tc.DeletedAt == null))
-                    .ToList();
-
-                // Report manual problems missing rubric
-                if (manualProblemsWithoutRubrics.Any())
+                string problemInfo = string.Join(", ", manualProblemsWithoutRubrics.Select(p =>
                 {
-                    string problemInfo = string.Join(", ", manualProblemsWithoutRubrics.Select(p =>
-                    {
-                        Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
-                        return $"'{round?.Name ?? "Unknown Round"}'";
-                    }));
-                    result.Missing.Add($"Manual evaluation round(s) {problemInfo} missing rubric.");
-                }
-
-                // Check judge in contest
-                string contestJudgeKey = $"contest:{contestId}:judge:";
-                int judgeCount = await configRepo.Entities
-                    .Where(c => c.Key.StartsWith(contestJudgeKey) && c.DeletedAt == null)
-                    .CountAsync();
-
-                // Report if no judges assigned
-                if (judgeCount == 0)
-                {
-                    result.Missing.Add("No judges assigned to the contest for manual problems.");
-                }
+                    Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
+                    return $"'{round?.Name ?? "Unknown Round"}'";
+                }));
+                result.Missing.Add($"Manual evaluation round(s) {problemInfo} missing rubric.");
             }
 
-            // Check registration window configuration
+            // Check for judges
+            string contestJudgeKey = $"contest:{contestId}:judge:";
+            int judgeCount = await configRepo.Entities
+                .Where(c => c.Key.StartsWith(contestJudgeKey) && c.DeletedAt == null)
+                .CountAsync();
+
+            if (judgeCount == 0)
+            {
+                result.Missing.Add("No judges assigned to the contest for manual problems.");
+            }
+        }
+
+        private static async Task ValidateContestConfigurationAsync(
+            Guid contestId,
+            IGenericRepository<Config> configRepo,
+            PublishReadinessDTO result)
+        {
+            // Check registration window
             string? regStart = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.ContestRegStart(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
@@ -1254,52 +1389,29 @@ namespace BusinessLogic.Services.Contests
                 .Where(c => c.Key == ConfigKeys.ContestRegEnd(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
-            // Validate registration window presence
             if (string.IsNullOrEmpty(regStart) || string.IsNullOrEmpty(regEnd))
                 result.Missing.Add("Registration window not configured.");
 
-            // Check team members max configuration
+            // Check team members configuration
             string? membersMaxContest = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.ContestTeamMembersMax(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
-
-            // Fallback to global default if contest-specific not set
             string? membersMaxDefault = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMax && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
-            // Validate team members max presence
             if (string.IsNullOrEmpty(membersMaxContest) && string.IsNullOrEmpty(membersMaxDefault))
                 result.Missing.Add("Team members max not configured (contest or global).");
 
             string? membersMinContest = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.ContestTeamMembersMin(contestId) && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
-
             string? membersMinDefault = await configRepo.Entities
                 .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMin && c.DeletedAt == null)
                 .Select(c => c.Value).FirstOrDefaultAsync();
 
             if (string.IsNullOrEmpty(membersMinContest) && string.IsNullOrEmpty(membersMinDefault))
                 result.Missing.Add("Team members min not configured (contest or global).");
-
-            int? minResolved = int.TryParse(membersMinContest, out var minC) ? minC
-                            : (int.TryParse(membersMinDefault, out var minD) ? minD : null);
-
-            int? maxResolved = int.TryParse(membersMaxContest, out var maxC) ? maxC
-                            : (int.TryParse(membersMaxDefault, out var maxD) ? maxD : null);
-
-
-
-            // Check for contest image
-            if (string.IsNullOrWhiteSpace(contest.ImgUrl))
-            {
-                result.Missing.Add("Contest image not uploaded.");
-            }
-
-            // Final readiness determination
-            result.IsReady = result.Missing.Count == 0;
-            return result;
         }
 
         public async Task PublishIfReadyAsync(Guid contestId)
@@ -1373,10 +1485,28 @@ namespace BusinessLogic.Services.Contests
                 }
                 // Priority 3: Check if registration has closed but contest hasn't started
                 else if (registrationEnd.HasValue && now >= registrationEnd.Value
-                    && contest.Start.HasValue && now < contest.Start.Value
-                    && contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+                    && contest.Start.HasValue && now < contest.Start.Value)
                 {
-                    newStatus = ContestStatusEnum.RegistrationClosed.ToString();
+                    // Check if contest has at least 1 team
+                    bool hasTeams = await CheckContestHasTeamsAsync(contestId);
+
+                    if (!hasTeams)
+                    {
+                        // Set status to Delayed if no teams registered
+                        newStatus = ContestStatusEnum.Delayed.ToString();
+
+                        // Delete all scheduled jobs for this contest and its rounds
+                        await DeleteContestScheduledJobsAsync(contestId);
+                    }
+                    else if (contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+                    {
+                        newStatus = ContestStatusEnum.RegistrationClosed.ToString();
+                    }
+                    else
+                    {
+                        // Keep current status if already RegistrationClosed
+                        newStatus = contest.Status;
+                    }
                 }
                 // Priority 4: Check if registration is open
                 else if (registrationStart.HasValue && registrationEnd.HasValue
@@ -1391,20 +1521,34 @@ namespace BusinessLogic.Services.Contests
                     newStatus = ContestStatusEnum.Published.ToString();
                 }
 
-                // Update contest status
+                // Update contest status only if not already Delayed
                 contest.Status = newStatus;
                 await contestRepo.UpdateAsync(contest);
                 await _unitOfWork.SaveAsync();
 
-                // Schedule state transitions using Hangfire
-                SafeEnqueue(() =>
-                    BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contestId)),
-                    "ScheduleContestStateTransitionsAsync");
+                // Schedule state transitions only if not moving to Delayed status
+                if (newStatus != ContestStatusEnum.Delayed.ToString())
+                {
+                    SafeEnqueue(() =>
+                        BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contestId)),
+                        "ScheduleContestStateTransitionsAsync");
+                }
 
                 //  Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestPublish, TargetTypes.Contest, contestId.ToString());
 
+                // Notify participants if contest was delayed
+                if (newStatus == ContestStatusEnum.Delayed.ToString())
+                {
+                    await SafeNotifyParticipantsAsync(contestId, NotificationTypes.ContestDelayed, new
+                    {
+                        contestId,
+                        targetType = TargetTypes.Contest,
+                        targetId = contestId.ToString(),
+                        message = "Contest has been delayed due to insufficient team registrations."
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -1421,6 +1565,49 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error publishing Contest: {ex.Message}");
+            }
+        }
+
+        private async Task<bool> CheckContestHasTeamsAsync(Guid contestId)
+        {
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Check if contest has at least 1 non-deleted team
+            int teamCount = await teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .CountAsync();
+
+            return teamCount > 0;
+        }
+
+        private async Task DeleteContestScheduledJobsAsync(Guid contestId)
+        {
+            try
+            {
+                // Get all rounds for the contest
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                List<Guid> roundIds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestId && r.DeletedAt == null)
+                    .Select(r => r.RoundId)
+                    .ToListAsync();
+
+                // Delete contest state transition jobs
+                string contestJobId = $"contest-state-{contestId}";
+                BackgroundJob.Delete(contestJobId);
+
+                // Delete round state transition jobs
+                foreach (Guid roundId in roundIds)
+                {
+                    string roundJobId = $"round-state-{roundId}";
+                    BackgroundJob.Delete(roundJobId);
+                }
+
+                _logger.LogInformation("Deleted scheduled jobs for contest {ContestId} and {RoundCount} rounds",
+                    contestId, roundIds.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete scheduled jobs for contest {ContestId}", contestId);
             }
         }
 

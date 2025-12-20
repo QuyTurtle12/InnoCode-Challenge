@@ -2133,7 +2133,6 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-
         private async Task<(bool suspected, Guid? matchedSubmissionId)> CheckAndFlagPlagiarismAsync(
             Submission submission,
             Problem problem,

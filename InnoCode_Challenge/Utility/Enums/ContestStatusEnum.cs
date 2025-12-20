@@ -9,6 +9,7 @@
         Ongoing = 4,
         Paused = 5,
         Cancelled = 6,
-        Completed = 7
+        Completed = 7,
+        Delayed = 8
     }
 }
