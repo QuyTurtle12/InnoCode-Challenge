@@ -1953,6 +1953,14 @@ namespace BusinessLogic.Services.Submissions
                 .Include(f => f.Submission.SubmittedByStudent)
                     .ThenInclude(st => st.User);
 
+            if (!IsAdmin())
+            {
+                string organizerUserId = GetCurrentUserIdString();
+
+                query = query.Where(f => f.Submission.Problem.Round.Contest.CreatedBy == organizerUserId);
+            }
+
+
             if (contestId.HasValue)
                 query = query.Where(f => f.Submission.Problem.Round.ContestId == contestId.Value);
 
@@ -2019,6 +2027,19 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status404NotFound,
                     ResponseCodeConstants.NOT_FOUND,
                     $"Fingerprint/submission {submissionId} not found");
+            }
+
+            if (!IsAdmin())
+            {
+                string organizerUserId = GetCurrentUserIdString();
+
+                if (fp.Submission.Problem?.Round?.Contest == null ||
+                    fp.Submission.Problem.Round.Contest.CreatedBy != organizerUserId)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "You do not have permission to view this plagiarism case.");
+                }
             }
 
             if (!string.Equals(fp.Submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
@@ -2102,6 +2123,7 @@ namespace BusinessLogic.Services.Submissions
                     .Where(s => s.SubmissionId == submissionId && s.DeletedAt == null)
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
+                        .ThenInclude(r => r.Contest)
                     .FirstOrDefaultAsync();
 
                 if (submission == null)
@@ -2109,6 +2131,19 @@ namespace BusinessLogic.Services.Submissions
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"Submission {submissionId} not found");
+                }
+
+                if (!IsAdmin())
+                {
+                    string organizerUserId = GetCurrentUserIdString();
+
+                    if (submission.Problem?.Round?.Contest == null ||
+                        submission.Problem.Round.Contest.CreatedBy != organizerUserId)
+                    {
+                        throw new ErrorException(StatusCodes.Status403Forbidden,
+                            ResponseCodeConstants.FORBIDDEN,
+                            "You do not have permission to resolve this plagiarism case.");
+                    }
                 }
 
                 if (!string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
@@ -2445,5 +2480,16 @@ namespace BusinessLogic.Services.Submissions
 
             return (text, total);
         }
+
+        private string GetCurrentUserIdString()
+        {
+            return _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status401Unauthorized,
+                    ResponseCodeConstants.UNAUTHORIZED,
+                    "User ID not found.");
+        }
+
+        private bool IsAdmin()
+            => _httpContextAccessor.HttpContext?.User?.IsInRole("Admin") == true;
     }
 }

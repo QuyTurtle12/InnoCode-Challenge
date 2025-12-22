@@ -5,16 +5,16 @@ using Repository.DTOs.PlagiarismDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 
-namespace InnoCode_Challenge_API.Controllers.Staffs
+namespace InnoCode_Challenge_API.Controllers.Organizers
 {
     [ApiController]
-    [Route("api/staff/plagiarism")]
-    [Authorize(Roles = "Staff,Admin")]
-    public class StaffPlagiarismController : ControllerBase
+    [Route("api/organizer/plagiarism")]
+    [Authorize(Roles = $"{RoleConstants.ContestOrganizer},{RoleConstants.Admin}")]
+    public class OrganizerPlagiarismController : ControllerBase
     {
         private readonly ISubmissionService _submissionService;
 
-        public StaffPlagiarismController(ISubmissionService submissionService)
+        public OrganizerPlagiarismController(ISubmissionService submissionService)
         {
             _submissionService = submissionService;
         }
