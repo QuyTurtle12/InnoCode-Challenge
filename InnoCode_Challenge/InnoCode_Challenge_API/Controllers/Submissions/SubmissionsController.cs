@@ -68,7 +68,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
         [Authorize(Policy = "RequireStudentRole")]
         public async Task<IActionResult> AcceptResult([Required] Guid submissionId)
         {
-            await _submissionService.AddScoreToTeamInLeaderboardAsync(submissionId);
+            await _submissionService.AcceptResultAsync(submissionId);
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
@@ -160,6 +160,42 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                         data: result,
                         message: "Submission retrieved successfully."
                     ));
+        }
+
+        /// <summary>
+        /// Create null auto-evaluation submission (accept 0 points and finish round)
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Submission result with 0 score</returns>
+        [HttpPost("/api/rounds/{roundId}/auto-evaluation/null-submission")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> CreateNullAutoSubmission(Guid roundId)
+        {
+            JudgeSubmissionResultDTO result = await _submissionService.CreateNullAutoSubmissionAsync(roundId);
+            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Null auto-evaluation submission accepted with 0 points."
+            ));
+        }
+
+        /// <summary>
+        /// Create null manual submission (accept 0 points and finish round)
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Submission ID</returns>
+        [HttpPost("/api/rounds/{roundId}/manual/null-submission")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> CreateNullManualSubmission(Guid roundId)
+        {
+            Guid submissionId = await _submissionService.CreateNullManualSubmissionAsync(roundId);
+            return Ok(new BaseResponseModel<Guid>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: submissionId,
+                message: "Null manual submission accepted with 0 points and round marked as finished."
+            ));
         }
     }
 }

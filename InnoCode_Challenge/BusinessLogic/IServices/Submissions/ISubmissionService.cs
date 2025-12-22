@@ -16,7 +16,7 @@ namespace BusinessLogic.IServices.Submissions
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
         Task<Guid> CreateFileSubmissionAsync(Guid roundId, IFormFile file);
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);
-        Task AddScoreToTeamInLeaderboardAsync(Guid submissionId);
+        Task AcceptResultAsync(Guid submissionId);
         Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO);
         Task<RubricEvaluationResultDTO> GetMyManualTestResultAsync(Guid roundId);
         Task<PaginatedList<RubricEvaluationResultDTO>> GetAllManualTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
@@ -34,6 +34,7 @@ namespace BusinessLogic.IServices.Submissions
 
         Task<PlagiarismSubmissionDetailDTO> GetPlagiarismSubmissionDetailAsync(Guid submissionId);
         Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto);
-
+        Task<JudgeSubmissionResultDTO> CreateNullAutoSubmissionAsync(Guid roundId);
+        Task<Guid> CreateNullManualSubmissionAsync(Guid roundId);
     }
 }

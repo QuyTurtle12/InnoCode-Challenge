@@ -265,6 +265,155 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
+        public async Task<QuizResultDTO> SubmitNullQuizAsync(Guid roundId)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Check round deadline before allowing quiz submission
+                await ValidateRoundDeadlineAsync(roundId, "submit quiz");
+
+                // Get user ID from JWT token
+                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Null User Id");
+
+                // Get student ID from user ID
+                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
+                    .Select(s => s.StudentId)
+                    .FirstOrDefault();
+
+                // Check if student has already finished this round
+                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+                if (IsAlreadyFinishedRound)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        $"Cannot submit. You have already finished this round.");
+                }
+
+                // Verify the MCQ test exists
+                IGenericRepository<McqTest> mcqTestRepo = _unitOfWork.GetRepository<McqTest>();
+                McqTest? mcqTest = await mcqTestRepo
+                    .Entities
+                    .Where(t => t.RoundId == roundId)
+                    .FirstOrDefaultAsync();
+
+                if (mcqTest == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"MCQ Test in Round ID {roundId} not found");
+                }
+
+                // Get all test questions with weights
+                IGenericRepository<McqTestQuestion> testQuestionRepo = _unitOfWork.GetRepository<McqTestQuestion>();
+                Dictionary<Guid, double> questionWeights = await testQuestionRepo.Entities
+                    .Where(tq => tq.TestId == mcqTest.TestId)
+                    .ToDictionaryAsync(tq => tq.QuestionId, tq => tq.Weight);
+
+                // Create MCQ attempt record with 0 score
+                IGenericRepository<McqAttempt> attemptRepo = _unitOfWork.GetRepository<McqAttempt>();
+                McqAttempt attempt = new McqAttempt
+                {
+                    AttemptId = Guid.NewGuid(),
+                    TestId = mcqTest.TestId,
+                    RoundId = mcqTest.RoundId,
+                    StudentId = studentId,
+                    Start = DateTime.UtcNow,
+                    End = DateTime.UtcNow,
+                    Score = 0 // Null submission = 0 score
+                };
+
+                await attemptRepo.InsertAsync(attempt);
+                await _unitOfWork.SaveAsync();
+
+                int totalQuestions = questionWeights.Count;
+                double totalPossibleWeight = questionWeights.Values.Sum();
+
+                // Get contest ID from the round
+                Guid contestId = await _unitOfWork.GetRepository<Round>().Entities
+                    .Where(r => r.RoundId == mcqTest.RoundId)
+                    .Select(r => r.ContestId)
+                    .FirstOrDefaultAsync();
+
+                // Get the team ID from the student
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                Guid? teamId = await teamMemberRepo.Entities
+                    .Include(tm => tm.Team)
+                    .Where(tm => tm.StudentId == studentId && tm.Team.ContestId == contestId)
+                    .Select(tm => tm.TeamId)
+                    .FirstOrDefaultAsync();
+
+                // Update team score in leaderboard if team exists
+                if (teamId.HasValue && contestId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _leaderboardService.UpdateTeamScoreAsync(contestId, teamId.Value);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to update leaderboard: {ex.Message}");
+                    }
+                }
+
+                // Get test name
+                string testName = mcqTest.Name ?? "Unknown Test";
+
+                // Get user full name
+                string? userFullName = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
+                    ?? "Unknown User";
+
+                // Create result DTO
+                QuizResultDTO result = new QuizResultDTO
+                {
+                    AttemptId = attempt.AttemptId,
+                    TestId = mcqTest.TestId,
+                    TestName = testName,
+                    StudentId = studentId,
+                    StudentName = userFullName,
+                    SubmittedAt = DateTime.UtcNow,
+                    TotalQuestions = totalQuestions,
+                    CorrectAnswers = 0,
+                    TotalPossibleScore = totalPossibleWeight,
+                    Score = 0,
+                    AnswerResults = new List<QuizAnswerResultDTO>()
+                };
+
+                // Mark as finished for the round
+                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+
+                // Remove any stored current answers snapshot
+                string snapshotKey = ConfigKeys.RoundStudent(roundId, studentId);
+                _memoryCache.Remove(snapshotKey);
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error processing null quiz submission: {ex.Message}");
+            }
+        }
+
         public async Task<QuizResultDTO> GetQuizAttemptResultAsync(Guid attemptId)
         {
             try
