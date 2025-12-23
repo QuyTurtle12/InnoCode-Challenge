@@ -23,6 +23,15 @@ namespace BusinessLogic.Services.Users
         private readonly IUOW _uow;
         private readonly ICloudinaryService _cloudinary;
         private readonly ILogger<RoleRegistrationService> _logger;
+        private static readonly Dictionary<string, string> RoleAliases = new(StringComparer.OrdinalIgnoreCase)
+        {
+            { "staff", RoleConstants.Staff },
+            { "organizer", RoleConstants.ContestOrganizer },
+            { "contestorganizer", RoleConstants.ContestOrganizer },
+            { "judge", RoleConstants.Judge },
+            { "schoolmanager", RoleConstants.SchoolManager },
+            { "admin", RoleConstants.Admin }
+        };
 
         public RoleRegistrationService(IUOW uow, ICloudinaryService cloudinary, ILogger<RoleRegistrationService> logger)
         {
@@ -340,22 +349,13 @@ namespace BusinessLogic.Services.Users
             if (string.IsNullOrWhiteSpace(r))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "ROLE_REQUIRED", "RequestedRole is required.");
 
-            r = r.ToLowerInvariant();
+            if (RoleAliases.TryGetValue(r, out var normalized))
+                return normalized;
 
-            // allow both friendly names and RoleConstants values
-            if (r == "staff" || r == RoleConstants.Staff.ToLowerInvariant())
-                return RoleConstants.Staff;
-
-            if (r == "organizer" || r == "contestorganizer" || r == RoleConstants.ContestOrganizer.ToLowerInvariant())
-                return RoleConstants.ContestOrganizer;
-
-            if (r == "judge" || r == RoleConstants.Judge.ToLowerInvariant())
-                return RoleConstants.Judge;
-
-            if (r == "schoolmanager" || r == RoleConstants.SchoolManager.ToLowerInvariant())
-                return RoleConstants.SchoolManager;
-
-            throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_ROLE", "RequestedRole must be staff, organizer, or judge.");
+            throw new ErrorException(
+                StatusCodes.Status400BadRequest,
+                "INVALID_ROLE",
+                "RequestedRole must be staff, organizer, judge, schoolmanager, or admin.");
         }
     }
 }

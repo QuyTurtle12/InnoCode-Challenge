@@ -194,6 +194,49 @@ namespace Api.IntegrationTests.Users
         }
 
         [Fact]
+        public async Task Submit_WhenRoleSchoolManager_ShouldReturn201Pending()
+        {
+            var email = NewEmail("schoolmanager");
+            var password = "P@ssword123!";
+
+            var submitted = await SubmitAsync("schoolmanager", email, password);
+
+            submitted.RegistrationId.Should().NotBe(Guid.Empty);
+            submitted.Status.Should().Be(RoleRegistrationStatusConstants.Pending);
+        }
+
+        [Fact]
+        public async Task Submit_WhenRoleAdmin_ShouldReturn201Pending()
+        {
+            var email = NewEmail("adminrole");
+            var password = "P@ssword123!";
+
+            var submitted = await SubmitAsync("admin", email, password);
+
+            submitted.RegistrationId.Should().NotBe(Guid.Empty);
+            submitted.Status.Should().Be(RoleRegistrationStatusConstants.Pending);
+        }
+
+        [Fact]
+        public async Task Submit_WhenRoleStudent_ShouldReturn400_INVALID_ROLE()
+        {
+            var email = NewEmail("studentrole");
+            using var form = BuildSubmitForm(
+                requestedRole: "student",
+                fullName: "Role Registrant",
+                email: email,
+                password: "P@ssword123!",
+                confirmPassword: "P@ssword123!",
+                evidenceBytes: new byte[] { 1 });
+
+            var res = await _client.PostAsync("/api/role-registrations", form);
+            res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            var err = await res.ReadErrorAsync();
+            err.ErrorCode.Should().Be("INVALID_ROLE");
+        }
+
+        [Fact]
         public async Task Submit_WhenEmailAlreadyRegistered_ShouldReturn409_EMAIL_EXISTS()
         {
             using var form = BuildSubmitForm(

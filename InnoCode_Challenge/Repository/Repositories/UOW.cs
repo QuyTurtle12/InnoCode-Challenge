@@ -50,7 +50,7 @@ namespace Repository.Repositories
             if (!_dbContext.Database.IsRelational())
                 return;
 
-            _dbContext.Database.BeginTransaction();
+            _transaction ??= _dbContext.Database.BeginTransaction();
         }
 
         public void CommitTransaction()
