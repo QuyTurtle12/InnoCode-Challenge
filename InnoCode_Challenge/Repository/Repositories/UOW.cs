@@ -1,6 +1,8 @@
 ﻿using DataAccess.Entities;
+using Microsoft.EntityFrameworkCore;
 using Repository.IRepositories;
-using Repository.Repositories;
+using Microsoft.EntityFrameworkCore;             
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Repository.Repositories
 {
@@ -8,6 +10,7 @@ namespace Repository.Repositories
     {
         private bool disposed = false;
         private readonly ContestDbContext _dbContext;
+        private IDbContextTransaction? _transaction;
         public UOW(ContestDbContext dbContext)
         {
             _dbContext = dbContext;
@@ -31,6 +34,7 @@ namespace Repository.Repositories
             {
                 if (disposing)
                 {
+                    _transaction?.Dispose();
                     _dbContext.Dispose();
                 }
             }
@@ -43,17 +47,30 @@ namespace Repository.Repositories
         }
         public void BeginTransaction()
         {
+            if (!_dbContext.Database.IsRelational())
+                return;
+
             _dbContext.Database.BeginTransaction();
         }
 
         public void CommitTransaction()
         {
-            _dbContext.Database.CommitTransaction();
+            if (_transaction is null)
+                return;
+
+            _transaction.Commit();
+            _transaction.Dispose();
+            _transaction = null;
         }
 
         public void RollBack()
         {
-            _dbContext.Database.RollbackTransaction();
+            if (_transaction is null)
+                return;
+
+            _transaction.Rollback();
+            _transaction.Dispose();
+            _transaction = null;
         }
 
     }
