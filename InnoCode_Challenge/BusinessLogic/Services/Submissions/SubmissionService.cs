@@ -8,16 +8,18 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.PlagiarismDTOs;
-using Repository.DTOs.PlagiarismDTOs.Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionArtifactDTOs;
 using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
+using SharpCompress.Archives;
 using System;
+using System.IO.Compression;
 using System.Linq;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
+using System.Text;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -49,6 +51,16 @@ namespace BusinessLogic.Services.Submissions
         private const string STATUS_PLAGIARISM_CONFIRMED = "PlagiarismConfirmed";
         private const string FP_ALGORITHM = "sha256_py_v1";
         private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
+        private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;       //25 MB 
+        private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;        //2 MB all .py files
+        private const int MAX_PY_FILES = 50;
+
+        // ignore these file in archive
+        private static readonly string[] IGNORE_PATH_CONTAINS = new[]
+        {
+            "__pycache__", "/venv/", "\\venv\\", "/.venv/", "\\.venv\\",
+            "site-packages", "/dist/", "\\dist\\", "/build/", "\\build\\"
+        };
 
         // Constructor
         public SubmissionService(
@@ -900,6 +912,21 @@ namespace BusinessLogic.Services.Submissions
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
 
+                var problemRepo = _unitOfWork.GetRepository<Problem>();
+                Problem? problem = await problemRepo.Entities
+                    .Where(p => p.ProblemId == problemId && p.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                if (problem != null)
+                {
+                    string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
+
+                    if (!string.IsNullOrWhiteSpace(combinedNormalized))
+                    {
+                        await CheckAndFlagPlagiarismNormalizedAsync(submission, problem, combinedNormalized);
+                        // CheckAndFlagPlagiarismAsync sẽ tự SaveAsync và nếu match thì set Status = PlagiarismSuspected
+                    }
+                }
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
@@ -1810,7 +1837,7 @@ namespace BusinessLogic.Services.Submissions
                     .Where(s => s.Problem.RoundId == roundId
                         && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
                         && !s.DeletedAt.HasValue)
-                    .Include(s => s.Team) 
+                    .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
                         .ThenInclude(st => st!.User)
                     .Include(s => s.SubmissionDetails)
@@ -2003,8 +2030,8 @@ namespace BusinessLogic.Services.Submissions
                 if (!string.IsNullOrWhiteSpace(studentName))
                 {
                     string formattedStudentName = studentName.Trim();
-                    query = query.Where(s => s.SubmittedByStudent != null 
-                                        && s.SubmittedByStudent.User != null 
+                    query = query.Where(s => s.SubmittedByStudent != null
+                                        && s.SubmittedByStudent.User != null
                                         && s.SubmittedByStudent.User.Fullname.Contains(formattedStudentName));
                 }
 
@@ -2196,6 +2223,14 @@ namespace BusinessLogic.Services.Submissions
                 .Include(f => f.Submission.SubmittedByStudent)
                     .ThenInclude(st => st.User);
 
+            if (!IsAdmin())
+            {
+                string organizerUserId = GetCurrentUserIdString();
+
+                query = query.Where(f => f.Submission.Problem.Round.Contest.CreatedBy == organizerUserId);
+            }
+
+
             if (contestId.HasValue)
                 query = query.Where(f => f.Submission.Problem.Round.ContestId == contestId.Value);
 
@@ -2262,6 +2297,19 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status404NotFound,
                     ResponseCodeConstants.NOT_FOUND,
                     $"Fingerprint/submission {submissionId} not found");
+            }
+
+            if (!IsAdmin())
+            {
+                string organizerUserId = GetCurrentUserIdString();
+
+                if (fp.Submission.Problem?.Round?.Contest == null ||
+                    fp.Submission.Problem.Round.Contest.CreatedBy != organizerUserId)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "You do not have permission to view this plagiarism case.");
+                }
             }
 
             if (!string.Equals(fp.Submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
@@ -2345,6 +2393,7 @@ namespace BusinessLogic.Services.Submissions
                     .Where(s => s.SubmissionId == submissionId && s.DeletedAt == null)
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
+                        .ThenInclude(r => r.Contest)
                     .FirstOrDefaultAsync();
 
                 if (submission == null)
@@ -2352,6 +2401,19 @@ namespace BusinessLogic.Services.Submissions
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         $"Submission {submissionId} not found");
+                }
+
+                if (!IsAdmin())
+                {
+                    string organizerUserId = GetCurrentUserIdString();
+
+                    if (submission.Problem?.Round?.Contest == null ||
+                        submission.Problem.Round.Contest.CreatedBy != organizerUserId)
+                    {
+                        throw new ErrorException(StatusCodes.Status403Forbidden,
+                            ResponseCodeConstants.FORBIDDEN,
+                            "You do not have permission to resolve this plagiarism case.");
+                    }
                 }
 
                 if (!string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
@@ -2371,7 +2433,7 @@ namespace BusinessLogic.Services.Submissions
                 {
                     submission.Status = SubmissionStatusEnum.Finished.ToString();
                 }
-                else 
+                else
                 {
                     submission.Status = STATUS_PLAGIARISM_CONFIRMED;
                     submission.Score = 0;
@@ -2408,11 +2470,25 @@ namespace BusinessLogic.Services.Submissions
             Problem problem,
             string sourceCode)
         {
-            // Normalize -> hash
             string normalized = PlagiarismHelpers.NormalizePython(sourceCode, removeTripleQuoted: true);
+            return await CheckAndFlagPlagiarismCoreAsync(submission, problem, normalized);
+        }
 
+        private async Task<(bool suspected, Guid? matchedSubmissionId)> CheckAndFlagPlagiarismNormalizedAsync(
+            Submission submission,
+            Problem problem,
+            string normalized)
+        {
+            return await CheckAndFlagPlagiarismCoreAsync(submission, problem, normalized);
+        }
+
+        private async Task<(bool suspected, Guid? matchedSubmissionId)> CheckAndFlagPlagiarismCoreAsync(
+            Submission submission,
+            Problem problem,
+            string normalized)
+        {
             // Avoid false positives on tiny/template code
-            if (normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
                 return (false, null);
 
             string hash = PlagiarismHelpers.Sha256Hex(normalized);
@@ -2426,7 +2502,7 @@ namespace BusinessLogic.Services.Submissions
                     f.ProblemId == problem.ProblemId &&
                     f.Hash == hash &&
                     f.TeamId != submission.TeamId &&
-                    f.Submission.DeletedAt == null)   
+                    f.Submission.DeletedAt == null)
                 .Select(f => (Guid?)f.SubmissionId)
                 .FirstOrDefaultAsync();
 
@@ -2443,14 +2519,12 @@ namespace BusinessLogic.Services.Submissions
                 CreatedAt = DateTime.UtcNow
             };
 
-            // Avoid duplicate fingerprints
             bool exists = await fpRepo.Entities.AnyAsync(x => x.SubmissionId == submission.SubmissionId);
             if (!exists)
             {
                 await fpRepo.InsertAsync(fp);
             }
 
-            // If duplicate found -> set status for staff review
             if (matchedId.HasValue)
             {
                 var submissionRepo = _unitOfWork.GetRepository<Submission>();
@@ -2464,5 +2538,228 @@ namespace BusinessLogic.Services.Submissions
             return (matchedId.HasValue, matchedId);
         }
 
+        private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
+        {
+            try
+            {
+                if (archiveFile == null || archiveFile.Length <= 0) return null;
+                if (archiveFile.Length > MAX_ARCHIVE_BYTES) return null;
+
+                string ext = Path.GetExtension(archiveFile.FileName).ToLowerInvariant();
+                if (ext != ".zip" && ext != ".rar") return null;
+
+                using var input = archiveFile.OpenReadStream();
+                using var ms = new MemoryStream(capacity: (int)Math.Min(archiveFile.Length, int.MaxValue));
+
+                await input.CopyToAsync(ms);
+                ms.Position = 0;
+
+                List<string> normalizedPieces = ext == ".zip"
+                    ? await ReadZipPythonAsync(ms)
+                    : await ReadRarPythonAsync(ms);
+
+                // Keep only meaningful pieces
+                normalizedPieces = normalizedPieces
+                    .Where(s => !string.IsNullOrWhiteSpace(s) && s.Length >= MIN_NORMALIZED_LEN_TO_CHECK)
+                    .ToList();
+
+                if (!normalizedPieces.Any()) return null;
+
+                // Order pieces by hash 
+                var ordered = normalizedPieces
+                    .Select(s => new { Code = s, H = PlagiarismHelpers.Sha256Hex(s) })
+                    .OrderBy(x => x.H, StringComparer.Ordinal)
+                    .Select(x => x.Code);
+
+                string combined = string.Concat(ordered);
+
+                if (combined.Length < MIN_NORMALIZED_LEN_TO_CHECK) return null;
+
+                return combined;
+            }
+            catch
+            {
+                return null;
+            }
+
+        }
+
+        private async Task<List<string>> ReadZipPythonAsync(Stream zipStream)
+        {
+            if (zipStream == null) return new List<string>();
+
+            zipStream.Position = 0;
+
+            var results = new List<string>();
+            long totalBytes = 0;
+
+            using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
+
+            foreach (var entry in zip.Entries)
+            {
+                try
+                {
+                    if (results.Count >= MAX_PY_FILES) break;
+                    if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
+
+                    if (string.IsNullOrWhiteSpace(entry.FullName) || entry.FullName.EndsWith("/")) continue;
+                    if (!entry.FullName.EndsWith(".py", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string path = entry.FullName.Replace('\\', '/');
+                    if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    if (entry.Length <= 0) continue;
+
+                    long remaining = MAX_TOTAL_PY_BYTES - totalBytes;
+                    if (remaining <= 0) break;
+
+                    // 
+                    if (entry.Length > remaining) continue;
+
+                    if (entry.Length > int.MaxValue) continue;
+
+                    using var entryStream = entry.Open();
+
+                    var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, (int)entry.Length);
+                    if (raw == null) continue;
+
+                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        results.Add(normalized);
+
+                    totalBytes += bytesRead; // bytesRead ~ entry.Length
+                }
+                catch
+                {
+                    continue; 
+                }
+
+            }
+
+            return results;
+        }
+        private async Task<List<string>> ReadRarPythonAsync(Stream rarStream)
+        {
+            if (rarStream == null) return new List<string>();
+
+            rarStream.Position = 0;
+
+            var results = new List<string>();
+            long totalBytes = 0;
+
+            using var archive = ArchiveFactory.Open(rarStream);
+
+            foreach (var entry in archive.Entries)
+            {
+                try
+                {
+
+                    if (results.Count >= MAX_PY_FILES) break;
+                    if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
+
+                    if (entry.IsDirectory) continue;
+                    if (string.IsNullOrWhiteSpace(entry.Key)) continue;
+                    if (!entry.Key.EndsWith(".py", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string path = entry.Key.Replace('\\', '/');
+                    if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    long remaining = MAX_TOTAL_PY_BYTES - totalBytes;
+                    if (remaining <= 0) break;
+
+                    long? entrySize = null;
+                    try { entrySize = (long)entry.Size; } catch { entrySize = null; }
+
+                    if (entrySize.HasValue && entrySize.Value > remaining) continue;
+
+                    int limit = (int)Math.Min(remaining, int.MaxValue);
+
+                    using var entryStream = entry.OpenEntryStream();
+
+                    var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, limit);
+                    if (raw == null) continue;
+
+
+                    if (entrySize.HasValue && bytesRead != (int)entrySize.Value)
+                    {
+                        continue;
+                    }
+
+                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        results.Add(normalized);
+
+                    totalBytes += bytesRead;
+                }
+                catch
+                {
+                    continue;
+                }
+
+            }
+
+            return results;
+        }
+
+        private static async Task<(string? Text, int BytesRead)> ReadAllTextWithinLimitAsync(Stream stream, int maxBytes)
+        {
+            if (stream == null || maxBytes <= 0) return (string.Empty, 0);
+
+            byte[] buffer = new byte[81920];
+            int total = 0;
+
+            using var ms = new MemoryStream(capacity: Math.Min(maxBytes, 1024 * 1024));
+
+            while (true)
+            {
+                int remaining = maxBytes - total;
+                if (remaining <= 0)
+                {
+                    // check if stream still has more data -> too large
+                    int extra = await stream.ReadAsync(buffer, 0, 1);
+                    if (extra > 0) return (null, total + extra);
+                    break;
+                }
+
+                int read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, remaining));
+                if (read <= 0) break;
+
+                ms.Write(buffer, 0, read);
+                total += read;
+            }
+
+            byte[] bytes = ms.ToArray();
+
+            // Try UTF-8 strict first, fallback to Latin1
+            string text;
+            try
+            {
+                var utf8Strict = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+                text = utf8Strict.GetString(bytes);
+            }
+            catch
+            {
+                text = Encoding.Latin1.GetString(bytes);
+            }
+
+            // Remove BOM
+            if (!string.IsNullOrEmpty(text) && text[0] == '\uFEFF')
+                text = text.TrimStart('\uFEFF');
+
+            return (text, total);
+        }
+
+        private string GetCurrentUserIdString()
+        {
+            return _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status401Unauthorized,
+                    ResponseCodeConstants.UNAUTHORIZED,
+                    "User ID not found.");
+        }
+
+        private bool IsAdmin()
+            => _httpContextAccessor.HttpContext?.User?.IsInRole("Admin") == true;
     }
 }

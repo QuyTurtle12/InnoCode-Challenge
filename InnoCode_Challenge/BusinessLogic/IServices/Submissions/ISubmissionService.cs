@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.PlagiarismDTOs;
-using Repository.DTOs.PlagiarismDTOs.Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Utility.Enums;

@@ -6,8 +6,6 @@ using System.Threading.Tasks;
 
 namespace Repository.DTOs.PlagiarismDTOs
 {
-    namespace Repository.DTOs.PlagiarismDTOs
-    {
         public class PlagiarismQueueItemDTO
         {
             public Guid SubmissionId { get; set; }
@@ -31,5 +29,4 @@ namespace Repository.DTOs.PlagiarismDTOs
             public string Algorithm { get; set; } = string.Empty;
             public int NormalizedLength { get; set; }
         }
-    }
 }
