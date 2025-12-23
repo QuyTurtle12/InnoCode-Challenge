@@ -14,6 +14,7 @@ using System.Security.Claims;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
+using Utility.ConfigDTOs;
 using Xunit;
 
 
@@ -98,7 +99,7 @@ namespace BusinessLogic.UnitTests.Users
             // 8) Mapper (hiện chưa dùng)
             var mapper = Mock.Of<IMapper>();
 
-            return new AuthService(uowMock.Object, mapper, jwtOptions, httpAccessor.Object);
+            return new AuthService(uowMock.Object, jwtOptions, httpAccessor.Object);
         }
 
         // =========================
