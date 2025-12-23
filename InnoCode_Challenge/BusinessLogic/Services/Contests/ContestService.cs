@@ -179,6 +179,9 @@ namespace BusinessLogic.Services.Contests
                     .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
                         .ThenInclude(r => r.McqTest);
 
+                string? userRole = _httpContextAccessor.HttpContext?.User?
+                        .FindFirstValue(ClaimTypes.Role);
+
                 // Get contests where the current logged-in student is a participant
                 if (isMyParticipatedContest)
                 {
@@ -189,27 +192,55 @@ namespace BusinessLogic.Services.Contests
                     // If user ID is available, get the corresponding student ID
                     if (!string.IsNullOrEmpty(userId))
                     {
-                        // Get student repository
-                        IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-
-                        // Find the student ID associated with the user ID
-                        Guid? studentId = await studentRepo.Entities
-                            .Where(s => s.UserId.ToString() == userId && s.DeletedAt == null)
-                            .Select(s => s.StudentId)
-                            .FirstOrDefaultAsync();
-
-                        // If student ID is found, filter contests accordingly
-                        if (studentId.HasValue)
+                        if (userRole == RoleConstants.Student)
                         {
-                            // Include Teams and TeamMembers for filtering
-                            query = query.Include(c => c.Teams)
-                                         .ThenInclude(t => t.TeamMembers);
+                            // Get student repository
+                            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
 
-                            // Filter contests where student is in a team
-                            query = query.Where(c => c.Teams.Any(t =>
-                                t.TeamMembers.Any(tm => tm.StudentId == studentId.Value)
-                                && t.DeletedAt == null));
+                            // Find the student ID associated with the user ID
+                            Guid? studentId = await studentRepo.Entities
+                                .Where(s => s.UserId.ToString() == userId && s.DeletedAt == null)
+                                .Select(s => s.StudentId)
+                                .FirstOrDefaultAsync();
+
+                            // If student ID is found, filter contests accordingly
+                            if (studentId.HasValue)
+                            {
+                                // Include Teams and TeamMembers for filtering
+                                query = query.Include(c => c.Teams)
+                                             .ThenInclude(t => t.TeamMembers);
+
+                                // Filter contests where student is in a team
+                                query = query.Where(c => c.Teams.Any(t =>
+                                    t.TeamMembers.Any(tm => tm.StudentId == studentId.Value)
+                                    && t.DeletedAt == null));
+                            }
                         }
+
+                        if (userRole == RoleConstants.Mentor)
+                        {
+                            // Get mentor repository
+                            IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+
+                            // Find the mentor ID associated with the user ID
+                            Guid? mentorId = await mentorRepo.Entities
+                                .Where(m => m.UserId.ToString() == userId && m.DeletedAt == null)
+                                .Select(m => m.MentorId)
+                                .FirstOrDefaultAsync();
+
+                            // If mentor ID is found, filter contests accordingly
+                            if (mentorId.HasValue)
+                            {
+                                // Include Teams and Mentors for filtering
+                                query = query.Include(c => c.Teams);
+
+                                // Filter contests where mentor is in a team
+                                query = query.Where(c => c.Teams.Any(t =>
+                                    t.MentorId == mentorId.Value
+                                 && t.DeletedAt == null));
+                            }
+                        }
+
                     }
                 }
 
@@ -225,6 +256,12 @@ namespace BusinessLogic.Services.Contests
                     {
                         query = query.Where(c => c.CreatedBy == userId);
                     }
+                }
+
+                // For non-organizers/admins/staff, don't show draft contests
+                if (userRole != RoleConstants.ContestOrganizer && userRole != RoleConstants.Admin && userRole != RoleConstants.Staff)
+                {
+                    query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
                 }
 
                 // Apply filters if provided

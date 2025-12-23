@@ -897,6 +897,10 @@ public partial class ContestDbContext : DbContext
                 .HasDefaultValue("python3")
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("language");
+            entity.Property(e => e.MockTestUrl)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("mock_test_url");
             entity.Property(e => e.PenaltyRate).HasColumnName("penalty_rate");
             entity.Property(e => e.RoundId).HasColumnName("round_id");
             entity.Property(e => e.TemplateUrl)

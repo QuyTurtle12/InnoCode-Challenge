@@ -157,6 +157,9 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireStaffOrAdmin",
                     policy => policy.RequireRole(RoleConstants.Staff, RoleConstants.Admin));
 
+                options.AddPolicy("RequireStudentOrMentor",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor));
+
                 options.AddPolicy("RequireAnyUserRole",
                     policy => policy.RequireRole(
                         RoleConstants.Student,
@@ -348,6 +351,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IRoleRegistrationService, RoleRegistrationService>();
             services.AddScoped<ISchoolCreationRequestService, SchoolCreationRequestService>();
             services.AddScoped<IMentorManagementService, MentorManagementService>();
+            services.AddScoped<IMockTestExecutor, MockTestExecutor>();
         }
     }
 }
