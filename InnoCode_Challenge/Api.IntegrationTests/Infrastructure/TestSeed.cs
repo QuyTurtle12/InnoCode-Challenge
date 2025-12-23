@@ -8,6 +8,7 @@ namespace Api.IntegrationTests.Infrastructure
     {
         // Lưu lại ID để test dùng
         public static Guid SchoolId { get; private set; }
+        private static readonly Guid DefaultSchoolId = Guid.Parse("11111111-1111-1111-1111-111111111111");
         public static string AdminEmail { get; private set; } = "admin@test.com";
         public static string AdminPassword { get; private set; } = "P@ssword123!";
 
@@ -15,23 +16,20 @@ namespace Api.IntegrationTests.Infrastructure
         {
             var now = DateTime.UtcNow;
 
-            if (!db.Schools.Any())
+            var school = db.Schools.FirstOrDefault(s => s.SchoolId == DefaultSchoolId);
+            if (school == null)
             {
-                var school = new School
+                school = new School
                 {
-                    SchoolId = Guid.NewGuid(),
+                    SchoolId = DefaultSchoolId,
                     Name = "Test School",
                     ProvinceId = Guid.Parse("2ef61ca0-ed88-4a43-b842-7c0d059e3506"),
                     CreatedAt = now,
                     DeletedAt = null
                 };
-                SchoolId = school.SchoolId;
                 db.Schools.Add(school);
             }
-            else
-            {
-                SchoolId = db.Schools.Select(s => s.SchoolId).First();
-            }
+            SchoolId = school.SchoolId;
 
             if (!db.Users.Any(u => u.Email == AdminEmail.ToLower() && u.DeletedAt == null))
             {

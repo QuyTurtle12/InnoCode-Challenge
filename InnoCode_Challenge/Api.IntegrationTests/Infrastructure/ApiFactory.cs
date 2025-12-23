@@ -1,23 +1,23 @@
-﻿using DataAccess.Entities;
+using BusinessLogic.IServices.FileStorages;
+using DataAccess.Entities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Api.IntegrationTests.Infrastructure;
 
 public class ApiFactory : WebApplicationFactory<Program>
 {
-    // Root này giúp InMemory DB dùng chung giữa các service provider
+    // Root nay giup InMemory DB dung chung giua cac service provider
     private readonly InMemoryDatabaseRoot _dbRoot = new();
     private const string DbName = "TestDb";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-
         builder.UseEnvironment("Testing");
 
         builder.ConfigureLogging(logging =>
@@ -45,6 +45,12 @@ public class ApiFactory : WebApplicationFactory<Program>
             var descriptor = services.SingleOrDefault(
                 d => d.ServiceType == typeof(DbContextOptions<ContestDbContext>));
             if (descriptor != null) services.Remove(descriptor);
+
+            // Replace Cloudinary with a fake to avoid network calls in tests
+            var cloudDescriptor = services.SingleOrDefault(
+                d => d.ServiceType == typeof(ICloudinaryService));
+            if (cloudDescriptor != null) services.Remove(cloudDescriptor);
+            services.AddSingleton<ICloudinaryService, FakeCloudinaryService>();
 
             // IMPORTANT: use same DbName + shared _dbRoot
             services.AddDbContext<ContestDbContext>(opt =>
