@@ -422,122 +422,143 @@ namespace BusinessLogic.Services.Contests
         }
         public async Task AcceptByCodeAsync(string inviteCode, string email)
         {
-            if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
-
-            var normEmail = email.Trim().ToLowerInvariant();
-
-            var inviteRepo = _uow.GetRepository<JudgeInvite>();
-            var configRepo = _uow.GetRepository<Config>();
-
-            var invite = await inviteRepo.Entities
-                .Where(i => i.InviteCode == inviteCode)
-                .Include(i => i.Contest)
-                .Include(i => i.Judge)
-                .FirstOrDefaultAsync();
-
-            if (invite == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
-
-            if (invite.Status != Pending)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invite is not pending.");
-
-            if (!invite.ExpiresAt.HasValue || invite.ExpiresAt.Value <= DateTime.UtcNow)
+            try
             {
-                invite.Status = Expired;
+                if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
+
+                var normEmail = email.Trim().ToLowerInvariant();
+
+                var inviteRepo = _uow.GetRepository<JudgeInvite>();
+                var configRepo = _uow.GetRepository<Config>();
+
+                var invite = await inviteRepo.Entities
+                    .Where(i => i.InviteCode == inviteCode)
+                    .Include(i => i.Contest)
+                    .Include(i => i.Judge)
+                    .FirstOrDefaultAsync();
+
+                if (invite == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
+
+                if (invite.Status != Pending)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invite is not pending.");
+
+                if (!invite.ExpiresAt.HasValue || invite.ExpiresAt.Value <= DateTime.UtcNow)
+                {
+                    invite.Status = Expired;
+                    inviteRepo.Update(invite);
+                    await _uow.SaveAsync();
+                    throw new ErrorException(StatusCodes.Status410Gone, ResponseCodeConstants.GONE, "Invite has expired.");
+                }
+
+                if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
+
+                if (invite.Judge.Role != RoleConstants.Judge)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User must have Judge role.");
+
+                if (!string.Equals(invite.Judge.Email.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
+                    throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
+
+                bool alreadyAssigned = await IsJudgeAssignedToContestAsync(invite.ContestId, invite.JudgeId, configRepo);
+                if (alreadyAssigned)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.EXISTED, "You are already assigned to this contest.");
+
+                string configKey = ConfigKeys.ContestJudge(invite.ContestId, invite.JudgeId);
+                var config = new Config
+                {
+                    Key = configKey,
+                    Value = "active",
+                    Scope = "contest",
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await configRepo.InsertAsync(config);
+
+                invite.Status = Accepted;
+                invite.AcceptedAt = DateTime.UtcNow;
                 inviteRepo.Update(invite);
+
                 await _uow.SaveAsync();
-                throw new ErrorException(StatusCodes.Status410Gone, ResponseCodeConstants.GONE, "Invite has expired.");
+
+                // log activity
+                await _logWriter.TryWriteAsync(invite.JudgeId,
+                    ActivityActions.JudgeInviteAccepted,
+                    TargetTypes.JudgeInvite,
+                    invite.InviteId.ToString());
+
+                // notify inviter
+                var inviterId = TryParseGuid(invite.CreatedBy);
+                if (inviterId.HasValue)
+                {
+                    await TryNotifyInviterAcceptedAsync(inviterId.Value, invite);
+                }
             }
-
-            if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
-
-            if (invite.Judge.Role != RoleConstants.Judge)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User must have Judge role.");
-
-            if (!string.Equals(invite.Judge.Email.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
-                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
-
-            bool alreadyAssigned = await IsJudgeAssignedToContestAsync(invite.ContestId, invite.JudgeId, configRepo);
-            if (alreadyAssigned)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.EXISTED, "You are already assigned to this contest.");
-
-            string configKey = ConfigKeys.ContestJudge(invite.ContestId, invite.JudgeId);
-            var config = new Config
+            catch (Exception ex)
             {
-                Key = configKey,
-                Value = "active",
-                Scope = "contest",
-                UpdatedAt = DateTime.UtcNow
-            };
+                if (ex is ErrorException)
+                    throw;
 
-            await configRepo.InsertAsync(config);
-
-            invite.Status = Accepted;
-            invite.AcceptedAt = DateTime.UtcNow;
-            inviteRepo.Update(invite);
-
-            await _uow.SaveAsync();
-
-            // log activity
-            await _logWriter.TryWriteAsync(invite.JudgeId,
-                ActivityActions.JudgeInviteAccepted,
-                TargetTypes.JudgeInvite,
-                invite.InviteId.ToString());
-
-            // notify inviter
-            var inviterId = TryParseGuid(invite.CreatedBy);
-            if (inviterId.HasValue)
-            {
-                await TryNotifyInviterAcceptedAsync(inviterId.Value, invite);
+                throw new ErrorException(StatusCodes.Status500InternalServerError, ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    "An error occurred while accepting the invite: " + ex.Message);
             }
         }
 
         public async Task DeclineByCodeAsync(string inviteCode, string email)
         {
-            if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
-
-            var normEmail = email.Trim().ToLowerInvariant();
-
-            var inviteRepo = _uow.GetRepository<JudgeInvite>();
-
-            var invite = await inviteRepo.Entities
-                .Where(i => i.InviteCode == inviteCode)
-                .Include(i => i.Contest)
-                .Include(i => i.Judge)
-                .FirstOrDefaultAsync();
-
-            if (invite == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
-
-            if (invite.Status != Pending)
-                throw new ErrorException(StatusCodes.Status409Conflict, ResponseCodeConstants.CONFLICT, "Invite is not pending.");
-
-            if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
-
-            if (!string.Equals(invite.Judge.Email.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
-                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
-
-            invite.Status = Declined;
-            inviteRepo.Update(invite);
-            await _uow.SaveAsync();
-
-            // log activity
-            await _logWriter.TryWriteAsync(invite.JudgeId,
-                ActivityActions.JudgeInviteDeclined,
-                TargetTypes.JudgeInvite,
-                invite.InviteId.ToString());
-
-            // notify inviter
-            var inviterId = TryParseGuid(invite.CreatedBy);
-            if (inviterId.HasValue)
+            try
             {
-                await TryNotifyInviterDeclinedAsync(inviterId.Value, invite, normEmail);
-            }
+                if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
 
+                var normEmail = email.Trim().ToLowerInvariant();
+
+                var inviteRepo = _uow.GetRepository<JudgeInvite>();
+
+                var invite = await inviteRepo.Entities
+                    .Where(i => i.InviteCode == inviteCode)
+                    .Include(i => i.Contest)
+                    .Include(i => i.Judge)
+                    .FirstOrDefaultAsync();
+
+                if (invite == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
+
+                if (invite.Status != Pending)
+                    throw new ErrorException(StatusCodes.Status409Conflict, ResponseCodeConstants.CONFLICT, "Invite is not pending.");
+
+                if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
+
+                if (!string.Equals(invite.Judge.Email.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
+                    throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
+
+                invite.Status = Declined;
+                inviteRepo.Update(invite);
+                await _uow.SaveAsync();
+
+                // log activity
+                await _logWriter.TryWriteAsync(invite.JudgeId,
+                    ActivityActions.JudgeInviteDeclined,
+                    TargetTypes.JudgeInvite,
+                    invite.InviteId.ToString());
+
+                // notify inviter
+                var inviterId = TryParseGuid(invite.CreatedBy);
+                if (inviterId.HasValue)
+                {
+                    await TryNotifyInviterDeclinedAsync(inviterId.Value, invite, normEmail);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                    throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError, ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    "An error occurred while declining the invite: " + ex.Message);
+            }
         }
 
 
