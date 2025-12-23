@@ -30,13 +30,13 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Repository.DTOs.AuthDTOs;
 using Repository.IRepositories;
 using Repository.Repositories;
 using System.Reflection;
 using System.Text;
 using Utility.Constant;
 using Utility.Helpers;
+using Utility.ConfigDTOs;
 
 namespace InnoCode_Challenge_API.DI
 {

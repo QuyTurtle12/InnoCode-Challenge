@@ -1,4 +1,4 @@
-﻿namespace Repository.DTOs.AuthDTOs
+﻿namespace Utility.ConfigDTOs
 {
     public class JwtSettings
     {
