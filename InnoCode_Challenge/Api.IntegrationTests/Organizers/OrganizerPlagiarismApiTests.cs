@@ -44,6 +44,7 @@ namespace Api.IntegrationTests.Organizers
             string OrganizerEmail,
             string OrganizerPassword,
             Guid OrganizerUserId,
+            Guid StudentUserId,
             Guid SubmissionId,
             Guid ContestId,
             Guid TeamId,
@@ -212,6 +213,7 @@ namespace Api.IntegrationTests.Organizers
                 OrganizerEmail: organizerEmail,
                 OrganizerPassword: organizerPassword,
                 OrganizerUserId: organizerUser.UserId,
+                StudentUserId: studentUser.UserId,
                 SubmissionId: submissionId,
                 ContestId: contestId,
                 TeamId: teamId,
@@ -489,6 +491,30 @@ namespace Api.IntegrationTests.Organizers
 
             var entry = db.LeaderboardEntries.First(e => e.ContestId == seed.ContestId && e.TeamId == seed.TeamId);
             entry.Score.Should().Be(seed.Score);
+        }
+
+        [Fact]
+        public async Task Approve_WhenSuspected_ShouldNotifyStudent_AndLogStatusChange()
+        {
+            var seed = SeedSuspectedSubmission(score: 85);
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+
+            var req = new HttpRequestMessage(HttpMethod.Post, $"/api/organizer/plagiarism/{seed.SubmissionId:D}/approve");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+
+            db.Notifications.Any(n => n.UserId == seed.StudentUserId
+                                      && n.Type == NotificationTypes.SubmissionStatusChanged).Should().BeTrue();
+
+            db.ActivityLogs.Any(l => l.UserId == seed.OrganizerUserId
+                                     && l.Action == ActivityActions.SubmissionStatusChange
+                                     && l.TargetType == TargetTypes.Submission
+                                     && l.TargetId == seed.SubmissionId.ToString()).Should().BeTrue();
         }
 
         [Fact]

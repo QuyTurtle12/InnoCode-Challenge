@@ -1,5 +1,7 @@
 ﻿using Api.IntegrationTests.Infrastructure;
+using DataAccess.Entities;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Repository.DTOs.AuthDTOs;
 using System.Net;
 using System.Net.Http.Headers;
@@ -10,10 +12,12 @@ namespace Api.IntegrationTests.Users
 {
     public class AuthApiTests : IClassFixture<ApiFactory>
     {
+        private readonly ApiFactory _factory;
         private readonly HttpClient _client;
 
         public AuthApiTests(ApiFactory factory)
         {
+            _factory = factory;
             _client = factory.CreateClient();
         }
 
@@ -33,6 +37,41 @@ namespace Api.IntegrationTests.Users
             var res = await _client.PostAsJsonAsync("/api/auth/register", dto);
             res.StatusCode.Should().Be(HttpStatusCode.Created);
             return await res.ReadOkAsync<AuthResponseDTO>();
+        }
+
+        [Fact]
+        public async Task RegisterStudent_ShouldWriteActivityLog()
+        {
+            var email = NewEmail("logregister");
+            var password = "P@ssword123!";
+
+            var res = await RegisterStudentAsync(email, password);
+            res.Data!.UserId.Should().NotBeNullOrWhiteSpace();
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+
+            Guid userId = Guid.Parse(res.Data!.UserId);
+            db.ActivityLogs.Any(l => l.UserId == userId
+                                     && l.Action == ActivityActions.UserRegister
+                                     && l.TargetType == TargetTypes.User
+                                     && l.TargetId == userId.ToString()).Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task Login_ShouldWriteActivityLog()
+        {
+            var login = await LoginOkAsync(TestSeed.AdminEmail, TestSeed.AdminPassword);
+            login.Data!.Token.Should().NotBeNullOrWhiteSpace();
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.ActivityLogs.Any(l => l.UserId == admin.UserId
+                                     && l.Action == ActivityActions.UserLogin
+                                     && l.TargetType == TargetTypes.User
+                                     && l.TargetId == admin.UserId.ToString()).Should().BeTrue();
         }
 
         private async Task<TestBaseResponse<AuthResponseDTO>> LoginOkAsync(string email, string password)

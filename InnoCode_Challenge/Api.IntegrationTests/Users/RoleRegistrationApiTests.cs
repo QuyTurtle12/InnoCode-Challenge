@@ -1,5 +1,7 @@
 using Api.IntegrationTests.Infrastructure;
+using DataAccess.Entities;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Repository.DTOs.AuthDTOs;
 using Repository.DTOs.RoleRegistrationDTOs;
 using System.Net;
@@ -12,10 +14,12 @@ namespace Api.IntegrationTests.Users
 {
     public class RoleRegistrationApiTests : IClassFixture<ApiFactory>
     {
+        private readonly ApiFactory _factory;
         private readonly HttpClient _client;
 
         public RoleRegistrationApiTests(ApiFactory factory)
         {
+            _factory = factory;
             _client = factory.CreateClient();
         }
 
@@ -112,6 +116,22 @@ namespace Api.IntegrationTests.Users
 
             submitted.RegistrationId.Should().NotBe(Guid.Empty);
             submitted.Status.Should().Be(RoleRegistrationStatusConstants.Pending);
+        }
+
+        [Fact]
+        public async Task Submit_WhenValid_ShouldNotifyStaffAdmin()
+        {
+            var email = NewEmail("notify");
+            var password = "P@ssword123!";
+
+            var submitted = await SubmitAsync(RoleConstants.Staff.ToLowerInvariant(), email, password);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.Notifications.Any(n => n.UserId == admin.UserId
+                                      && n.Type == NotificationTypes.RoleRegistrationSubmitted).Should().BeTrue();
         }
 
         [Fact]
