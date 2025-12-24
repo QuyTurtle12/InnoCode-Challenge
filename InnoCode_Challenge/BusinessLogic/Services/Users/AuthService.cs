@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Users;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -22,15 +23,18 @@ namespace BusinessLogic.Services.Users
         private readonly IUOW _unitOfWork;
         private readonly JwtSettings _jwtSettings;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IActivityLogWriter _logWriter;
 
         public AuthService(
           IUOW unitOfWork,
           IOptions<JwtSettings> jwtConfig,
-          IHttpContextAccessor httpContextAccessor)
+          IHttpContextAccessor httpContextAccessor,
+          IActivityLogWriter logWriter)
         {
             _unitOfWork = unitOfWork;
             _jwtSettings = jwtConfig.Value;
             _httpContextAccessor = httpContextAccessor;
+            _logWriter = logWriter;
         }
         public async Task<AuthResponseDTO> RegisterStudentStrictAsync(RegisterStudentDTO dto)
         {
@@ -95,6 +99,12 @@ namespace BusinessLogic.Services.Users
                 throw;
             }
 
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserRegister,
+                TargetTypes.User,
+                user.UserId.ToString());
+
             var accessToken = GenerateJwtToken(user);
             var (refreshToken, refreshExp) = GenerateRefreshToken(user);
 
@@ -131,6 +141,12 @@ namespace BusinessLogic.Services.Users
             var userRepo = _unitOfWork.GetRepository<User>();
             await userRepo.InsertAsync(user);
             await _unitOfWork.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserRegister,
+                TargetTypes.User,
+                user.UserId.ToString());
 
             var accessToken = GenerateJwtToken(user);
             var (refreshToken, refreshExp) = GenerateRefreshToken(user); 
@@ -174,6 +190,12 @@ namespace BusinessLogic.Services.Users
 
             var accessToken = GenerateJwtToken(user);
             var (refreshToken, refreshExp) = GenerateRefreshToken(user);
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserLogin,
+                TargetTypes.User,
+                user.UserId.ToString());
 
             return new AuthResponseDTO
             {
@@ -242,6 +264,12 @@ namespace BusinessLogic.Services.Users
             user.UpdatedAt = DateTime.UtcNow;
 
             await _unitOfWork.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserPasswordChange,
+                TargetTypes.User,
+                user.UserId.ToString());
         }
 
         public async Task<AuthResponseDTO> RefreshAsync(string refreshToken)
@@ -324,6 +352,12 @@ namespace BusinessLogic.Services.Users
             var userRepo = _unitOfWork.GetRepository<User>();
             await userRepo.InsertAsync(user);
             await _unitOfWork.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserRegister,
+                TargetTypes.User,
+                user.UserId.ToString());
 
             return new ProfileDTO
             {

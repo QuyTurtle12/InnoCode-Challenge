@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.Services.Users;
 using DataAccess.Entities;
 using FluentAssertions;
@@ -99,7 +100,11 @@ namespace BusinessLogic.UnitTests.Users
             // 8) Mapper (hiện chưa dùng)
             var mapper = Mock.Of<IMapper>();
 
-            return new AuthService(uowMock.Object, jwtOptions, httpAccessor.Object);
+            var logWriter = new Mock<IActivityLogWriter>();
+            logWriter.Setup(l => l.TryWriteAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
+                .Returns(Task.CompletedTask);
+
+            return new AuthService(uowMock.Object, jwtOptions, httpAccessor.Object, logWriter.Object);
         }
 
         // =========================

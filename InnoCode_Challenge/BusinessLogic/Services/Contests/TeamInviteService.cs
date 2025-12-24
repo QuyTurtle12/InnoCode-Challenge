@@ -338,6 +338,10 @@ namespace BusinessLogic.Services
                 ActivityActions.TeamInviteAccepted,
                 TargetTypes.TeamInvite,
                 invite.InviteId.ToString());
+            await _logWriter.TryWriteAsync(user.UserId,
+                ActivityActions.TeamMemberAdd,
+                TargetTypes.Team,
+                invite.TeamId.ToString());
 
             // notify inviter
             var inviterUserId = invite.InvitedByUserId;

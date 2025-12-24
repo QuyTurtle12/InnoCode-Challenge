@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Students;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -20,13 +21,20 @@ namespace BusinessLogic.Services.Students
         private readonly IMapper _mapper;
         private readonly ILeaderboardEntryService _leaderboardEntryService;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IActivityLogWriter _logWriter;
 
-        public TeamService(IUOW unitOfWork, IMapper mapper, ILeaderboardEntryService leaderboardEntryService, IHttpContextAccessor httpContextAccessor)
+        public TeamService(
+            IUOW unitOfWork,
+            IMapper mapper,
+            ILeaderboardEntryService leaderboardEntryService,
+            IHttpContextAccessor httpContextAccessor,
+            IActivityLogWriter logWriter)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
             _leaderboardEntryService = leaderboardEntryService;
             _httpContextAccessor = httpContextAccessor; 
+            _logWriter = logWriter;
         }
 
         public async Task<PaginatedList<TeamWithMembersDTO>> GetAsync(
@@ -214,6 +222,15 @@ namespace BusinessLogic.Services.Students
             await teamRepository.InsertAsync(team);
             await _unitOfWork.SaveAsync();
 
+            if (Guid.TryParse(userId, out var actorId))
+            {
+                await _logWriter.TryWriteAsync(
+                    actorId,
+                    ActivityActions.TeamCreate,
+                    TargetTypes.Team,
+                    team.TeamId.ToString());
+            }
+
             await _leaderboardEntryService.AddTeamToLeaderboardAsync(dto.ContestId, team.TeamId);
 
             var created = await teamRepository.Entities
@@ -313,6 +330,16 @@ namespace BusinessLogic.Services.Students
 
             teamRepository.Update(team);
             await _unitOfWork.SaveAsync();
+
+            string actorUserId = GetCurrentUserIdOrThrow();
+            if (Guid.TryParse(actorUserId, out var actorId))
+            {
+                await _logWriter.TryWriteAsync(
+                    actorId,
+                    ActivityActions.TeamUpdate,
+                    TargetTypes.Team,
+                    team.TeamId.ToString());
+            }
 
             var updated = await teamRepository.Entities
                 .Include(t => t.Contest)

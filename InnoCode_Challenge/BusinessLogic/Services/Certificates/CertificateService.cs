@@ -1,6 +1,7 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -23,8 +24,18 @@ namespace BusinessLogic.Services.Certificates
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ILogger<CertificateService> _logger;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
 
-        public CertificateService(IMapper mapper, IUOW unitOfWork, ICloudinaryService cloud, IHttpClientFactory httpClientFactory, ILogger<CertificateService> logger, IHttpContextAccessor httpContextAccessor)
+        public CertificateService(
+            IMapper mapper,
+            IUOW unitOfWork,
+            ICloudinaryService cloud,
+            IHttpClientFactory httpClientFactory,
+            ILogger<CertificateService> logger,
+            IHttpContextAccessor httpContextAccessor,
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
@@ -32,6 +43,8 @@ namespace BusinessLogic.Services.Certificates
             _httpClientFactory = httpClientFactory;
             _logger = logger;
             _httpContextAccessor = httpContextAccessor;
+            _notificationService = notificationService;
+            _logWriter = logWriter;
         }
 
         public async Task<IReadOnlyList<IssuedCertificateDTO>> IssueAsync(IssueCertificatesDTO dto)
@@ -71,6 +84,7 @@ namespace BusinessLogic.Services.Certificates
 
                     // Prepare results list
                     List<IssuedCertificateDTO>? results = new List<IssuedCertificateDTO>();
+                    Guid? issuerUserId = TryGetCurrentUserId();
 
                     // Issue certificates to each recipient
                     for (int i = 0; i < dto.Recipients.Count; i++)
@@ -312,6 +326,75 @@ namespace BusinessLogic.Services.Certificates
                                 FileUrl = entity.FileUrl,
                                 IssuedAt = entity.IssuedAt
                             });
+
+                            if (issuerUserId.HasValue)
+                            {
+                                await _logWriter.TryWriteAsync(
+                                    issuerUserId.Value,
+                                    ActivityActions.CertificateIssue,
+                                    TargetTypes.Certificate,
+                                    entity.CertificateId.ToString());
+                            }
+
+                            try
+                            {
+                                if (studentId.HasValue)
+                                {
+                                    Guid studentUserId = await studentRepo.Entities
+                                        .Where(s => s.StudentId == studentId.Value && s.DeletedAt == null)
+                                        .Select(s => s.UserId)
+                                        .FirstOrDefaultAsync();
+
+                                    if (studentUserId != Guid.Empty)
+                                    {
+                                        await _notificationService.CreateInAppToUserAsync(
+                                            studentUserId,
+                                            NotificationTypes.CertificateIssued,
+                                            new
+                                            {
+                                                certificateId = entity.CertificateId,
+                                                templateId = entity.TemplateId,
+                                                contestId = tpl.ContestId,
+                                                certificateType = entity.CertificateType,
+                                                targetType = TargetTypes.Certificate,
+                                                targetId = entity.CertificateId.ToString(),
+                                                message = "Certificate issued."
+                                            });
+                                    }
+                                }
+                                else if (teamId.HasValue)
+                                {
+                                    var studentIds = await _unitOfWork.GetRepository<TeamMember>().Entities
+                                        .Where(tm => tm.TeamId == teamId.Value)
+                                        .Select(tm => tm.StudentId)
+                                        .ToListAsync();
+
+                                    var userIds = await studentRepo.Entities
+                                        .Where(s => studentIds.Contains(s.StudentId) && s.DeletedAt == null)
+                                        .Select(s => s.UserId)
+                                        .ToListAsync();
+
+                                    if (userIds.Count > 0)
+                                    {
+                                        await _notificationService.CreateInAppToUsersAsync(
+                                            userIds,
+                                            NotificationTypes.CertificateIssued,
+                                            new
+                                            {
+                                                certificateId = entity.CertificateId,
+                                                templateId = entity.TemplateId,
+                                                contestId = tpl.ContestId,
+                                                certificateType = entity.CertificateType,
+                                                targetType = TargetTypes.Certificate,
+                                                targetId = entity.CertificateId.ToString(),
+                                                message = "Certificate issued."
+                                            });
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                            }
 
                             templateStream.Position = 0;
                         }
@@ -593,6 +676,11 @@ namespace BusinessLogic.Services.Certificates
             return "INVALID";
         }
 
+        private Guid? TryGetCurrentUserId()
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            return Guid.TryParse(userId, out var guid) ? guid : null;
+        }
 
     }
 }

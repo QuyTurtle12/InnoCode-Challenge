@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,7 @@ using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
+using System.Security.Claims;
 
 namespace BusinessLogic.Services
 {
@@ -16,11 +18,15 @@ namespace BusinessLogic.Services
     {
         private readonly IUOW _uow;
         private readonly IMapper _mapper;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IActivityLogWriter _logWriter;
 
-        public ConfigService(IUOW uow, IMapper mapper)
+        public ConfigService(IUOW uow, IMapper mapper, IHttpContextAccessor httpContextAccessor, IActivityLogWriter logWriter)
         {
             _uow = uow;
             _mapper = mapper;
+            _httpContextAccessor = httpContextAccessor;
+            _logWriter = logWriter;
         }
 
         public async Task<PaginatedList<ConfigDTO>> GetAsync(ConfigQueryParams query)
@@ -87,12 +93,14 @@ namespace BusinessLogic.Services
                 resurrect.UpdatedAt = DateTime.UtcNow;
                 repo.Update(resurrect);
                 await _uow.SaveAsync();
+                await TryLogConfigChangeAsync(resurrect.Key);
                 return _mapper.Map<ConfigDTO>(resurrect);
             }
 
             var entity = _mapper.Map<Config>(dto);
             await repo.InsertAsync(entity);
             await _uow.SaveAsync();
+            await TryLogConfigChangeAsync(entity.Key);
             return _mapper.Map<ConfigDTO>(entity);
         }
 
@@ -111,6 +119,7 @@ namespace BusinessLogic.Services
             repo.Update(entity);
             await _uow.SaveAsync();
 
+            await TryLogConfigChangeAsync(entity.Key);
             return _mapper.Map<ConfigDTO>(entity);
         }
 
@@ -126,6 +135,8 @@ namespace BusinessLogic.Services
             entity.DeletedAt = DateTime.UtcNow;
             repo.Update(entity);
             await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(entity.Key);
         }
 
         // ---------- Contest helpers ----------
@@ -144,6 +155,8 @@ namespace BusinessLogic.Services
             await UpsertAsync(repo, startKey, dto.RegistrationStartUtc.ToString("o"), "contest");
             await UpsertAsync(repo, endKey, dto.RegistrationEndUtc.ToString("o"), "contest");
             await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(contestId.ToString());
         }
 
         public async Task SetContestPolicyAsync(Guid contestId, SetContestPolicyDTO dto, string performedByRole)
@@ -159,6 +172,8 @@ namespace BusinessLogic.Services
                 await UpsertAsync(repo, "team_invite_ttl_days", dto.TeamInviteTtlDays.Value.ToString(), "global");
 
             await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(contestId.ToString());
         }
 
         // ---------- helpers ----------
@@ -201,6 +216,18 @@ namespace BusinessLogic.Services
                 item.DeletedAt = null;
                 repo.Update(item);
             }
+        }
+
+        private async Task TryLogConfigChangeAsync(string targetId)
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(userId, out var actorId)) return;
+
+            await _logWriter.TryWriteAsync(
+                actorId,
+                ActivityActions.AdminConfigChange,
+                TargetTypes.SystemConfig,
+                targetId);
         }
 
         public async Task<bool> AreSubmissionsDistributedAsync(Guid roundId)

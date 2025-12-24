@@ -2,6 +2,7 @@
 using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Submissions;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -37,6 +38,8 @@ namespace BusinessLogic.Services.Submissions
         private readonly ICloudinaryService _cloudinaryService;
         private readonly ILeaderboardEntryService _leaderboardService;
         private readonly IConfigService _configService;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
 
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
@@ -70,7 +73,9 @@ namespace BusinessLogic.Services.Submissions
             IHttpContextAccessor httpContextAccessor,
             ICloudinaryService cloudinaryService,
             ILeaderboardEntryService leaderboardService,
-            IConfigService configService)
+            IConfigService configService,
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -79,6 +84,8 @@ namespace BusinessLogic.Services.Submissions
             _cloudinaryService = cloudinaryService;
             _leaderboardService = leaderboardService;
             _configService = configService;
+            _notificationService = notificationService;
+            _logWriter = logWriter;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
@@ -297,6 +304,15 @@ namespace BusinessLogic.Services.Submissions
                 await artifactRepo.InsertAsync(artifact);
                 await _unitOfWork.SaveAsync();
 
+                if (Guid.TryParse(userId, out var actorUserId))
+                {
+                    await _logWriter.TryWriteAsync(
+                        actorUserId,
+                        ActivityActions.SubmissionCreate,
+                        TargetTypes.Submission,
+                        submission.SubmissionId.ToString());
+                }
+
                 // Convert to Judge0 request format
                 JudgeSubmissionRequestDTO judge0Request = new JudgeSubmissionRequestDTO
                 {
@@ -486,6 +502,8 @@ namespace BusinessLogic.Services.Submissions
 
                 // Save all changes
                 await _unitOfWork.SaveAsync();
+
+                await TryNotifySubmissionResultAsync(submission);
             }
             catch (Exception ex)
             {
@@ -680,6 +698,15 @@ namespace BusinessLogic.Services.Submissions
 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
+
+                if (Guid.TryParse(userId, out var actorUserId))
+                {
+                    await _logWriter.TryWriteAsync(
+                        actorUserId,
+                        ActivityActions.SubmissionCreate,
+                        TargetTypes.Submission,
+                        submission.SubmissionId.ToString());
+                }
 
                 var problemRepo = _unitOfWork.GetRepository<Problem>();
                 Problem? problem = await problemRepo.Entities
@@ -1125,6 +1152,8 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
 
                 await _unitOfWork.SaveAsync();
+
+                await TryNotifySubmissionResultAsync(submission);
 
                 // Update leaderboard
                 Guid contestId = submission.Problem.Round.ContestId;
@@ -2188,6 +2217,17 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
                 await _unitOfWork.SaveAsync();
 
+                if (Guid.TryParse(staffUserId, out var staffUserGuid))
+                {
+                    await _logWriter.TryWriteAsync(
+                        staffUserGuid,
+                        ActivityActions.SubmissionStatusChange,
+                        TargetTypes.Submission,
+                        submission.SubmissionId.ToString());
+                }
+
+                await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
+
                 Guid roundId = submission.Problem.RoundId;
                 Guid studentId = submission.SubmittedByStudentId;
                 Guid contestId = submission.Problem.Round.ContestId;
@@ -2495,6 +2535,74 @@ namespace BusinessLogic.Services.Submissions
                 text = text.TrimStart('\uFEFF');
 
             return (text, total);
+        }
+
+        private async Task<Guid?> TryGetStudentUserIdAsync(Guid studentId)
+        {
+            var studentRepo = _unitOfWork.GetRepository<Student>();
+            return await studentRepo.Entities
+                .Where(s => s.StudentId == studentId && s.DeletedAt == null)
+                .Select(s => (Guid?)s.UserId)
+                .FirstOrDefaultAsync();
+        }
+
+        private async Task TryNotifySubmissionResultAsync(Submission submission)
+        {
+            try
+            {
+                Guid? userId = await TryGetStudentUserIdAsync(submission.SubmittedByStudentId);
+                if (!userId.HasValue) return;
+
+                await _notificationService.CreateInAppToUserAsync(
+                    userId.Value,
+                    NotificationTypes.SubmissionResult,
+                    new
+                    {
+                        submissionId = submission.SubmissionId,
+                        status = submission.Status,
+                        score = submission.Score,
+                        problemId = submission.ProblemId,
+                        teamId = submission.TeamId,
+                        targetType = TargetTypes.Submission,
+                        targetId = submission.SubmissionId.ToString(),
+                        message = "Submission result is available."
+                    });
+
+                await _logWriter.TryWriteAsync(
+                    userId.Value,
+                    ActivityActions.SubmissionStatusChange,
+                    TargetTypes.Submission,
+                    submission.SubmissionId.ToString());
+            }
+            catch
+            {
+            }
+        }
+
+        private async Task TryNotifySubmissionStatusAsync(Submission submission, string message)
+        {
+            try
+            {
+                Guid? userId = await TryGetStudentUserIdAsync(submission.SubmittedByStudentId);
+                if (!userId.HasValue) return;
+
+                await _notificationService.CreateInAppToUserAsync(
+                    userId.Value,
+                    NotificationTypes.SubmissionStatusChanged,
+                    new
+                    {
+                        submissionId = submission.SubmissionId,
+                        status = submission.Status,
+                        problemId = submission.ProblemId,
+                        teamId = submission.TeamId,
+                        targetType = TargetTypes.Submission,
+                        targetId = submission.SubmissionId.ToString(),
+                        message
+                    });
+            }
+            catch
+            {
+            }
         }
 
         private string GetCurrentUserIdString()

@@ -1,5 +1,6 @@
 ﻿using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Users;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ namespace BusinessLogic.Services.Users
         private readonly IUOW _uow;
         private readonly ICloudinaryService _cloudinary;
         private readonly ILogger<RoleRegistrationService> _logger;
+        private readonly INotificationService _notificationService;
         private static readonly Dictionary<string, string> RoleAliases = new(StringComparer.OrdinalIgnoreCase)
         {
             { "staff", RoleConstants.Staff },
@@ -33,11 +35,16 @@ namespace BusinessLogic.Services.Users
             { "admin", RoleConstants.Admin }
         };
 
-        public RoleRegistrationService(IUOW uow, ICloudinaryService cloudinary, ILogger<RoleRegistrationService> logger)
+        public RoleRegistrationService(
+            IUOW uow,
+            ICloudinaryService cloudinary,
+            ILogger<RoleRegistrationService> logger,
+            INotificationService notificationService)
         {
             _uow = uow;
             _cloudinary = cloudinary;
             _logger = logger;
+            _notificationService = notificationService;
         }
 
         public async Task<RoleRegistrationSubmittedDTO> SubmitAsync(CreateRoleRegistrationDTO dto)
@@ -117,6 +124,29 @@ namespace BusinessLogic.Services.Users
                 _uow.RollBack();
                 _logger.LogError(ex, "Submit role registration failed. Email={Email}, Role={Role}", email, requestedRole);
                 throw;
+            }
+
+            try
+            {
+                var staffAdminIds = await GetStaffAdminIdsAsync();
+                await _notificationService.CreateInAppToUsersAsync(
+                    staffAdminIds,
+                    NotificationTypes.RoleRegistrationSubmitted,
+                    new
+                    {
+                        registrationId = reg.RegistrationId,
+                        requestedRole = reg.RequestedRole,
+                        fullname = reg.Fullname,
+                        email = reg.Email,
+                        status = reg.Status,
+                        targetType = TargetTypes.RoleRegistration,
+                        targetId = reg.RegistrationId.ToString(),
+                        message = $"New role registration: {reg.Fullname} ({reg.RequestedRole})"
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send role registration notification. RegId={RegId}", reg.RegistrationId);
             }
 
             return new RoleRegistrationSubmittedDTO
@@ -356,6 +386,17 @@ namespace BusinessLogic.Services.Users
                 StatusCodes.Status400BadRequest,
                 "INVALID_ROLE",
                 "RequestedRole must be staff, organizer, judge, schoolmanager, or admin.");
+        }
+
+        private async Task<List<Guid>> GetStaffAdminIdsAsync()
+        {
+            var userRepo = _uow.GetRepository<User>();
+            return await userRepo.Entities
+                .AsNoTracking()
+                .Where(u => u.DeletedAt == null
+                    && (u.Role == RoleConstants.Staff || u.Role == RoleConstants.Admin))
+                .Select(u => u.UserId)
+                .ToListAsync();
         }
     }
 }
