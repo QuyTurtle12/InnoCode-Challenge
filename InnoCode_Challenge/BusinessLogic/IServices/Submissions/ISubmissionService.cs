@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
@@ -35,5 +36,10 @@ namespace BusinessLogic.IServices.Submissions
         Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto);
         Task<JudgeSubmissionResultDTO> CreateNullAutoSubmissionAsync(Guid roundId);
         Task<Guid> CreateNullManualSubmissionAsync(Guid roundId);
+        Task<MockTestResultDTO> EvaluateMockTestSubmissionAsync(
+            Guid roundId,
+            CreateSubmissionDTO submissionDTO,
+            TestCaseEvaluationTypeEnum evaluationType);
+
     }
 }

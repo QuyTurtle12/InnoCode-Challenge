@@ -39,7 +39,9 @@ namespace BusinessLogic.Services.Contests
                 string combinedScript = BuildTestScript(studentCode, mockTestCode);
 
                 // Execute via Piston
-                return await ExecuteViaPistonAsync(combinedScript, timeLimitSec, memoryLimitMb);
+                MockTestResultDTO result = await ExecuteViaPistonAsync(combinedScript, timeLimitSec, memoryLimitMb);
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -122,9 +124,10 @@ if __name__ == '__main__':
         })
     
     # Add passed test details
-    for test in result.testsRun - len(result.failures) - len(result.errors):
+    passed_count = result.testsRun - len(result.failures) - len(result.errors)
+    for i in range(passed_count):
         results['details'].append({
-            'test': 'test_' + str(len(results['details']) + 1),
+            'test': 'test_' + str(i + 1),
             'status': 'passed',
             'message': ''
         })
@@ -230,7 +233,13 @@ if __name__ == '__main__':
 
             try
             {
-                MockTestRawResult? rawResult = JsonSerializer.Deserialize<MockTestRawResult>(jsonPart);
+                // Configure JsonSerializer to be case-insensitive
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
+
+                MockTestRawResult? rawResult = JsonSerializer.Deserialize<MockTestRawResult>(jsonPart, options);
 
                 if (rawResult == null)
                 {

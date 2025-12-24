@@ -2767,7 +2767,7 @@ namespace BusinessLogic.Services.Submissions
         private bool IsAdmin()
             => _httpContextAccessor.HttpContext?.User?.IsInRole("Admin") == true;
 
-        public async Task<JudgeSubmissionResultDTO> EvaluateMockTestSubmissionAsync(
+        public async Task<MockTestResultDTO> EvaluateMockTestSubmissionAsync(
             Guid roundId,
             CreateSubmissionDTO submissionDTO,
             TestCaseEvaluationTypeEnum evaluationType)
@@ -2798,7 +2798,7 @@ namespace BusinessLogic.Services.Submissions
                         "This problem does not have a mock test configured");
                 }
 
-                // Get student and team info (same as EvaluateSubmissionAsync)
+                // Get student and team info
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
                     ?? throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
@@ -2907,16 +2907,35 @@ namespace BusinessLogic.Services.Submissions
                     sourceCode,
                     problem.MockTestUrl,
                     timeLimitSec: 30,
-                    memoryLimitMb: 512
+                    memoryLimitMb: 1024
                 );
 
-                // Convert to standard result format
-                JudgeSubmissionResultDTO result = ConvertMockResultToJudgeResult(mockResult, submission.SubmissionId);
+                // Check if mock test execution failed
+                if (!string.IsNullOrEmpty(mockResult.ErrorMessage))
+                {
+                    // Mark submission as failed
+                    submission.Status = SubmissionStatusEnum.Finished.ToString();
+                    submission.Score = 0;
+                    await submissionRepo.UpdateAsync(submission);
+                    await _unitOfWork.SaveAsync();
+
+                    _unitOfWork.CommitTransaction();
+
+                    // Return error result
+                    return new MockTestResultDTO
+                    {
+                        Success = false,
+                        TotalTests = 0,
+                        PassedTests = 0,
+                        FailedTests = 0,
+                        ErrorMessage = mockResult.ErrorMessage,
+                        Details = new List<MockTestCaseDetail>()
+                    };
+                }
 
                 // Apply penalty and save results
                 await SaveMockTestResultAsync(
                     submission.SubmissionId,
-                    result,
                     mockResult,
                     previousSubmissionsCount,
                     problem.PenaltyRate);
@@ -2926,7 +2945,7 @@ namespace BusinessLogic.Services.Submissions
 
                 _unitOfWork.CommitTransaction();
 
-                return result;
+                return mockResult;
             }
             catch (Exception ex)
             {
@@ -2939,36 +2958,8 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        private JudgeSubmissionResultDTO ConvertMockResultToJudgeResult(
-            MockTestResultDTO mockResult,
-            Guid submissionId)
-        {
-            return new JudgeSubmissionResultDTO
-            {
-                SubmissionId = submissionId.ToString(),
-                Summary = new JudgeSummaryDTO
-                {
-                    Total = mockResult.TotalTests,
-                    Passed = mockResult.PassedTests,
-                    Failed = mockResult.FailedTests,
-                    rawScore = 0,
-                    penaltyScore = 0
-                },
-                Cases = mockResult.Details.Select(d => new JudgeCaseResultDTO
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Status = d.Status == "failed" ? "error" : "success",
-                    Time = "0.000",
-                    MemoryKb = 0,
-                    CompileOutput = null,
-                    Stderr = d.Status == "failed" ? d.Message : null
-                }).ToList()
-            };
-        }
-
         private async Task SaveMockTestResultAsync(
             Guid submissionId,
-            JudgeSubmissionResultDTO result,
             MockTestResultDTO mockResult,
             int previousSubmissionsCount,
             double? penaltyRate)
@@ -3000,10 +2991,6 @@ namespace BusinessLogic.Services.Submissions
             // Update submission
             submission.Status = SubmissionStatusEnum.Finished.ToString();
             submission.Score = Math.Round(finalScore, 2);
-
-            // Update result summary
-            result.Summary.rawScore = Math.Round(rawScore, 2);
-            result.Summary.penaltyScore = Math.Round(finalScore, 2);
 
             // Save mock test details as submission details
             IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();

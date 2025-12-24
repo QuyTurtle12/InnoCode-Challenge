@@ -1356,19 +1356,29 @@ namespace BusinessLogic.Services.Contests
             List<Round> rounds,
             PublishReadinessDTO result)
         {
-            List<Problem> autoEvalProblemsWithoutTestCases = problems
-                .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                            && !p.TestCases.Any(tc => tc.DeletedAt == null))
+            // Filter auto-evaluation problems
+            List<Problem> autoEvalProblems = problems
+                .Where(p => p.Type == ProblemTypeEnum.AutoEvaluation.ToString())
                 .ToList();
 
-            if (autoEvalProblemsWithoutTestCases.Any())
+            // Validate each auto-evaluation problem
+            foreach (Problem problem in autoEvalProblems)
             {
-                string problemInfo = string.Join(", ", autoEvalProblemsWithoutTestCases.Select(p =>
+                Round? round = rounds.FirstOrDefault(r => r.RoundId == problem.RoundId);
+                string roundName = round?.Name ?? "Unknown Round";
+
+                // Check for mock test URL and test cases
+                bool hasMockTestUrl = !string.IsNullOrWhiteSpace(problem.MockTestUrl);
+                bool hasTestCases = problem.TestCases.Any(tc => tc.DeletedAt == null);
+
+                if (!hasMockTestUrl && !hasTestCases)
                 {
-                    Round? round = rounds.FirstOrDefault(r => r.RoundId == p.RoundId);
-                    return $"'{round?.Name ?? "Unknown Round"}'";
-                }));
-                result.Missing.Add($"Auto-evaluation round(s) {problemInfo} missing test cases.");
+                    result.Missing.Add($"Auto-evaluation round '{roundName}' must have either a mock test file or test cases.");
+                }
+                else if (hasMockTestUrl && hasTestCases)
+                {
+                    result.Missing.Add($"Auto-evaluation round '{roundName}' cannot have both mock test file and test cases. Please use only one evaluation method.");
+                }
             }
         }
 
