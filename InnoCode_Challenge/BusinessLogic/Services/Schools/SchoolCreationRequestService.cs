@@ -25,6 +25,10 @@ namespace BusinessLogic.Services.Schools
         private readonly ILogger<SchoolCreationRequestService> _logger;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
+        private static readonly HashSet<string> AllowedEvidenceExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"
+        };
 
         public SchoolCreationRequestService(
             IUOW uow,
@@ -46,7 +50,32 @@ namespace BusinessLogic.Services.Schools
             var ext = Path.GetExtension(fileName).ToLowerInvariant();
             if (ext == ".pdf") return "pdf";
             if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return "image";
+            if (ext == ".doc" || ext == ".docx") return "doc";
             return "file";
+        }
+
+        private static void ValidateEvidenceFiles(IReadOnlyCollection<IFormFile>? files)
+        {
+            if (files == null || files.Count == 0)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "EVIDENCE_REQUIRED", "At least 1 evidence file is required.");
+
+            foreach (var f in files)
+            {
+                var ext = Path.GetExtension(f.FileName);
+                if (!AllowedEvidenceExtensions.Contains(ext))
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        "INVALID_EVIDENCE_TYPE",
+                        "Evidence must be .pdf, .png, .jpg, .jpeg, .doc, or .docx.");
+                }
+            }
+        }
+
+        private static void ValidatePagination(SchoolCreationRequestQueryParams query)
+        {
+            if (query.PageNumber < 1 || query.PageSize < 1)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "PageNumber and PageSize must be >= 1.");
         }
 
         public async Task<SchoolCreationRequestDetailDTO> CreateAsync(CreateSchoolCreationRequestFormDTO dto, Guid requestedByUserId)
@@ -61,6 +90,8 @@ namespace BusinessLogic.Services.Schools
             var provinceOk = await provinceRepo.Entities.AnyAsync(p => p.ProvinceId == dto.ProvinceId);
             if (!provinceOk)
                 throw new ErrorException(StatusCodes.Status404NotFound, "PROVINCE_NOT_FOUND", "Province not found.");
+
+            ValidateEvidenceFiles(dto.Evidences);
 
             var now = DateTime.UtcNow;
 
@@ -82,8 +113,7 @@ namespace BusinessLogic.Services.Schools
                 await reqRepo.InsertAsync(req);
                 await _uow.SaveAsync();
 
-                var files = dto.Evidences ?? new List<IFormFile>();
-                foreach (var f in files)
+                foreach (var f in dto.Evidences!)
                 {
                     var url = await _cloudinary.UploadFileAsync(f, folder: $"school-requests/{req.RequestId}");
                     await evRepo.InsertAsync(new SchoolCreationRequestEvidence
@@ -104,6 +134,12 @@ namespace BusinessLogic.Services.Schools
                 _uow.RollBack();
                 throw;
             }
+
+            await _logWriter.TryWriteAsync(
+                requestedByUserId,
+                ActivityActions.SchoolRequestCreate,
+                TargetTypes.SchoolCreationRequest,
+                req.RequestId.ToString());
 
             try
             {
@@ -137,6 +173,7 @@ namespace BusinessLogic.Services.Schools
         public async Task<PaginatedList<SchoolCreationRequestListDTO>> GetListAsync(SchoolCreationRequestQueryParams query)
         {
             var repo = _uow.GetRepository<SchoolCreationRequest>();
+            ValidatePagination(query);
 
             IQueryable<SchoolCreationRequest> q = repo.Entities
                 .AsNoTracking()
@@ -153,7 +190,7 @@ namespace BusinessLogic.Services.Schools
 
             q = q.OrderByDescending(x => x.CreatedAt);
 
-            var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
+            var page = await repo.GetPagingAsync(q, query.PageNumber, query.PageSize);
 
             var requestedByIds = page.Items.Select(x => x.RequestedByUserId).Distinct().ToList();
             var reviewerIds = page.Items.Where(x => x.ReviewedBy.HasValue)
@@ -179,10 +216,6 @@ namespace BusinessLogic.Services.Schools
             var items = page.Items.Select(x =>
             {
                 users.TryGetValue(x.RequestedByUserId, out var reqUser);
-
-                object? revUser = null;
-                if (x.ReviewedBy.HasValue)
-                    users.TryGetValue(x.ReviewedBy.Value, out var _revUser);
 
                 users.TryGetValue(x.ReviewedBy ?? Guid.Empty, out var reviewedUser);
 
@@ -219,6 +252,7 @@ namespace BusinessLogic.Services.Schools
         public async Task<PaginatedList<SchoolCreationRequestListDTO>> GetMyAsync(Guid requestedByUserId, SchoolCreationRequestQueryParams query)
         {
             var repo = _uow.GetRepository<SchoolCreationRequest>();
+            ValidatePagination(query);
 
             IQueryable<SchoolCreationRequest> q = repo.Entities
                 .AsNoTracking()
@@ -229,7 +263,7 @@ namespace BusinessLogic.Services.Schools
 
             q = q.OrderByDescending(x => x.CreatedAt);
 
-            var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
+            var page = await repo.GetPagingAsync(q, query.PageNumber, query.PageSize);
 
             var requestedByIds = page.Items.Select(x => x.RequestedByUserId).Distinct().ToList();
             var reviewerIds = page.Items.Where(x => x.ReviewedBy.HasValue)
@@ -255,10 +289,6 @@ namespace BusinessLogic.Services.Schools
             var items = page.Items.Select(x =>
             {
                 users.TryGetValue(x.RequestedByUserId, out var reqUser);
-
-                object? revUser = null;
-                if (x.ReviewedBy.HasValue)
-                    users.TryGetValue(x.ReviewedBy.Value, out var _revUser);
 
                 users.TryGetValue(x.ReviewedBy ?? Guid.Empty, out var reviewedUser);
 
@@ -429,7 +459,7 @@ namespace BusinessLogic.Services.Schools
             {
                 await _notificationService.CreateInAppToUserAsync(
                     requesterId,
-                    NotificationTypes.SchoolApproved,
+                    NotificationTypes.SchoolCreationRequestApproved,
                     new
                     {
                         requestId,
@@ -481,7 +511,7 @@ namespace BusinessLogic.Services.Schools
             {
                 await _notificationService.CreateInAppToUserAsync(
                     requesterId,
-                    NotificationTypes.SchoolRejected,
+                    NotificationTypes.SchoolCreationRequestDenied,
                     new
                     {
                         requestId,

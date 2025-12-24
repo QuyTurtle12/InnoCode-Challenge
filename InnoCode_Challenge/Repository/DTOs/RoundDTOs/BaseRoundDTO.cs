@@ -9,5 +9,6 @@
         public DateTime End { get; set; }
 
         public int? TimeLimitSeconds { get; set; }
+        public int? RankCutoff { get; set; }
     }
 }

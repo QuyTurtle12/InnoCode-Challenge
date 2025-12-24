@@ -103,9 +103,19 @@ var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
-app.UseMiddleware<CustomExceptionHandlerMiddleware>();
+if (app.Environment.IsEnvironment("Testing"))
+{
+    app.UseMiddleware<CustomExceptionHandlerMiddleware>();
+}
+else
+{
+    app.UseMiddleware<CustomExceptionHandlerMiddleware>();
+}
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsEnvironment("Testing"))
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseCors("AllowAllOrigins");
 app.UseAuthentication();
@@ -140,3 +150,5 @@ app.MapHub<ActivityLogsHub>("/hubs/activity-logs");
 
 app.MapControllers();
 app.Run();
+
+public partial class Program { } // For integration testing purposes

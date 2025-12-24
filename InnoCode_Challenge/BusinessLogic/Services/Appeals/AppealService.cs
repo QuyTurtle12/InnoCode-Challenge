@@ -2,6 +2,7 @@
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,8 @@ namespace BusinessLogic.Services.Appeals
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly ICloudinaryService _cloudinaryService;
         private readonly ILeaderboardEntryService _leaderboardEntryService;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
 
         private const string APPEAL_EVIDENCE_FOLDER = "appeal_evidences";
 
@@ -32,13 +35,17 @@ namespace BusinessLogic.Services.Appeals
             IUOW uow,
             IHttpContextAccessor httpContextAccessor,
             ICloudinaryService cloudinaryService,
-            ILeaderboardEntryService leaderboardEntryService)
+            ILeaderboardEntryService leaderboardEntryService,
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _mapper = mapper;
             _unitOfWork = uow;
             _httpContextAccessor = httpContextAccessor;
             _cloudinaryService = cloudinaryService;
             _leaderboardEntryService = leaderboardEntryService;
+            _notificationService = notificationService;
+            _logWriter = logWriter;
         }
 
         public async Task<GetAppealDTO> CreateAppealAsync(CreateAppealDTO dto)
@@ -223,6 +230,45 @@ namespace BusinessLogic.Services.Appeals
                 }
 
                 _unitOfWork.CommitTransaction();
+
+                if (Guid.TryParse(currentUserId, out var requesterUserId))
+                {
+                    await _logWriter.TryWriteAsync(
+                        requesterUserId,
+                        ActivityActions.AppealSubmit,
+                        TargetTypes.Appeal,
+                        appeal.AppealId.ToString());
+                }
+
+                try
+                {
+                    var contestRepo = _unitOfWork.GetRepository<Contest>();
+                    string? organizerId = await contestRepo.Entities
+                        .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                        .Select(c => c.CreatedBy)
+                        .FirstOrDefaultAsync();
+
+                    if (Guid.TryParse(organizerId, out var organizerUserId))
+                    {
+                        await _notificationService.CreateInAppToUserAsync(
+                            organizerUserId,
+                            NotificationTypes.AppealCreated,
+                            new
+                            {
+                                appealId = appeal.AppealId,
+                                teamId = appeal.TeamId,
+                                roundId = appeal.TargetId,
+                                contestId = round.ContestId,
+                                state = appeal.State,
+                                targetType = TargetTypes.Appeal,
+                                targetId = appeal.AppealId.ToString(),
+                                message = "New appeal submitted."
+                            });
+                    }
+                }
+                catch
+                {
+                }
 
                 // Return created appeal
                 return await GetAppealByIdAsync(appeal.AppealId);
@@ -490,6 +536,62 @@ namespace BusinessLogic.Services.Appeals
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+
+                string? reviewerId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (Guid.TryParse(reviewerId, out var reviewerUserId))
+                {
+                    await _logWriter.TryWriteAsync(
+                        reviewerUserId,
+                        ActivityActions.AppealResolve,
+                        TargetTypes.Appeal,
+                        appeal.AppealId.ToString());
+                }
+
+                try
+                {
+                    var notifyUserIds = new HashSet<Guid>();
+
+                    if (appeal.OwnerId != Guid.Empty)
+                    {
+                        notifyUserIds.Add(appeal.OwnerId);
+                    }
+
+                    var mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                    if (appeal.Team?.MentorId != null)
+                    {
+                        Guid? mentorUserId = await mentorRepo.Entities
+                            .Where(m => m.MentorId == appeal.Team.MentorId && m.DeletedAt == null)
+                            .Select(m => (Guid?)m.UserId)
+                            .FirstOrDefaultAsync();
+
+                        if (mentorUserId.HasValue)
+                        {
+                            notifyUserIds.Add(mentorUserId.Value);
+                        }
+                    }
+
+                    if (notifyUserIds.Count > 0)
+                    {
+                        await _notificationService.CreateInAppToUsersAsync(
+                            notifyUserIds,
+                            NotificationTypes.AppealUpdated,
+                            new
+                            {
+                                appealId = appeal.AppealId,
+                                teamId = appeal.TeamId,
+                                roundId = appeal.TargetId,
+                                contestId = appeal.Target.ContestId,
+                                state = appeal.State,
+                                decision = appeal.Decision,
+                                targetType = TargetTypes.Appeal,
+                                targetId = appeal.AppealId.ToString(),
+                                message = "Appeal was updated."
+                            });
+                    }
+                }
+                catch
+                {
+                }
 
                 return await GetAppealByIdAsync(appealId);
             }

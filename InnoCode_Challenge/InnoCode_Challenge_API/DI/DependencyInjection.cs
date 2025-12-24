@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
@@ -30,13 +30,13 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Repository.DTOs.AuthDTOs;
 using Repository.IRepositories;
 using Repository.Repositories;
 using System.Reflection;
 using System.Text;
 using Utility.Constant;
 using Utility.Helpers;
+using Utility.ConfigDTOs;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -335,7 +335,6 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISubmissionService, SubmissionService>();
             services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
             services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
-            services.AddScoped<IMentorRegistrationService, MentorRegistrationService>();
             services.AddScoped<IJudge0Service, Judge0Service>();
             services.AddScoped<IQuizService, QuizService>();
             services.AddScoped<ICloudinaryService, CloudinaryService>();
@@ -355,3 +354,4 @@ namespace InnoCode_Challenge_API.DI
         }
     }
 }
+

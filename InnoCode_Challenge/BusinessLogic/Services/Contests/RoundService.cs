@@ -161,6 +161,20 @@ namespace BusinessLogic.Services.Contests
                     );
                 }
 
+                // Store rank cutoff in config
+                if (roundDTO.RankCutoff.HasValue)
+                {
+                    if (roundDTO.RankCutoff.Value < 0)
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                            "RankCutoff must be >= 0 (0 = disabled).");
+
+                    await UpsertConfigAsync(
+                        configRepo,
+                        ConfigKeys.RoundRankCutoff(round.RoundId),
+                        roundDTO.RankCutoff.Value.ToString()
+                    );
+                }
+
                 // Handle problem type specific logic
                 switch (roundDTO.ProblemType)
                 {
@@ -364,6 +378,17 @@ namespace BusinessLogic.Services.Contests
                     await configRepo.UpdateAsync(timeLimitConfig);
                 }
 
+                // Delete round rank cutoff config
+                string rankCutoffKey = ConfigKeys.RoundRankCutoff(round.RoundId);
+                Config? rankCutoffConfig = await configRepo.Entities
+                    .FirstOrDefaultAsync(c => c.Key == rankCutoffKey && c.Scope == "contest");
+
+                if (rankCutoffConfig != null)
+                {
+                    rankCutoffConfig.DeletedAt = DateTime.UtcNow;
+                    await configRepo.UpdateAsync(rankCutoffConfig);
+                }
+
                 // Delete distribution status config if exists
                 await _configService.ResetDistributionStatusAsync(round.RoundId);
 
@@ -477,6 +502,22 @@ namespace BusinessLogic.Services.Contests
                     roundDTO.TimeLimitSeconds = secs;
                 }
 
+                // Map rank cutoff from config
+                string rcKey = ConfigKeys.RoundRankCutoff(round.RoundId);
+
+                Config? rcConfig = await configRepo.Entities
+                    .Where(c => c.Key == rcKey && c.Scope == "contest" && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                if (rcConfig != null && int.TryParse(rcConfig.Value, out int cutoff))
+                {
+                    roundDTO.RankCutoff = cutoff;
+                }
+                else
+                {
+                    roundDTO.RankCutoff = 0;
+                }
+
                 // Get user role from HttpContext
                 string? userRole = _httpContextAccessor.HttpContext?.User.FindFirst(ClaimTypes.Role)?.Value;
 
@@ -532,6 +573,9 @@ namespace BusinessLogic.Services.Contests
                             ResponseCodeConstants.FORBIDDEN,
                             "You have already finished this round and cannot access its content anymore.");
                     }
+
+                    // Enforce rank cutoff if applicable
+                    await EnforceRoundRankCutoffForStudentAsync(round, studentId);
 
                     // Check if student has already inputted the open code once
                     bool hasInputtedCode = await _configService.HasStudentInputtedOpenCodeAsync(id, studentId);
@@ -859,6 +903,20 @@ namespace BusinessLogic.Services.Contests
                         configRepo,
                         ConfigKeys.RoundTimeLimitSeconds(round.RoundId),
                         roundDTO.TimeLimitSeconds.Value.ToString()
+                    );
+                }
+
+                // Update rank cutoff config
+                if (roundDTO.RankCutoff.HasValue)
+                {
+                    if (roundDTO.RankCutoff.Value < 0)
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                            "RankCutoff must be >= 0 (0 = disabled).");
+
+                    await UpsertConfigAsync(
+                        configRepo,
+                        ConfigKeys.RoundRankCutoff(round.RoundId),
+                        roundDTO.RankCutoff.Value.ToString()
                     );
                 }
 
@@ -1299,7 +1357,6 @@ namespace BusinessLogic.Services.Contests
                     $"Error validating open code: {ex.Message}");
             }
         }
-
         public async Task<string> GetOpenCode(Guid roundId)
         {
             // Validate round exists
@@ -1428,7 +1485,6 @@ namespace BusinessLogic.Services.Contests
                 return await GetRoundByIdAsync( persistedRoundId, null);
 
         }
-
         public async Task<GetRoundDTO> EndRoundNowAsync(Guid roundId)
         {
 
@@ -1518,7 +1574,6 @@ namespace BusinessLogic.Services.Contests
             return await GetRoundByIdAsync(persistedRoundId, null);
 
         }
-
         private string GetCurrentUserIdOrThrow()
         {
             var user = _httpContextAccessor.HttpContext?.User;
@@ -1619,6 +1674,172 @@ namespace BusinessLogic.Services.Contests
         {
             try { enqueue(); }
             catch (Exception ex) { _logger.LogError(ex, "Hangfire enqueue failed: {JobName}", jobName); }
+        }
+
+        private async Task<int> GetRoundRankCutoffAsync(Guid roundId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            string key = ConfigKeys.RoundRankCutoff(roundId);
+
+            string? value = await configRepo.Entities
+                .AsNoTracking()
+                .Where(c => c.Key == key && c.Scope == "contest" && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            return (int.TryParse(value, out int n) && n > 0) ? n : 0;
+        }
+
+        private async Task<Round?> FindPreviousMainRoundAsync(Round currentRound)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            return await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.ContestId == currentRound.ContestId
+                            && r.RoundId != currentRound.RoundId
+                            && r.DeletedAt == null
+                            && !r.IsRetakeRound
+                            && r.End <= currentRound.Start)
+                .OrderByDescending(r => r.End)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync();
+        }
+
+        private async Task EnforceRoundRankCutoffForStudentAsync(Round currentRound, Guid studentId)
+        {
+            if (currentRound.IsRetakeRound) return; // retake handled by appeal logic
+
+            int cutoff = await GetRoundRankCutoffAsync(currentRound.RoundId);
+            if (cutoff <= 0) return; // disabled
+
+            Round? prevRound = await FindPreviousMainRoundAsync(currentRound);
+            if (prevRound == null) return; // first main round, next
+
+            // Find student's team in this contest
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            Guid teamId = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == currentRound.ContestId
+                            && t.DeletedAt == null
+                            && t.TeamMembers.Any(tm => tm.StudentId == studentId))
+                .Select(t => t.TeamId)
+                .FirstOrDefaultAsync();
+
+            if (teamId == Guid.Empty)
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
+                    "You are not in a team for this contest.");
+
+            // Top-N teams from previous round (score desc, tie -> earliest submission.CreatedAt)
+            List<Guid> topTeamIds = await GetTopTeamsByRoundAsync(currentRound.ContestId, prevRound.RoundId, cutoff);
+
+            if (!topTeamIds.Contains(teamId))
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
+                    $"Your team is not in Top-{cutoff} of the previous round.");
+        }
+
+        private sealed class TeamRankRow
+        {
+            public Guid TeamId { get; set; }
+            public double AvgScore { get; set; }
+            public double AvgCreatedAtTicks { get; set; }
+        }
+
+        private async Task<List<Guid>> GetTopTeamsByRoundAsync(Guid contestId, Guid prevRoundId, int cutoff)
+        {
+            if (cutoff <= 0) return new List<Guid>();
+
+            // 1) Load team members in contest
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+
+            var memberPairs = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .SelectMany(t => t.TeamMembers
+                    .Select(tm => new { t.TeamId, tm.StudentId }))
+                .ToListAsync();
+
+            var teamMembers = memberPairs
+                .GroupBy(x => x.TeamId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.StudentId).Distinct().ToList());
+
+            if (teamMembers.Count == 0) return new List<Guid>();
+
+            // 2) Load all submissions in prev round 
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            var subs = await submissionRepo.Entities
+                .AsNoTracking()
+                .Where(s => s.DeletedAt == null
+                            && s.Problem != null
+                            && s.Problem.RoundId == prevRoundId)
+                .Select(s => new
+                {
+                    s.SubmissionId,
+                    s.TeamId,
+                    s.SubmittedByStudentId,
+                    s.Score,
+                    s.Status,
+                    s.CreatedAt
+                })
+                .ToListAsync();
+
+            // Latest submission per (TeamId, StudentId)
+            var latestByTeamStudent = subs
+                .GroupBy(x => (x.TeamId, x.SubmittedByStudentId))
+                .Select(g => g.OrderByDescending(x => x.CreatedAt)
+                              .ThenByDescending(x => x.SubmissionId)
+                              .First())
+                .ToDictionary(x => (x.TeamId, x.SubmittedByStudentId), x => x);
+
+            // 3) Compute avg score + avg createdAt
+            var rows = new List<TeamRankRow>(teamMembers.Count);
+
+            foreach (var kv in teamMembers)
+            {
+                Guid teamId = kv.Key;
+                List<Guid> members = kv.Value;
+                if (members.Count == 0) continue;
+
+                double sumScore = 0.0;
+                double sumTicks = 0.0;
+
+                foreach (var studentId in members)
+                {
+                    if (latestByTeamStudent.TryGetValue((teamId, studentId), out var last))
+                    {
+                        bool finished = string.Equals(last.Status, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase);
+
+                        // Score only when latest is Finished
+                        if (finished) sumScore += last.Score;
+
+                        // Tie-break: only use CreatedAt when latest is Finished, else MaxValue
+                        sumTicks += finished ? last.CreatedAt.Ticks : DateTime.MaxValue.Ticks;
+                    }
+                    else
+                    {
+                        // no submission -> score 0, createdAt loses tie-break
+                        sumTicks += DateTime.MaxValue.Ticks;
+                    }
+                }
+
+                rows.Add(new TeamRankRow
+                {
+                    TeamId = teamId,
+                    AvgScore = sumScore / members.Count,
+                    AvgCreatedAtTicks = sumTicks / members.Count
+                });
+            }
+
+            return rows
+                .OrderByDescending(r => r.AvgScore)
+                .ThenBy(r => r.AvgCreatedAtTicks) 
+                .ThenBy(r => r.TeamId)            
+                .Take(cutoff)
+                .Select(r => r.TeamId)
+                .ToList();
         }
 
     }

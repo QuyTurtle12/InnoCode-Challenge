@@ -2,6 +2,7 @@
 using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Submissions;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -40,6 +41,8 @@ namespace BusinessLogic.Services.Submissions
         private readonly ILeaderboardEntryService _leaderboardService;
         private readonly IConfigService _configService;
         private readonly IMockTestExecutor _mockTestExecutor;
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
 
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
@@ -74,7 +77,9 @@ namespace BusinessLogic.Services.Submissions
             ICloudinaryService cloudinaryService,
             ILeaderboardEntryService leaderboardService,
             IConfigService configService,
-            IMockTestExecutor mockTestExecutor)
+            IMockTestExecutor mockTestExecutor,
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -84,6 +89,8 @@ namespace BusinessLogic.Services.Submissions
             _leaderboardService = leaderboardService;
             _configService = configService;
             _mockTestExecutor = mockTestExecutor;
+            _notificationService = notificationService;
+            _logWriter = logWriter;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
@@ -451,6 +458,9 @@ namespace BusinessLogic.Services.Submissions
                     .Select(t => t.TeamId)
                     .FirstOrDefault();
 
+                // Ensure team is eligible for this round
+                await EnsureTeamEligibleForRoundAsync(roundId, teamId);
+
                 // Count previous submissions of logged-in student for this problem
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 int previousSubmissionsCount = await submissionRepo.Entities
@@ -539,6 +549,15 @@ namespace BusinessLogic.Services.Submissions
 
                 await artifactRepo.InsertAsync(artifact);
                 await _unitOfWork.SaveAsync();
+
+                if (Guid.TryParse(userId, out var actorUserId))
+                {
+                    await _logWriter.TryWriteAsync(
+                        actorUserId,
+                        ActivityActions.SubmissionCreate,
+                        TargetTypes.Submission,
+                        submission.SubmissionId.ToString());
+                }
 
                 // Convert to Judge0 request format
                 JudgeSubmissionRequestDTO judge0Request = new JudgeSubmissionRequestDTO
@@ -729,6 +748,8 @@ namespace BusinessLogic.Services.Submissions
 
                 // Save all changes
                 await _unitOfWork.SaveAsync();
+
+                await TryNotifySubmissionResultAsync(submission);
             }
             catch (Exception ex)
             {
@@ -816,6 +837,13 @@ namespace BusinessLogic.Services.Submissions
                                 t.Contest.Rounds.Any(r => r.RoundId == roundId))
                     .Select(t => t.TeamId)
                     .FirstOrDefaultAsync();
+
+                // Validate team existence
+                if (teamId == Guid.Empty)
+                    throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "You are not in a team for this contest.");
+
+                //  Ensure team is eligible for this round
+                await EnsureTeamEligibleForRoundAsync(roundId, teamId);
 
                 // Get the submission repository
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
@@ -916,6 +944,15 @@ namespace BusinessLogic.Services.Submissions
 
                 // Save changes to the database
                 await _unitOfWork.SaveAsync();
+
+                if (Guid.TryParse(userId, out var actorUserId))
+                {
+                    await _logWriter.TryWriteAsync(
+                        actorUserId,
+                        ActivityActions.SubmissionCreate,
+                        TargetTypes.Submission,
+                        submission.SubmissionId.ToString());
+                }
 
                 var problemRepo = _unitOfWork.GetRepository<Problem>();
                 Problem? problem = await problemRepo.Entities
@@ -1390,6 +1427,8 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
 
                 await _unitOfWork.SaveAsync();
+
+                await TryNotifySubmissionResultAsync(submission);
 
                 // Update leaderboard
                 Guid contestId = submission.Problem.Round.ContestId;
@@ -2386,7 +2425,13 @@ namespace BusinessLogic.Services.Submissions
             };
         }
 
-        public async Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto)
+        public Task ApprovePlagiarismSubmissionAsync(Guid submissionId)
+            => ResolvePlagiarismSubmissionAsync(submissionId, cleared: true);
+
+        public Task DenyPlagiarismSubmissionAsync(Guid submissionId)
+            => ResolvePlagiarismSubmissionAsync(submissionId, cleared: false);
+
+        private async Task ResolvePlagiarismSubmissionAsync(Guid submissionId, bool cleared)
         {
             try
             {
@@ -2434,7 +2479,7 @@ namespace BusinessLogic.Services.Submissions
 
                 submission.JudgedBy = staffUserId;
 
-                if (dto.Resolution == PlagiarismResolutionEnum.Cleared)
+                if (cleared)
                 {
                     submission.Status = SubmissionStatusEnum.Finished.ToString();
                 }
@@ -2447,12 +2492,23 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
                 await _unitOfWork.SaveAsync();
 
+                if (Guid.TryParse(staffUserId, out var staffUserGuid))
+                {
+                    await _logWriter.TryWriteAsync(
+                        staffUserGuid,
+                        ActivityActions.SubmissionStatusChange,
+                        TargetTypes.Submission,
+                        submission.SubmissionId.ToString());
+                }
+
+                await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
+
                 Guid roundId = submission.Problem.RoundId;
                 Guid studentId = submission.SubmittedByStudentId;
                 Guid contestId = submission.Problem.Round.ContestId;
 
                 await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
-                if (dto.Resolution == PlagiarismResolutionEnum.Cleared && dto.ApplyLeaderboard)
+                if (cleared)
                 {
                     await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }
@@ -2756,6 +2812,74 @@ namespace BusinessLogic.Services.Submissions
             return (text, total);
         }
 
+        private async Task<Guid?> TryGetStudentUserIdAsync(Guid studentId)
+        {
+            var studentRepo = _unitOfWork.GetRepository<Student>();
+            return await studentRepo.Entities
+                .Where(s => s.StudentId == studentId && s.DeletedAt == null)
+                .Select(s => (Guid?)s.UserId)
+                .FirstOrDefaultAsync();
+        }
+
+        private async Task TryNotifySubmissionResultAsync(Submission submission)
+        {
+            try
+            {
+                Guid? userId = await TryGetStudentUserIdAsync(submission.SubmittedByStudentId);
+                if (!userId.HasValue) return;
+
+                await _notificationService.CreateInAppToUserAsync(
+                    userId.Value,
+                    NotificationTypes.SubmissionResult,
+                    new
+                    {
+                        submissionId = submission.SubmissionId,
+                        status = submission.Status,
+                        score = submission.Score,
+                        problemId = submission.ProblemId,
+                        teamId = submission.TeamId,
+                        targetType = TargetTypes.Submission,
+                        targetId = submission.SubmissionId.ToString(),
+                        message = "Submission result is available."
+                    });
+
+                await _logWriter.TryWriteAsync(
+                    userId.Value,
+                    ActivityActions.SubmissionStatusChange,
+                    TargetTypes.Submission,
+                    submission.SubmissionId.ToString());
+            }
+            catch
+            {
+            }
+        }
+
+        private async Task TryNotifySubmissionStatusAsync(Submission submission, string message)
+        {
+            try
+            {
+                Guid? userId = await TryGetStudentUserIdAsync(submission.SubmittedByStudentId);
+                if (!userId.HasValue) return;
+
+                await _notificationService.CreateInAppToUserAsync(
+                    userId.Value,
+                    NotificationTypes.SubmissionStatusChanged,
+                    new
+                    {
+                        submissionId = submission.SubmissionId,
+                        status = submission.Status,
+                        problemId = submission.ProblemId,
+                        teamId = submission.TeamId,
+                        targetType = TargetTypes.Submission,
+                        targetId = submission.SubmissionId.ToString(),
+                        message
+                    });
+            }
+            catch
+            {
+            }
+        }
+
         private string GetCurrentUserIdString()
         {
             return _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -3014,5 +3138,158 @@ namespace BusinessLogic.Services.Submissions
             await submissionRepo.UpdateAsync(submission);
             await _unitOfWork.SaveAsync();
         }
+        private sealed class TeamRankRow
+        {
+            public Guid TeamId { get; set; }
+            public double AvgScore { get; set; }
+            public double AvgCreatedAtTicks { get; set; }
+        }
+
+        // Get the rank cutoff config for a round
+        private async Task<int> GetRoundRankCutoffAsync(Guid roundId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            string key = ConfigKeys.RoundRankCutoff(roundId);
+
+            string? value = await configRepo.Entities
+                .AsNoTracking()
+                .Where(c => c.Key == key && c.Scope == "contest" && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            return (int.TryParse(value, out int n) && n > 0) ? n : 0;
+        }
+
+        // Find the most recent main round before the current round in the same contest
+        private async Task<Round?> FindPreviousMainRoundAsync(Round currentRound)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            return await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.ContestId == currentRound.ContestId
+                            && r.RoundId != currentRound.RoundId
+                            && r.DeletedAt == null
+                            && !r.IsRetakeRound
+                            && r.End <= currentRound.Start)
+                .OrderByDescending(r => r.End)
+                .FirstOrDefaultAsync();
+        }
+        // Get the top N teams by average score and average submission time in a given round
+
+        private async Task<List<Guid>> GetTopTeamsByRoundAsync(Guid contestId, Guid prevRoundId, int cutoff)
+        {
+            if (cutoff <= 0) return new List<Guid>();
+
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+
+            var memberPairs = await teamRepo.Entities
+                .AsNoTracking()
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .SelectMany(t => t.TeamMembers
+                    .Select(tm => new { t.TeamId, tm.StudentId }))
+                .ToListAsync();
+
+            var teamMembers = memberPairs
+                .GroupBy(x => x.TeamId)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.StudentId).Distinct().ToList());
+
+            if (teamMembers.Count == 0) return new List<Guid>();
+
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            var subs = await submissionRepo.Entities
+                .AsNoTracking()
+                .Where(s => s.DeletedAt == null
+                            && s.Problem != null
+                            && s.Problem.RoundId == prevRoundId)
+                .Select(s => new
+                {
+                    s.SubmissionId,
+                    s.TeamId,
+                    s.SubmittedByStudentId,
+                    s.Score,
+                    s.Status,
+                    s.CreatedAt
+                })
+                .ToListAsync();
+
+            var latestByTeamStudent = subs
+                .GroupBy(x => (x.TeamId, x.SubmittedByStudentId))
+                .Select(g => g.OrderByDescending(x => x.CreatedAt)
+                              .ThenByDescending(x => x.SubmissionId)
+                              .First())
+                .ToDictionary(x => (x.TeamId, x.SubmittedByStudentId), x => x);
+
+            var rows = new List<TeamRankRow>(teamMembers.Count);
+
+            foreach (var kv in teamMembers)
+            {
+                Guid teamId = kv.Key;
+                List<Guid> members = kv.Value;
+                if (members.Count == 0) continue;
+
+                double sumScore = 0.0;
+                double sumTicks = 0.0;
+
+                foreach (var studentId in members)
+                {
+                    if (latestByTeamStudent.TryGetValue((teamId, studentId), out var last))
+                    {
+                        bool finished = string.Equals(last.Status, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase);
+                        if (finished) sumScore += last.Score;
+                        sumTicks += finished ? last.CreatedAt.Ticks : DateTime.MaxValue.Ticks;
+                    }
+                    else
+                    {
+                        sumTicks += DateTime.MaxValue.Ticks;
+                    }
+                }
+
+                rows.Add(new TeamRankRow
+                {
+                    TeamId = teamId,
+                    AvgScore = sumScore / members.Count,
+                    AvgCreatedAtTicks = sumTicks / members.Count
+                });
+            }
+
+            return rows
+                .OrderByDescending(r => r.AvgScore)
+                .ThenBy(r => r.AvgCreatedAtTicks)
+                .ThenBy(r => r.TeamId)
+                .Take(cutoff)
+                .Select(r => r.TeamId)
+                .ToList();
+        }
+
+        // Ensure that a team is eligible to submit in a round based on previous round rankings
+        private async Task EnsureTeamEligibleForRoundAsync(Guid roundId, Guid teamId)
+        {
+            int cutoff = await GetRoundRankCutoffAsync(roundId);
+            if (cutoff <= 0) return;
+
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? currentRound = await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.RoundId == roundId && r.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (currentRound == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            if (currentRound.IsRetakeRound) return;
+
+            Round? prevRound = await FindPreviousMainRoundAsync(currentRound);
+            if (prevRound == null) return;
+
+            List<Guid> topTeamIds = await GetTopTeamsByRoundAsync(currentRound.ContestId, prevRound.RoundId, cutoff);
+
+            if (!topTeamIds.Contains(teamId))
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
+                    $"Your team is not in Top-{cutoff} of the previous round.");
+        }
+
     }
 }

@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices.Mentors;
+using BusinessLogic.IServices.Mentors;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -21,7 +21,10 @@ namespace InnoCode_Challenge_API.Controllers.Mentors
         [Authorize(Roles = RoleConstants.SchoolManager)]
         public async Task<IActionResult> Create(Guid schoolId, [FromBody] MentorManagerRequestDTO dto)
         {
-            var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var userIdRaw = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userIdRaw) || !Guid.TryParse(userIdRaw, out var userId))
+                return Unauthorized(new BaseResponseModel(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "Invalid user token."));
+
             var created = await _service.CreateMentorAsync(schoolId, dto, userId);
 
             return StatusCode(StatusCodes.Status201Created,
@@ -30,3 +33,4 @@ namespace InnoCode_Challenge_API.Controllers.Mentors
     }
 
 }
+

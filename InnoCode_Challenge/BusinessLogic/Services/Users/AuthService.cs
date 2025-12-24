@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Users;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
@@ -13,26 +14,27 @@ using System.Text;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
+using Utility.ConfigDTOs;
 
 namespace BusinessLogic.Services.Users
 {
     public class AuthService : IAuthService
     {
         private readonly IUOW _unitOfWork;
-        private readonly IMapper _mapper;
         private readonly JwtSettings _jwtSettings;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IActivityLogWriter _logWriter;
 
         public AuthService(
           IUOW unitOfWork,
-          IMapper mapper,
           IOptions<JwtSettings> jwtConfig,
-          IHttpContextAccessor httpContextAccessor)
+          IHttpContextAccessor httpContextAccessor,
+          IActivityLogWriter logWriter)
         {
             _unitOfWork = unitOfWork;
-            _mapper = mapper;
             _jwtSettings = jwtConfig.Value;
             _httpContextAccessor = httpContextAccessor;
+            _logWriter = logWriter;
         }
         public async Task<AuthResponseDTO> RegisterStudentStrictAsync(RegisterStudentDTO dto)
         {
@@ -46,15 +48,12 @@ namespace BusinessLogic.Services.Users
                     "SCHOOL_ID_REQUIRED", "SchoolId is required.");
 
             var email = NormalizeEmail(dto.Email);
+            await EnsureEmailNotExistsAsync(email);
 
             var userRepo = _unitOfWork.GetRepository<User>();
             var studentRepo = _unitOfWork.GetRepository<Student>();
             var schoolRepo = _unitOfWork.GetRepository<School>();
 
-            // Check duplicate email exists
-            bool emailExists = await userRepo.Entities.AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
-            if (emailExists)
-                throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_EXISTS", "Email is already registered.");
 
             // Check SchoolId present and valid
             var school = await schoolRepo.Entities
@@ -64,17 +63,15 @@ namespace BusinessLogic.Services.Users
 
             var now = DateTime.UtcNow;
 
-            var user = new User
-            {
-                UserId = Guid.NewGuid(),
-                Fullname = dto.FullName.Trim(),
-                Email = email,
-                PasswordHash = PasswordHasher.Hash(dto.Password),
-                Role = RoleConstants.Student,
-                Status = UserStatusConstants.Unverified,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
+            var user = CreateUser(
+                email: email,
+                fullName: dto.FullName,
+                password: dto.Password,
+                role: RoleConstants.Student,
+                status: UserStatusConstants.Unverified,
+                nowUtc: now
+            );
+
 
             var student = new Student
             {
@@ -102,6 +99,12 @@ namespace BusinessLogic.Services.Users
                 throw;
             }
 
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserRegister,
+                TargetTypes.User,
+                user.UserId.ToString());
+
             var accessToken = GenerateJwtToken(user);
             var (refreshToken, refreshExp) = GenerateRefreshToken(user);
 
@@ -122,34 +125,28 @@ namespace BusinessLogic.Services.Users
         public async Task<AuthResponseDTO> RegisterAsync(RegisterUserDTO dto)
         {
             var email = NormalizeEmail(dto.Email);
-
-            var userRepo = _unitOfWork.GetRepository<User>();
-            bool emailExists = await userRepo.Entities.AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
-
-
-            if (emailExists)
-                throw new ErrorException(
-                  StatusCodes.Status400BadRequest,
-                  "EMAIL_EXISTS",
-                  "Email is already registered."
-                );
+            await EnsureEmailNotExistsAsync(email);
 
             var now = DateTime.UtcNow;
 
-            var user = new User
-            {
-                UserId = Guid.NewGuid(),
-                Fullname = dto.FullName.Trim(),
-                Email = email,
-                PasswordHash = PasswordHasher.Hash(dto.Password),
-                Role = RoleConstants.Student,
-                Status = "Unverified",
-                CreatedAt = now,
-                UpdatedAt = now
-            };
+            var user = CreateUser(
+                email: email,
+                fullName: dto.FullName,
+                password: dto.Password,
+                role: RoleConstants.Student,
+                status: UserStatusConstants.Unverified,
+                nowUtc: now
+            );
 
+            var userRepo = _unitOfWork.GetRepository<User>();
             await userRepo.InsertAsync(user);
             await _unitOfWork.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserRegister,
+                TargetTypes.User,
+                user.UserId.ToString());
 
             var accessToken = GenerateJwtToken(user);
             var (refreshToken, refreshExp) = GenerateRefreshToken(user); 
@@ -180,11 +177,11 @@ namespace BusinessLogic.Services.Users
             if (user == null || !PasswordHasher.Verify(dto.Password, user.PasswordHash))
                 throw new ErrorException(StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS", "Email or password is incorrect.");
 
-            if (string.Equals(user.Status, "Unverified", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(user.Status, UserStatusConstants.Unverified, StringComparison.OrdinalIgnoreCase))
                 throw new ErrorException(StatusCodes.Status403Forbidden, "USER_UNVERIFIED", "Please verify your email.");
 
 
-            if (!string.Equals(user.Status, "Active", StringComparison.Ordinal))
+            if (!string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
                 throw new ErrorException(
                   StatusCodes.Status403Forbidden,
                   "USER_INACTIVE",
@@ -193,6 +190,12 @@ namespace BusinessLogic.Services.Users
 
             var accessToken = GenerateJwtToken(user);
             var (refreshToken, refreshExp) = GenerateRefreshToken(user);
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserLogin,
+                TargetTypes.User,
+                user.UserId.ToString());
 
             return new AuthResponseDTO
             {
@@ -204,7 +207,7 @@ namespace BusinessLogic.Services.Users
                 Role = user.Role,
                 FullName = user.Fullname,
                 Email = user.Email,
-                EmailVerified = string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase) 
+                EmailVerified = string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase) 
 
             };
         }
@@ -213,7 +216,7 @@ namespace BusinessLogic.Services.Users
             var user = await GetCurrentLoggedInUser()
                 ?? throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Sign in required.");
 
-            if (string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "ALREADY_VERIFIED", "Email already verified.");
 
             return GenerateVerificationToken(user);
@@ -235,16 +238,15 @@ namespace BusinessLogic.Services.Users
             if (!Guid.TryParse(sub, out var userId))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_TOKEN", "Invalid user.");
 
-            var repo = _unitOfWork.GetRepository<User>();
-            var user = await repo.GetByIdAsync(userId)
+            var user = await GetUserIfNotDeletedAsync(userId)
                 ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
 
             if (!string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_MISMATCH", "Token does not match user email.");
 
-            if (!string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
             {
-                user.Status = "Active";
+                user.Status = UserStatusConstants.Active;
                 user.UpdatedAt = DateTime.UtcNow;
                 await _unitOfWork.SaveAsync();
             }
@@ -262,6 +264,12 @@ namespace BusinessLogic.Services.Users
             user.UpdatedAt = DateTime.UtcNow;
 
             await _unitOfWork.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserPasswordChange,
+                TargetTypes.User,
+                user.UserId.ToString());
         }
 
         public async Task<AuthResponseDTO> RefreshAsync(string refreshToken)
@@ -277,11 +285,10 @@ namespace BusinessLogic.Services.Users
             if (!Guid.TryParse(sub, out var userId))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_REFRESH", "Invalid user.");
 
-            var repo = _unitOfWork.GetRepository<User>();
-            var user = await repo.GetByIdAsync(userId)
+            var user = await GetUserIfNotDeletedAsync(userId)
                 ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
 
-            if (!string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
                 throw new ErrorException(StatusCodes.Status403Forbidden, "USER_INACTIVE", "Your account is not active.");
 
             var access = GenerateJwtToken(user);
@@ -329,34 +336,28 @@ namespace BusinessLogic.Services.Users
         private async Task<ProfileDTO> RegisterSystemUserAsync(RegisterUserDTO dto, string role)
         {
             var email = NormalizeEmail(dto.Email);
-            var userRepo = _unitOfWork.GetRepository<User>();
-
-            var emailExists = await userRepo.Entities
-                .AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
-
-            if (emailExists)
-                throw new ErrorException(
-                    StatusCodes.Status400BadRequest,
-                    "EMAIL_EXISTS",
-                    "Email is already registered."
-                );
+            await EnsureEmailNotExistsAsync(email);
 
             var now = DateTime.UtcNow;
 
-            var user = new User
-            {
-                UserId = Guid.NewGuid(),
-                Fullname = dto.FullName.Trim(),
-                Email = email,
-                PasswordHash = PasswordHasher.Hash(dto.Password),
-                Role = role,
-                Status = "Active", 
-                CreatedAt = now,
-                UpdatedAt = now
-            };
+            var user = CreateUser(
+                email: email,
+                fullName: dto.FullName,
+                password: dto.Password,
+                role: role,
+                status: UserStatusConstants.Active,
+                nowUtc: now
+            );
 
+            var userRepo = _unitOfWork.GetRepository<User>();
             await userRepo.InsertAsync(user);
             await _unitOfWork.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                user.UserId,
+                ActivityActions.UserRegister,
+                TargetTypes.User,
+                user.UserId.ToString());
 
             return new ProfileDTO
             {
@@ -372,67 +373,58 @@ namespace BusinessLogic.Services.Users
 
         private string GenerateJwtToken(User user)
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
             var claims = new List<Claim>
             {
-                new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
-                new Claim(ClaimTypes.NameIdentifier,    user.UserId.ToString()),
-                new Claim(JwtRegisteredClaimNames.Email,user.Email),
-                new Claim(ClaimTypes.Role,              user.Role),
-                new Claim(ClaimTypes.Name,              user.Fullname ?? string.Empty),
-                new Claim("email_verified", (string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase)).ToString().ToLowerInvariant()), 
-                new Claim("typ","access"),
-                new Claim(JwtRegisteredClaimNames.Jti,  Guid.NewGuid().ToString()),
-                new Claim(JwtRegisteredClaimNames.Iat,  EpochTime.GetIntDate(DateTime.UtcNow).ToString(), ClaimValueTypes.Integer64),
+                new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email),
+                new(ClaimTypes.Role, user.Role),
+                new(ClaimTypes.Name, user.Fullname ?? string.Empty),
+                new("email_verified", string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase)
+                    .ToString().ToLowerInvariant()),
+                new("typ", "access"),
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                new(JwtRegisteredClaimNames.Iat, EpochTime.GetIntDate(DateTime.UtcNow).ToString(), ClaimValueTypes.Integer64),
             };
 
-            var token = new JwtSecurityToken(
-                issuer: _jwtSettings.Issuer,
+            return JwtTokenHelper.GenerateToken(
+                settings: _jwtSettings,
                 audience: _jwtSettings.Audience,
-                claims: claims,
-                notBefore: DateTime.UtcNow,
-                expires: DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
-                signingCredentials: creds
+                expiresUtc: DateTime.UtcNow.AddMinutes(_jwtSettings.ExpiryMinutes),
+                claims: claims
             );
 
-            return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
         private (string token, DateTime expiresAt) GenerateRefreshToken(User user)
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
             var expires = DateTime.UtcNow.AddMinutes(_jwtSettings.RefreshExpiryMinutes);
 
             var claims = new List<Claim>
             {
-                new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
-                new Claim(JwtRegisteredClaimNames.Email, user.Email),
-                new Claim("typ","refresh"),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+                new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email),
+                new("typ", "refresh"),
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
             };
 
-            var token = new JwtSecurityToken(
-                issuer: _jwtSettings.Issuer,
+            var token = JwtTokenHelper.GenerateToken(
+                settings: _jwtSettings,
                 audience: _jwtSettings.Audience + ":refresh",
-                claims: claims,
-                notBefore: DateTime.UtcNow,
-                expires: expires,
-                signingCredentials: creds
+                expiresUtc: expires,
+                claims: claims
             );
 
-            return (new JwtSecurityTokenHandler().WriteToken(token), expires);
+            return (token, expires);
         }
+
         public async Task<string?> GenerateResetPasswordTokenAsync(string emailInput)
         {
             var email = NormalizeEmail(emailInput);
 
             var repo = _unitOfWork.GetRepository<User>();
             var user = await repo.Entities
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+                .FirstOrDefaultAsync(u => u.Email == email && u.DeletedAt == null);
 
             if (user is null) return null;
 
@@ -453,8 +445,7 @@ namespace BusinessLogic.Services.Users
             if (!Guid.TryParse(sub, out var userId))
                 throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_TOKEN", "Invalid user.");
 
-            var repo = _unitOfWork.GetRepository<User>();
-            var user = await repo.GetByIdAsync(userId)
+            var user = await GetUserIfNotDeletedAsync(userId)
                 ?? throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", "User not found.");
 
             if (!string.Equals(user.Email, tokenEmail, StringComparison.OrdinalIgnoreCase))
@@ -467,49 +458,42 @@ namespace BusinessLogic.Services.Users
 
         private string GeneratePasswordResetToken(User user)
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email),
+                new("typ", "password_reset"),
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
 
-            var token = new JwtSecurityToken(
-                issuer: _jwtSettings.Issuer,
+            return JwtTokenHelper.GenerateToken(
+                settings: _jwtSettings,
                 audience: _jwtSettings.Audience + ":password_reset",
-                claims: new[]
-                {
-                new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
-                new Claim(JwtRegisteredClaimNames.Email, user.Email),
-                new Claim("typ","password_reset"),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-                },
-                notBefore: DateTime.UtcNow,
-                expires: DateTime.UtcNow.AddMinutes(30),
-                signingCredentials: creds
+                expiresUtc: DateTime.UtcNow.AddMinutes(30),
+                claims: claims
             );
 
-            return new JwtSecurityTokenHandler().WriteToken(token);
+
         }
 
         private string GenerateVerificationToken(User user)
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var claims = new List<Claim>
+            {
+                new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email),
+                new("typ", "email_verify"),
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
 
-            var token = new JwtSecurityToken(
-                issuer: _jwtSettings.Issuer,
+            return JwtTokenHelper.GenerateToken(
+                settings: _jwtSettings,
                 audience: _jwtSettings.Audience + ":email_verify",
-                claims: new[]
-                {
-                    new Claim(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
-                    new Claim(JwtRegisteredClaimNames.Email, user.Email),
-                    new Claim("typ","email_verify"),
-                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-                },
-                notBefore: DateTime.UtcNow,
-                expires: DateTime.UtcNow.AddMinutes(30),
-                signingCredentials: creds
+                expiresUtc: DateTime.UtcNow.AddMinutes(30),
+                claims: claims
             );
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
         }
+
         private ClaimsPrincipal ValidateToken(string token, string audience, string requireType)
         {
             var handler = new JwtSecurityTokenHandler();
@@ -551,10 +535,10 @@ namespace BusinessLogic.Services.Users
             if (string.IsNullOrWhiteSpace(currentId) || !Guid.TryParse(currentId, out var id))
                 return null;
 
-            return await _unitOfWork.GetRepository<User>().GetByIdAsync(id);
+            return await GetUserIfNotDeletedAsync(id);
         }
 
-        private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+        private static string NormalizeEmail(string email) => EmailHelper.Normalize(email);
         private static string? GetClaim(ClaimsPrincipal p, params string[] types)
         {
             foreach (var t in types)
@@ -563,6 +547,48 @@ namespace BusinessLogic.Services.Users
                 if (!string.IsNullOrEmpty(v)) return v;
             }
             return null;
+        }
+        private async Task EnsureEmailNotExistsAsync(string email)
+        {
+            var userRepo = _unitOfWork.GetRepository<User>();
+            bool emailExists = await userRepo.Entities
+                .AnyAsync(u => u.Email.ToLower() == email && u.DeletedAt == null);
+
+            if (emailExists)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "EMAIL_EXISTS", "Email is already registered.");
+        }
+
+        private static User CreateUser(
+            string email,
+            string fullName,
+            string password,
+            string role,
+            string status,
+            DateTime nowUtc)
+        {
+            return new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = fullName.Trim(),
+                Email = email,
+                PasswordHash = PasswordHasher.Hash(password),
+                Role = role,
+                Status = status,
+                CreatedAt = nowUtc,
+                UpdatedAt = nowUtc,
+                DeletedAt = null
+            };
+        }
+
+        private async Task<User?> GetUserIfNotDeletedAsync(Guid userId)
+        {
+            var repo = _unitOfWork.GetRepository<User>();
+            var user = await repo.GetByIdAsync(userId);
+
+            if (user is null) return null;
+            if (user.DeletedAt != null) return null;
+
+            return user;
         }
 
     }
