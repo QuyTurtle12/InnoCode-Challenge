@@ -32,7 +32,8 @@ namespace BusinessLogic.IServices.Submissions
             string? teamName);
 
         Task<PlagiarismSubmissionDetailDTO> GetPlagiarismSubmissionDetailAsync(Guid submissionId);
-        Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto);
+        Task ApprovePlagiarismSubmissionAsync(Guid submissionId);
+        Task DenyPlagiarismSubmissionAsync(Guid submissionId);
 
     }
 }

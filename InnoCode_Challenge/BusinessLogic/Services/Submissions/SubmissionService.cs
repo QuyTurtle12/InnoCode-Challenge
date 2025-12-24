@@ -2121,7 +2121,13 @@ namespace BusinessLogic.Services.Submissions
             };
         }
 
-        public async Task ResolvePlagiarismSubmissionAsync(Guid submissionId, ResolvePlagiarismDTO dto)
+        public Task ApprovePlagiarismSubmissionAsync(Guid submissionId)
+            => ResolvePlagiarismSubmissionAsync(submissionId, cleared: true);
+
+        public Task DenyPlagiarismSubmissionAsync(Guid submissionId)
+            => ResolvePlagiarismSubmissionAsync(submissionId, cleared: false);
+
+        private async Task ResolvePlagiarismSubmissionAsync(Guid submissionId, bool cleared)
         {
             try
             {
@@ -2169,7 +2175,7 @@ namespace BusinessLogic.Services.Submissions
 
                 submission.JudgedBy = staffUserId;
 
-                if (dto.Resolution == PlagiarismResolutionEnum.Cleared)
+                if (cleared)
                 {
                     submission.Status = SubmissionStatusEnum.Finished.ToString();
                 }
@@ -2187,7 +2193,7 @@ namespace BusinessLogic.Services.Submissions
                 Guid contestId = submission.Problem.Round.ContestId;
 
                 await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
-                if (dto.Resolution == PlagiarismResolutionEnum.Cleared && dto.ApplyLeaderboard)
+                if (cleared)
                 {
                     await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }

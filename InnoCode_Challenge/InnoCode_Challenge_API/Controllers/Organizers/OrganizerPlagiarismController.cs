@@ -1,7 +1,6 @@
 ﻿using BusinessLogic.IServices.Submissions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Repository.DTOs.PlagiarismDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 
@@ -62,14 +61,25 @@ namespace InnoCode_Challenge_API.Controllers.Organizers
             ));
         }
 
-        [HttpPost("{submissionId:guid}/resolve")]
-        public async Task<IActionResult> Resolve(Guid submissionId, [FromBody] ResolvePlagiarismDTO dto)
+        [HttpPost("{submissionId:guid}/approve")]
+        public async Task<IActionResult> Approve(Guid submissionId)
         {
-            await _submissionService.ResolvePlagiarismSubmissionAsync(submissionId, dto);
+            await _submissionService.ApprovePlagiarismSubmissionAsync(submissionId);
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                message: "Plagiarism resolved successfully."
+                message: "Plagiarism approved successfully."
+            ));
+        }
+
+        [HttpPost("{submissionId:guid}/deny")]
+        public async Task<IActionResult> Deny(Guid submissionId)
+        {
+            await _submissionService.DenyPlagiarismSubmissionAsync(submissionId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Plagiarism denied successfully."
             ));
         }
     }
