@@ -76,6 +76,8 @@
         public const string RoleRegistrationApprove = "role_registration.approve";
         public const string RoleRegistrationDeny = "role_registration.deny";
 
+        public const string MentorCreate = "mentor.create";
+
     }
 
 }

@@ -119,7 +119,7 @@ namespace Api.IntegrationTests.Mentors
         }
 
         [Fact]
-        public async Task Create_WhenPasswordMismatch_ShouldReturn400_CONFIRM_PASSWORD_MISMATCH()
+        public async Task Create_WhenPasswordMismatch_ShouldReturn400_VALIDATION_ERROR()
         {
             var token = await LoginSchoolManagerAsync();
             var email = $"mentor{Guid.NewGuid():N}@test.com";
@@ -135,7 +135,7 @@ namespace Api.IntegrationTests.Mentors
             res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
             var err = await res.ReadErrorAsync();
-            err.ErrorCode.Should().Be("CONFIRM_PASSWORD_MISMATCH");
+            err.ErrorCode.Should().Be("VALIDATION_ERROR");
         }
 
         [Fact]

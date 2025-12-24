@@ -1,8 +1,9 @@
-﻿namespace Utility.Constant
+namespace Utility.Constant
 {
     public static class TargetTypes
     {
         public const string User = "user";
+        public const string Mentor = "mentor";
         public const string Contest = "contest";
         public const string Round = "round";
         public const string Team = "team";
@@ -23,3 +24,4 @@
         public const string RoleRegistration = "role_registration";
     }
 }
+

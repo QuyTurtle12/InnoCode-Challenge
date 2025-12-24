@@ -1,4 +1,5 @@
-﻿using BusinessLogic.IServices.Mentors;
+using BusinessLogic.IServices.Mentors;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -13,10 +14,12 @@ namespace BusinessLogic.Services.Mentors
     public class MentorManagementService : IMentorManagementService
     {
         private readonly IUOW _uow;
+        private readonly IActivityLogWriter _logWriter;
 
-        public MentorManagementService(IUOW uow)
+        public MentorManagementService(IUOW uow, IActivityLogWriter logWriter)
         {
             _uow = uow;
+            _logWriter = logWriter;
         }
 
         private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
@@ -77,6 +80,8 @@ namespace BusinessLogic.Services.Mentors
 
                 _uow.CommitTransaction();
 
+                await _logWriter.TryWriteAsync(requesterUserId, ActivityActions.MentorCreate, TargetTypes.Mentor, mentor.MentorId.ToString());
+
                 return new MentorProfileDTO
                 {
                     MentorId = mentor.MentorId,
@@ -97,3 +102,5 @@ namespace BusinessLogic.Services.Mentors
         }
     }
 }
+
+

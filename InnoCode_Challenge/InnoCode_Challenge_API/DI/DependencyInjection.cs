@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
@@ -332,7 +332,6 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISubmissionService, SubmissionService>();
             services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
             services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
-            services.AddScoped<IMentorRegistrationService, MentorRegistrationService>();
             services.AddScoped<IJudge0Service, Judge0Service>();
             services.AddScoped<IQuizService, QuizService>();
             services.AddScoped<ICloudinaryService, CloudinaryService>();
@@ -351,3 +350,4 @@ namespace InnoCode_Challenge_API.DI
         }
     }
 }
+
