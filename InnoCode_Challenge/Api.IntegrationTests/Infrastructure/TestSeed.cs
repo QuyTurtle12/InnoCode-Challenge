@@ -59,9 +59,10 @@ namespace Api.IntegrationTests.Infrastructure
                 });
             }
 
-            if (!db.Users.Any(u => u.Email == SchoolManagerEmail.ToLower() && u.DeletedAt == null))
+            var schoolManager = db.Users.FirstOrDefault(u => u.Email == SchoolManagerEmail.ToLower() && u.DeletedAt == null);
+            if (schoolManager == null)
             {
-                db.Users.Add(new User
+                schoolManager = new User
                 {
                     UserId = Guid.NewGuid(),
                     Fullname = "Test School Manager",
@@ -72,7 +73,13 @@ namespace Api.IntegrationTests.Infrastructure
                     CreatedAt = now,
                     UpdatedAt = now,
                     DeletedAt = null
-                });
+                };
+                db.Users.Add(schoolManager);
+            }
+
+            if (school.ManagerUserId != schoolManager.UserId)
+            {
+                school.ManagerUserId = schoolManager.UserId;
             }
 
             db.SaveChanges();
