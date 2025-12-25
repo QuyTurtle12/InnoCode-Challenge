@@ -4,6 +4,8 @@
     {
         Pending,
         Finished,
-        Cancelled
+        Cancelled,
+        PlagiarismConfirmed,
+        PlagiarismSuspected
     }
 }

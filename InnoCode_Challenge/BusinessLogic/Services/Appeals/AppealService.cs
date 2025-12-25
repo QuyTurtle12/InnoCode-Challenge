@@ -646,6 +646,12 @@ namespace BusinessLogic.Services.Appeals
                     await ReassignSubmissionToNewJudgeAsync(appeal);
                     return;
                 }
+
+                if (appealResolution.Value == AppealResolutionEnum.RecheckPlagiarism)
+                {
+                    await RecheckSubmissionPlagiarismAsync(appeal);
+                    return;
+                }
             }
             else
             {
@@ -719,6 +725,46 @@ namespace BusinessLogic.Services.Appeals
             // Refresh the team score after data update
             Guid teamId = appeal.TeamId;
             await _leaderboardEntryService.UpdateTeamScoreAsync(round!.ContestId, teamId);
+        }
+
+        private async Task RecheckSubmissionPlagiarismAsync(Appeal appeal)
+        {
+            // Get the student's submission for this round
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+
+            // Get the student ID from OwnerId
+            Guid? studentId = await studentRepo.Entities
+                .Where(s => s.UserId == appeal.OwnerId && s.DeletedAt == null)
+                .Select(s => (Guid?)s.StudentId)
+                .FirstOrDefaultAsync();
+
+            if (!studentId.HasValue)
+            {
+                return;
+            }
+
+            // Find the latest submission for this student in the appeal's round
+            Submission? submission = await submissionRepo.Entities
+                .Where(s => s.Problem.RoundId == appeal.TargetId
+                    && s.SubmittedByStudentId == studentId.Value
+                    && !s.DeletedAt.HasValue)
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            // If no submission found, nothing to recheck
+            if (submission == null)
+            {
+                return;
+            }
+
+            // Check if submission status is PlagiarismConfirmed
+            if (submission.Status == SubmissionStatusEnum.PlagiarismConfirmed.ToString())
+            {
+                // Change status to PlagiarismSuspected for rechecking
+                submission.Status = SubmissionStatusEnum.PlagiarismSuspected.ToString();
+                await submissionRepo.UpdateAsync(submission);
+            }
         }
 
         private async Task ReassignSubmissionToNewJudgeAsync(Appeal appeal)

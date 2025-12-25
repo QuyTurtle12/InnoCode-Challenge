@@ -487,17 +487,25 @@ namespace BusinessLogic.Services
             IGenericRepository<Round> roundRepo,
             IGenericRepository<TeamMember> memberRepo)
         {
+            // get all rounds of target contest
             var targetRanges = await roundRepo.Entities
-                .Where(r => r.ContestId == targetContestId)
+                .Where(r => r.ContestId == targetContestId && r.DeletedAt == null)
                 .Select(r => new { r.Start, r.End })
                 .ToListAsync();
 
+            // no rounds -> no conflict
             if (!targetRanges.Any()) return false;
 
+            // get all other contest rounds of teams the student has joined
             var otherRanges = await memberRepo.Entities
                 .Where(m => m.StudentId == studentId)
                 .Include(m => m.Team).ThenInclude(t => t.Contest)
-                .SelectMany(m => m.Team.Contest.Rounds.Select(r => new { r.Start, r.End }))
+                .Where(m => m.Team.DeletedAt == null
+                            && m.Team.Status != TeamStatusConstants.Disqualified
+                            && m.Team.ContestId != targetContestId)
+                .SelectMany(m => m.Team.Contest.Rounds
+                    .Where(r => r.DeletedAt == null)
+                    .Select(r => new { r.Start, r.End }))
                 .ToListAsync();
 
             foreach (var t in targetRanges)

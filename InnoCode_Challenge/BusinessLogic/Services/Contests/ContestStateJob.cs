@@ -23,10 +23,6 @@ namespace BusinessLogic.Services.Contests
             _serviceProvider = serviceProvider;
         }
 
-        /// <summary>
-        /// Updates a specific contest's state. Protected against concurrent execution.
-        /// This is the single source of truth for contest state transitions.
-        /// </summary>
         [DisableConcurrentExecution(timeoutInSeconds: 60)]
         [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 10, 30, 60 })]
         public async Task UpdateSpecificContestAsync(Guid contestId)
@@ -197,9 +193,6 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        /// <summary>
-        /// Handles status-specific actions when a contest transitions to a new state.
-        /// </summary>
         private async Task HandleStatusTransitionAsync(
             IServiceScope scope,
             IUOW unitOfWork,
@@ -214,18 +207,18 @@ namespace BusinessLogic.Services.Contests
 
                 async Task<List<Guid>> GetParticipantIdsAsync()
                 {
-                    var teamRepo = unitOfWork.GetRepository<Team>();
+                    IGenericRepository<Team> teamRepo = unitOfWork.GetRepository<Team>();
 
-                    var studentIds = await teamRepo.Entities
+                    List<Guid> studentIds = await teamRepo.Entities
                         .AsNoTracking()
                         .Where(t => t.ContestId == contest.ContestId && t.DeletedAt == null)
                         .SelectMany(t => t.TeamMembers
                             .Select(tm => tm.Student.UserId))
                         .ToListAsync();
 
-                    var mentorIds = await teamRepo.Entities
+                    List<Guid> mentorIds = await teamRepo.Entities
                         .AsNoTracking()
-                        .Where(t => t.ContestId == contest.ContestId && t.DeletedAt == null && t.MentorId != null)
+                        .Where(t => t.ContestId == contest.ContestId && t.DeletedAt == null)
                         .Select(t => t.Mentor.UserId)
                         .ToListAsync();
 
@@ -262,7 +255,10 @@ namespace BusinessLogic.Services.Contests
                 // Registration Closed 
                 if (newStatus == ContestStatusEnum.RegistrationClosed.ToString())
                 {
-                    var participantIds = await GetParticipantIdsAsync();
+                    // Validate and disqualify teams not meeting minimum requirements
+                    await ValidateAndDisqualifyTeamsAsync(unitOfWork, contest.ContestId);
+
+                    List<Guid> participantIds = await GetParticipantIdsAsync();
 
                     // Notify participants
                     if (participantIds.Count > 0)
@@ -282,7 +278,7 @@ namespace BusinessLogic.Services.Contests
                 if (newStatus == ContestStatusEnum.Ongoing.ToString())
                 {
                     // Notify participants
-                    var participantIds = await GetParticipantIdsAsync();
+                    List<Guid> participantIds = await GetParticipantIdsAsync();
                     if (participantIds.Count > 0)
                     {
                         await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.ContestStarted, new
@@ -300,7 +296,7 @@ namespace BusinessLogic.Services.Contests
                 if (newStatus == ContestStatusEnum.Completed.ToString())
                 {
                     // Notify participants
-                    var participantIds = await GetParticipantIdsAsync();
+                    List<Guid> participantIds = await GetParticipantIdsAsync();
                     if (participantIds.Count > 0)
                     {
                         await notif.CreateInAppToUsersAsync(participantIds, NotificationTypes.ContestEnded, new
@@ -458,6 +454,74 @@ namespace BusinessLogic.Services.Contests
             }
 
             return null;
+        }
+
+        private async Task ValidateAndDisqualifyTeamsAsync(IUOW unitOfWork, Guid contestId)
+        {
+            try
+            {
+                IGenericRepository<Config> configRepo = unitOfWork.GetRepository<Config>();
+                IGenericRepository<Team> teamRepo = unitOfWork.GetRepository<Team>();
+                IGenericRepository<TeamMember> teamMemberRepo = unitOfWork.GetRepository<TeamMember>();
+
+                // Get team members min requirement
+                string? membersMinContest = await configRepo.Entities
+                    .Where(c => c.Key == ConfigKeys.ContestTeamMembersMin(contestId) && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+
+                string? membersMinDefault = await configRepo.Entities
+                    .Where(c => c.Key == ConfigKeys.Defaults_TeamMembersMin && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+
+                int minMembers = 1;
+                if (!string.IsNullOrEmpty(membersMinContest))
+                {
+                    int.TryParse(membersMinContest, out minMembers);
+                }
+                else if (!string.IsNullOrEmpty(membersMinDefault))
+                {
+                    int.TryParse(membersMinDefault, out minMembers);
+                }
+
+                // Get all teams for this contest
+                List<Team> teams = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                    .ToListAsync();
+
+                List<string> disqualifiedTeamNames = new List<string>();
+
+                foreach (Team team in teams)
+                {
+                    // Count team members
+                    int memberCount = await teamMemberRepo.Entities
+                        .Where(tm => tm.TeamId == team.TeamId)
+                        .CountAsync();
+
+                    // If team doesn't meet minimum requirement, disqualify it
+                    if (memberCount < minMembers)
+                    {
+                        team.Status = TeamStatusConstants.Disqualified;
+                        await teamRepo.UpdateAsync(team);
+                        disqualifiedTeamNames.Add(team.Name);
+                    }
+                }
+
+                // Save changes
+                if (disqualifiedTeamNames.Any())
+                {
+                    await unitOfWork.SaveAsync();
+
+                    _logger.LogWarning(
+                        "Disqualified {Count} team(s) in contest {ContestId} for not meeting minimum member requirement ({MinMembers} members): {Teams}",
+                        disqualifiedTeamNames.Count, contestId, minMembers, string.Join(", ", disqualifiedTeamNames));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validating and disqualifying teams for contest {ContestId}", contestId);
+            }
         }
     }
 }

@@ -10,5 +10,6 @@ namespace Utility.Constant
     {
         public const string Active = "Active";
         public const string Eliminated = "Eliminated";
+        public const string Disqualified = "Disqualified";
     }
 }
