@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ActivityLogDTOs;
 using Repository.IRepositories;
+using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -23,6 +24,8 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
         public async Task<PaginatedList<ActivityLogDTO>> GetAsync(ActivityLogQueryParams query)
         {
+            ValidatePaging(query.Page, query.PageSize);
+
             var repo = _uow.GetRepository<ActivityLog>();
             var q = repo.Entities.Where(l => l.DeletedAt == null).AsNoTracking();
 
@@ -36,7 +39,10 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             }
 
             if (!string.IsNullOrWhiteSpace(query.TargetType))
-                q = q.Where(l => l.TargetType == query.TargetType);
+            {
+                var target = query.TargetType.Trim().ToLowerInvariant();
+                q = q.Where(l => l.TargetType != null && l.TargetType.ToLower() == target);
+            }
 
             if (query.From.HasValue)
                 q = q.Where(l => l.At >= query.From.Value);
@@ -53,13 +59,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             var page = await repo.GetPagingAsync(q, query.Page, query.PageSize);
 
             // batch load users for this page
-            var userIds = page.Items.Select(x => x.UserId).Distinct().ToList();
-            var userRepo = _uow.GetRepository<User>();
-
-            var users = await userRepo.Entities.AsNoTracking()
-                .Where(u => u.DeletedAt == null && userIds.Contains(u.UserId))
-                .Select(u => new { u.UserId, u.Fullname, u.Email })
-                .ToDictionaryAsync(x => x.UserId);
+            var users = await LoadUserDisplaysAsync(page.Items.Select(x => x.UserId));
 
             var items = page.Items.Select(x =>
             {
@@ -87,14 +87,12 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             var dto = _mapper.Map<ActivityLogDTO>(entity);
 
             // attach user display
-            var userRepo = _uow.GetRepository<User>();
-            var u = await userRepo.Entities.AsNoTracking()
-                .Where(x => x.DeletedAt == null && x.UserId == entity.UserId)
-                .Select(x => new { x.Fullname, x.Email })
-                .FirstOrDefaultAsync();
-
-            dto.UserFullname = u?.Fullname;
-            dto.UserEmail = u?.Email;
+            var users = await LoadUserDisplaysAsync(new[] { entity.UserId });
+            if (users.TryGetValue(entity.UserId, out var u))
+            {
+                dto.UserFullname = u.Fullname;
+                dto.UserEmail = u.Email;
+            }
 
             return dto;
         }
@@ -123,6 +121,29 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             entity.DeletedAt = DateTime.UtcNow;
             repo.Update(entity);
             await _uow.SaveAsync();
+        }
+
+        private static void ValidatePaging(int page, int pageSize)
+        {
+            if (page <= 0 || pageSize <= 0)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "page and pageSize must be greater than 0.");
+            }
+        }
+
+        private async Task<Dictionary<Guid, (string? Fullname, string? Email)>> LoadUserDisplaysAsync(IEnumerable<Guid> userIds)
+        {
+            var ids = userIds.Distinct().ToList();
+            if (ids.Count == 0) return new Dictionary<Guid, (string?, string?)>();
+
+            var userRepo = _uow.GetRepository<User>();
+            return await userRepo.Entities.AsNoTracking()
+                .Where(u => u.DeletedAt == null && ids.Contains(u.UserId))
+                .Select(u => new { u.UserId, Fullname = (string?)u.Fullname, Email = (string?)u.Email })
+                .ToDictionaryAsync(x => x.UserId, x => (x.Fullname, x.Email));
         }
     }
 }
