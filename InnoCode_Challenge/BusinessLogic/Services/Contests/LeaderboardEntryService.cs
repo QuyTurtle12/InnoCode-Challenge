@@ -543,7 +543,8 @@ namespace BusinessLogic.Services.Contests
                             McqAttempt? mcqAttempt = await mcqAttemptRepo.Entities
                                 .Where(ma => ma.RoundId == round.RoundId
                                             && ma.StudentId == teamMember.StudentId
-                                            && ma.End.HasValue)
+                                            && ma.End.HasValue
+                                            && ma.Status == McqAttemptStatusEnum.Finished.ToString())
                                 .OrderByDescending(ma => ma.End)
                                 .FirstOrDefaultAsync();
 
@@ -815,7 +816,8 @@ namespace BusinessLogic.Services.Contests
                     List<McqAttempt> mcqAttempts = await mcqAttemptRepo.Entities
                         .Where(ma => roundIds.Contains(ma.RoundId)
                                     && allStudentIds.Contains(ma.StudentId)
-                                    && ma.End.HasValue)
+                                    && ma.End.HasValue
+                                    && ma.Status == McqAttemptStatusEnum.Finished.ToString())
                         .ToListAsync();
 
                     // Group by (RoundId, StudentId) and take the latest attempt
@@ -1169,7 +1171,8 @@ namespace BusinessLogic.Services.Contests
                             McqAttempt? mcqAttempt = await mcqAttemptRepo.Entities
                                 .Where(ma => ma.RoundId == round.RoundId
                                              && ma.StudentId == teamMember.StudentId
-                                             && ma.End.HasValue)
+                                             && ma.End.HasValue
+                                             && ma.Status == McqAttemptStatusEnum.Finished.ToString())
                                 .OrderByDescending(ma => ma.End)
                                 .FirstOrDefaultAsync();
 
@@ -1315,7 +1318,8 @@ namespace BusinessLogic.Services.Contests
                         .Where(ma => ma.RoundId == round.RoundId
                                     && ma.StudentId == member.StudentId
                                     && ma.End.HasValue
-                                    && ma.DeletedAt == null)
+                                    && ma.DeletedAt == null
+                                    && ma.Status == McqAttemptStatusEnum.Finished.ToString())
                         .OrderByDescending(ma => ma.End)
                         .FirstOrDefaultAsync();
 

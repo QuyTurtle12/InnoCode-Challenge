@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.AppealEvidenceDTOs;
 using System.ComponentModel.DataAnnotations;
+using Utility.Enums;
 
 namespace Repository.DTOs.AppealDTOs
 {
@@ -18,6 +19,8 @@ namespace Repository.DTOs.AppealDTOs
         [Required(ErrorMessage = "Reason is required")]
         [MaxLength(1000, ErrorMessage = "Reason cannot exceed 1000 characters")]
         public string Reason { get; set; } = null!;
+
+        public AppealResolutionEnum AppealResolution { get; set; }
 
         public List<AppealEvidenceFileDTO>? Evidences { get; set; }
     }

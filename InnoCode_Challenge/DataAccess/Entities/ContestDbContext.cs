@@ -583,6 +583,10 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.Start)
                 .HasPrecision(0)
                 .HasColumnName("start");
+            entity.Property(e => e.Status)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("status");
             entity.Property(e => e.StudentId).HasColumnName("student_id");
             entity.Property(e => e.TestId).HasColumnName("test_id");
 

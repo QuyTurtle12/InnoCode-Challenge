@@ -103,7 +103,8 @@ namespace BusinessLogic.Services.Mcqs
                     StudentId = studentId,
                     Start = DateTime.UtcNow,
                     End = DateTime.UtcNow,
-                    Score = 0
+                    Score = 0,
+                    Status = McqAttemptStatusEnum.Finished.ToString()
                 };
 
                 // Insert the attempt & save to get the AttemptId
@@ -327,7 +328,8 @@ namespace BusinessLogic.Services.Mcqs
                     StudentId = studentId,
                     Start = DateTime.UtcNow,
                     End = DateTime.UtcNow,
-                    Score = 0 // Null submission = 0 score
+                    Score = 0, // Null submission = 0 score
+                    Status = McqAttemptStatusEnum.Finished.ToString()
                 };
 
                 await attemptRepo.InsertAsync(attempt);
