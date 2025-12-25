@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.ProvinceDTOs;
 using Repository.IRepositories;
+using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -32,7 +33,7 @@ namespace BusinessLogic.Services.Schools
                 string searchKeyword = queryParams.Search.Trim().ToLower();
                 provincesQuery = provincesQuery.Where(province =>
                     province.Name.ToLower().Contains(searchKeyword) ||
-                    province.Address != null && province.Address.ToLower().Contains(searchKeyword));
+                    (province.Address != null && province.Address.ToLower().Contains(searchKeyword)));
             }
 
             provincesQuery = (queryParams.SortBy?.ToLowerInvariant()) switch
@@ -70,7 +71,7 @@ namespace BusinessLogic.Services.Schools
             if (province == null)
                 throw new ErrorException(
                     StatusCodes.Status404NotFound,
-                    "PROVINCE_NOT_FOUND",
+                    ProvinceErrorCodeConstants.NotFound,
                     $"No province with ID={id}"
                 );
 
@@ -80,17 +81,9 @@ namespace BusinessLogic.Services.Schools
         public async Task<ProvinceDTO> CreateAsync(CreateProvinceDTO dto)
         {
             var provinceRepository = _unitOfWork.GetRepository<Province>();
-            string trimmedName = dto.Name.Trim();
+            string trimmedName = NormalizeName(dto.Name);
 
-            bool nameExists = await provinceRepository.Entities
-                .AnyAsync(province => province.Name.ToLower() == trimmedName.ToLower());
-
-            if (nameExists)
-                throw new ErrorException(
-                    StatusCodes.Status400BadRequest,
-                    "NAME_EXISTS",
-                    "Province name already exists."
-                );
+            await EnsureNameUniqueAsync(provinceRepository, trimmedName);
 
             var province = _mapper.Map<Province>(dto);
             province.Name = trimmedName;
@@ -109,24 +102,14 @@ namespace BusinessLogic.Services.Schools
             if (province == null)
                 throw new ErrorException(
                     StatusCodes.Status404NotFound,
-                    "PROVINCE_NOT_FOUND",
+                    ProvinceErrorCodeConstants.NotFound,
                     $"No province with ID={id}"
                 );
 
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
-                string newName = dto.Name.Trim();
-                bool nameTaken = await provinceRepository.Entities
-                    .AnyAsync(other =>
-                        other.ProvinceId != id &&
-                        other.Name.ToLower() == newName.ToLower());
-
-                if (nameTaken)
-                    throw new ErrorException(
-                        StatusCodes.Status400BadRequest,
-                        "NAME_EXISTS",
-                        "Province name already exists."
-                    );
+                string newName = NormalizeName(dto.Name);
+                await EnsureNameUniqueAsync(provinceRepository, newName, id);
 
                 province.Name = newName;
             }
@@ -146,24 +129,53 @@ namespace BusinessLogic.Services.Schools
 
             var province = await provinceRepository.Entities
                 .Include(p => p.Schools)
+                .Include(p => p.SchoolCreationRequests)
+                .Include(p => p.MentorRegistrations)
                 .FirstOrDefaultAsync(p => p.ProvinceId == id);
 
             if (province == null)
                 throw new ErrorException(
                     StatusCodes.Status404NotFound,
-                    "PROVINCE_NOT_FOUND",
+                    ProvinceErrorCodeConstants.NotFound,
                     $"No province with ID={id}"
                 );
 
-            if (province.Schools.Any())
+            if (IsProvinceInUse(province))
                 throw new ErrorException(
                     StatusCodes.Status409Conflict,
-                    "PROVINCE_IN_USE",
-                    "Cannot delete a province that has schools."
+                    ProvinceErrorCodeConstants.InUse,
+                    "Cannot delete a province that is in use."
                 );
 
             provinceRepository.Delete(province);
             await _unitOfWork.SaveAsync();
+        }
+
+        private static string NormalizeName(string name)
+        {
+            return name.Trim();
+        }
+
+        private static async Task EnsureNameUniqueAsync(IGenericRepository<Province> repo, string name, Guid? excludeId = null)
+        {
+            var lowered = name.ToLowerInvariant();
+            bool exists = await repo.Entities.AnyAsync(p =>
+                p.ProvinceId != excludeId &&
+                p.Name.ToLower() == lowered);
+
+            if (exists)
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ProvinceErrorCodeConstants.NameExists,
+                    "Province name already exists."
+                );
+        }
+
+        private static bool IsProvinceInUse(Province province)
+        {
+            return province.Schools.Any()
+                || province.SchoolCreationRequests.Any()
+                || province.MentorRegistrations.Any();
         }
     }
 }
