@@ -1,8 +1,10 @@
 ﻿using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Submissions;
+using BusinessLogic.Services.Contests;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
@@ -19,12 +21,14 @@ namespace InnoCode_Challenge_API.Controllers.Contests
     {
         private readonly IRoundService _roundService;
         private readonly ISubmissionService _submissionService;
+        private readonly IProblemService _problemService;
 
         // Constructor
-        public RoundsController(IRoundService roundService, ISubmissionService submissionService)
+        public RoundsController(IRoundService roundService, ISubmissionService submissionService, IProblemService problemService)
         {
             _roundService = roundService;
             _submissionService = submissionService;
+            _problemService = problemService;
         }
 
         /// <summary>
@@ -252,6 +256,54 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
                 message: "Submission evaluated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Evaluates a submission using mock test cases
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="submissionDTO"></param>
+        /// <param name="type"></param>
+        /// <returns></returns>
+        [HttpPost("{roundId}/auto-test/mock-test/submissions")]
+        [Consumes("multipart/form-data")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> EvaluateSubmissionWithMockTest(
+            [FromRoute] Guid roundId,
+            [FromForm] CreateSubmissionDTO submissionDTO,
+            [FromForm] TestCaseEvaluationTypeEnum type)
+        {
+            MockTestResultDTO result = await _submissionService.EvaluateMockTestSubmissionAsync(roundId, submissionDTO, type);
+
+            return Ok(new BaseResponseModel<MockTestResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Submission evaluated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Upload mock test file for a round (Organizer only)
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <param name="mockTestFile">Python file containing mock test code</param>
+        /// <returns>Mock test URL</returns>
+        [HttpPost("{roundId}/mock-test/upload")]
+        [Consumes("multipart/form-data")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> UploadMockTest(
+            [FromRoute] Guid roundId,
+            IFormFile mockTestFile)
+        {
+            string mockTestUrl = await _problemService.UploadMockTestAsync(roundId, mockTestFile);
+
+            return Ok(new BaseResponseModel<string>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: mockTestUrl,
+                message: "Mock test file uploaded successfully."
             ));
         }
 

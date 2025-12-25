@@ -5,13 +5,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.LeaderboardEntryDTOs;
 using Repository.IRepositories;
-using Repository.Repositories;
 using System.Security.Claims;
 using System.Text.Json;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
-using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Contests

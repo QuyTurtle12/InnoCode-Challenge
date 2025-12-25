@@ -19,5 +19,7 @@ namespace BusinessLogic.IServices.Contests
         Task<RubricTemplateDTO> UpdateRubricCriterionAsync(Guid roundId, UpdateRubricDTO updateRubricDTO);
         Task DeleteRubricCriterionAsync(Guid rubricId);
         Task<RubricCsvImportResultDTO> ImportRubricFromCsvAsync(IFormFile csvFile, Guid roundId);
+
+        Task<string> UploadMockTestAsync(Guid roundId, IFormFile mockTestFile);
     }
 }

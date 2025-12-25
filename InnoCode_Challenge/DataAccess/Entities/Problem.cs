@@ -23,6 +23,8 @@ public partial class Problem
 
     public string? TemplateUrl { get; set; }
 
+    public string? MockTestUrl { get; set; }
+
     public virtual Round Round { get; set; } = null!;
 
     public virtual ICollection<SubmissionFingerprint> SubmissionFingerprints { get; set; } = new List<SubmissionFingerprint>();

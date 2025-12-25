@@ -1,16 +1,18 @@
-﻿using System.Globalization;
-using System.Text;
-using AutoMapper;
+﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.FileStorages;
 using CsvHelper;
 using CsvHelper.Configuration;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.RubricDTOs.Repository.DTOs.RubricDTOs;
 using Repository.IRepositories;
+using System.Globalization;
+using System.Text;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -23,12 +25,18 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
+        private readonly ICloudinaryService _cloudinaryService;
+        private readonly ILogger<ProblemService> _logger;
+
+        private const int DEFAULT_CODE_FILE_LENGTH = 10485760;
 
         // Constructor
-        public ProblemService(IMapper mapper, IUOW unitOfWork)
+        public ProblemService(IMapper mapper, IUOW unitOfWork, ICloudinaryService cloudinaryService, ILogger<ProblemService> logger)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
+            _cloudinaryService = cloudinaryService;
+            _logger = logger;
         }
 
         public async Task CreateProblemAsync(Guid roundId, CreateProblemDTO problemDTO)
@@ -908,6 +916,110 @@ namespace BusinessLogic.Services.Contests
                 return $"Row {rowNumber}: Max score must be a positive number.";
 
             return null;
+        }
+
+        public async Task<string> UploadMockTestAsync(Guid roundId, IFormFile mockTestFile)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate file
+                if (mockTestFile == null || mockTestFile.Length == 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "No mock test file was provided");
+                }
+
+                // Validate file type
+                string fileExtension = Path.GetExtension(mockTestFile.FileName).ToLower();
+                if (fileExtension != ".py" && fileExtension != ".python")
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Mock test file must be a Python file (.py or .python). Received: {fileExtension}");
+                }
+
+                // Validate file size
+                if (mockTestFile.Length > DEFAULT_CODE_FILE_LENGTH)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Mock test file size exceeds the limit of 5MB");
+                }
+
+                // Get the problem associated with the round
+                IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+                Problem? problem = await problemRepo.Entities
+                    .Where(p => p.RoundId == roundId && !p.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (problem == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No problem found for round {roundId}");
+                }
+
+                // Verify the problem is of type AutoEvaluation
+                if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Mock tests can only be uploaded for AutoEvaluation problems. Current type: {problem.Type}");
+                }
+
+                // Delete old mock test file from Cloudinary if exists
+                if (!string.IsNullOrEmpty(problem.MockTestUrl))
+                {
+                    try
+                    {
+                        string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(problem.MockTestUrl);
+                        if (!string.IsNullOrWhiteSpace(publicId))
+                        {
+                            await _cloudinaryService.DeleteFileAsync(publicId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete old mock test file from Cloudinary: {Url}", problem.MockTestUrl);
+                    }
+                }
+
+                // Upload new mock test file to Cloudinary
+                string mockTestUrl = await _cloudinaryService.UploadFileAsync(mockTestFile, "mock-tests");
+
+                // Update problem with new mock test URL
+                problem.MockTestUrl = mockTestUrl;
+                await problemRepo.UpdateAsync(problem);
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+
+                _logger.LogInformation("Mock test uploaded successfully for round {RoundId}. URL: {MockTestUrl}",
+                    roundId, mockTestUrl);
+
+                return mockTestUrl;
+            }
+            catch (Exception ex)
+            {
+                // Roll back transaction on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error uploading mock test: {ex.Message}");
+            }
         }
     }
 }

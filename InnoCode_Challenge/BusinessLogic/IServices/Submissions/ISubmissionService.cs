@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.JudgeDTOs;
+using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionDTOs;
@@ -15,7 +16,7 @@ namespace BusinessLogic.IServices.Submissions
         Task SaveSubmissionResultAsync(Guid submissionId, JudgeSubmissionResultDTO result, int previousSubmissionsCount, double? penaltyRate);
         Task<Guid> CreateFileSubmissionAsync(Guid roundId, IFormFile file);
         Task<string> GetFileSubmissionDownloadUrlAsync(Guid submissionId);
-        Task AddScoreToTeamInLeaderboardAsync(Guid submissionId);
+        Task AcceptResultAsync(Guid submissionId);
         Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO);
         Task<RubricEvaluationResultDTO> GetMyManualTestResultAsync(Guid roundId);
         Task<PaginatedList<RubricEvaluationResultDTO>> GetAllManualTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
@@ -32,6 +33,12 @@ namespace BusinessLogic.IServices.Submissions
             string? teamName);
 
         Task<PlagiarismSubmissionDetailDTO> GetPlagiarismSubmissionDetailAsync(Guid submissionId);
+        Task<JudgeSubmissionResultDTO> CreateNullAutoSubmissionAsync(Guid roundId);
+        Task<Guid> CreateNullManualSubmissionAsync(Guid roundId);
+        Task<MockTestResultDTO> EvaluateMockTestSubmissionAsync(
+            Guid roundId,
+            CreateSubmissionDTO submissionDTO,
+            TestCaseEvaluationTypeEnum evaluationType);
         Task ApprovePlagiarismSubmissionAsync(Guid submissionId);
         Task DenyPlagiarismSubmissionAsync(Guid submissionId);
 

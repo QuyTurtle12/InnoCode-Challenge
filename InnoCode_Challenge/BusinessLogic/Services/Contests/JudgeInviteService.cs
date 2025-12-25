@@ -543,7 +543,6 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status500InternalServerError, ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     "An error occurred while declining the invite: " + ex.Message);
             }
-
         }
 
 

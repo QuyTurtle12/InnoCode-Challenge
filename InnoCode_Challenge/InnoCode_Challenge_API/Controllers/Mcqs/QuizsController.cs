@@ -306,5 +306,23 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                 message: "Current answers retrieved successfully."
             ));
         }
+
+        /// <summary>
+        /// Submit null quiz (accept 0 points and finish round)
+        /// </summary>
+        /// <param name="roundId">Round ID</param>
+        /// <returns>Quiz result with 0 score</returns>
+        [HttpPost("rounds/{roundId}/mcq-test/null-submission")]
+        [Authorize(Policy = "RequireStudentRole")]
+        public async Task<IActionResult> SubmitNullQuiz(Guid roundId)
+        {
+            QuizResultDTO result = await _quizService.SubmitNullQuizAsync(roundId);
+            return Ok(new BaseResponseModel<QuizResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Null quiz submission accepted with 0 points."
+            ));
+        }
     }
 }
