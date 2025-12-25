@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.SchoolDTOs;
 using Repository.IRepositories;
 using System.Security.Claims;
+using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -28,34 +29,7 @@ namespace BusinessLogic.Services.Schools
         {
             var schoolRepository = _unitOfWork.GetRepository<School>();
 
-            IQueryable<School> schoolsQuery = schoolRepository.Entities
-                .Where(s => s.DeletedAt == null)
-                .Include(s => s.Province)
-                .Include(s => s.ManagerUser)
-                .AsNoTracking();
-
-            if (queryParams.ProvinceId.HasValue)
-            {
-                schoolsQuery = schoolsQuery.Where(s => s.ProvinceId == queryParams.ProvinceId.Value);
-            }
-
-            if (!string.IsNullOrWhiteSpace(queryParams.Search))
-            {
-                string keyword = queryParams.Search.Trim().ToLower();
-                schoolsQuery = schoolsQuery.Where(s =>
-                    s.Name.ToLower().Contains(keyword) ||
-                    s.Contact != null && s.Contact.ToLower().Contains(keyword));
-            }
-
-            schoolsQuery = (queryParams.SortBy?.ToLowerInvariant()) switch
-            {
-                "createdat" => queryParams.Desc ? schoolsQuery.OrderByDescending(s => s.CreatedAt)
-                                                   : schoolsQuery.OrderBy(s => s.CreatedAt),
-                "provincename" => queryParams.Desc ? schoolsQuery.OrderByDescending(s => s.Province.Name)
-                                                   : schoolsQuery.OrderBy(s => s.Province.Name),
-                _ => queryParams.Desc ? schoolsQuery.OrderByDescending(s => s.Name)
-                                                    : schoolsQuery.OrderBy(s => s.Name),
-            };
+            IQueryable<School> schoolsQuery = BuildSchoolQuery(schoolRepository, queryParams, null);
 
             var paged = await schoolRepository.GetPagingAsync(schoolsQuery, queryParams.Page, queryParams.PageSize);
             var items = paged.Items.Select(_mapper.Map<SchoolDTO>).ToList();
@@ -73,7 +47,7 @@ namespace BusinessLogic.Services.Schools
                 .FirstOrDefaultAsync(s => s.SchoolId == id && s.DeletedAt == null);
 
             if (school == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={id}");
+                throw new ErrorException(StatusCodes.Status404NotFound, SchoolErrorCodeConstants.NotFound, $"No school with ID={id}");
 
             return _mapper.Map<SchoolDTO>(school);
         }
@@ -83,20 +57,10 @@ namespace BusinessLogic.Services.Schools
             var schoolRepository = _unitOfWork.GetRepository<School>();
             var provinceRepository = _unitOfWork.GetRepository<Province>();
 
-            bool provinceExists = await provinceRepository.Entities
-                .AnyAsync(p => p.ProvinceId == dto.ProvinceId);
-            if (!provinceExists)
-                throw new ErrorException(StatusCodes.Status404NotFound, "PROVINCE_NOT_FOUND", $"No province with ID={dto.ProvinceId}");
+            await EnsureProvinceExistsAsync(provinceRepository, dto.ProvinceId);
 
-            string trimmedName = dto.Name.Trim();
-
-            bool nameExistsInProvince = await schoolRepository.Entities
-                .AnyAsync(s => s.ProvinceId == dto.ProvinceId
-                               && s.DeletedAt == null
-                               && s.Name.ToLower() == trimmedName.ToLower());
-            if (nameExistsInProvince)
-                throw new ErrorException(StatusCodes.Status400BadRequest, "NAME_EXISTS",
-                    "School name already exists in this province.");
+            string trimmedName = NormalizeName(dto.Name);
+            await EnsureSchoolNameUniqueAsync(schoolRepository, dto.ProvinceId, trimmedName, null);
 
             var now = DateTime.UtcNow;
             var school = _mapper.Map<School>(dto);
@@ -123,30 +87,19 @@ namespace BusinessLogic.Services.Schools
                 .FirstOrDefaultAsync(s => s.SchoolId == id && s.DeletedAt == null);
 
             if (school == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={id}");
+                throw new ErrorException(StatusCodes.Status404NotFound, SchoolErrorCodeConstants.NotFound, $"No school with ID={id}");
 
             Guid newProvinceId = dto.ProvinceId ?? school.ProvinceId;
             if (dto.ProvinceId.HasValue)
             {
-                bool newProvinceExists = await provinceRepository.Entities
-                    .AnyAsync(p => p.ProvinceId == newProvinceId);
-                if (!newProvinceExists)
-                    throw new ErrorException(StatusCodes.Status404NotFound, "PROVINCE_NOT_FOUND",
-                        $"No province with ID={newProvinceId}");
+                await EnsureProvinceExistsAsync(provinceRepository, newProvinceId);
                 school.ProvinceId = newProvinceId;
             }
 
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
-                string newName = dto.Name.Trim();
-                bool duplicateInProvince = await schoolRepository.Entities
-                    .AnyAsync(s => s.SchoolId != id
-                                   && s.ProvinceId == newProvinceId
-                                   && s.DeletedAt == null
-                                   && s.Name.ToLower() == newName.ToLower());
-                if (duplicateInProvince)
-                    throw new ErrorException(StatusCodes.Status400BadRequest, "NAME_EXISTS",
-                        "School name already exists in this province.");
+                string newName = NormalizeName(dto.Name);
+                await EnsureSchoolNameUniqueAsync(schoolRepository, newProvinceId, newName, id);
 
                 school.Name = newName;
             }
@@ -173,14 +126,20 @@ namespace BusinessLogic.Services.Schools
                 .Include(s => s.Students)
                 .Include(s => s.Mentors)
                 .Include(s => s.Teams)
+                .Include(s => s.MentorRegistrations)
+                .Include(s => s.SchoolCreationRequests)
                 .FirstOrDefaultAsync(s => s.SchoolId == id && s.DeletedAt == null);
 
             if (school == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={id}");
+                throw new ErrorException(StatusCodes.Status404NotFound, SchoolErrorCodeConstants.NotFound, $"No school with ID={id}");
 
-            bool hasRelations = school.Students.Any() || school.Mentors.Any() || school.Teams.Any();
+            bool hasRelations = school.Students.Any()
+                || school.Mentors.Any()
+                || school.Teams.Any()
+                || school.MentorRegistrations.Any()
+                || school.SchoolCreationRequests.Any();
             if (hasRelations)
-                throw new ErrorException(StatusCodes.Status409Conflict, "SCHOOL_IN_USE",
+                throw new ErrorException(StatusCodes.Status409Conflict, SchoolErrorCodeConstants.InUse,
                     "Cannot delete a school that has students, mentors, or teams.");
 
             school.DeletedAt = DateTime.UtcNow;
@@ -190,7 +149,6 @@ namespace BusinessLogic.Services.Schools
 
         public async Task<PaginatedList<SchoolDTO>> GetMyManagedSchoolsAsync(SchoolQueryParams queryParams)
         {
-
             var schoolRepository = _unitOfWork.GetRepository<School>();
 
             // Get current user ID 
@@ -201,11 +159,58 @@ namespace BusinessLogic.Services.Schools
             if (!Guid.TryParse(userId, out Guid userGuid))
                 throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHORIZED", "Invalid user ID.");
 
+            IQueryable<School> q = BuildSchoolQuery(schoolRepository, queryParams, userGuid);
+
+            var paged = await schoolRepository.GetPagingAsync(q, queryParams.Page, queryParams.PageSize);
+            var items = paged.Items.Select(_mapper.Map<SchoolDTO>).ToList();
+
+            return new PaginatedList<SchoolDTO>(items, paged.TotalCount, paged.PageNumber, paged.PageSize);
+        }
+
+        private static string NormalizeName(string name)
+        {
+            return name.Trim();
+        }
+
+        private static async Task EnsureSchoolNameUniqueAsync(
+            IGenericRepository<School> schoolRepository,
+            Guid provinceId,
+            string name,
+            Guid? excludeId)
+        {
+            var lowered = name.ToLowerInvariant();
+            bool exists = await schoolRepository.Entities
+                .AnyAsync(s => s.DeletedAt == null
+                               && s.ProvinceId == provinceId
+                               && s.SchoolId != excludeId
+                               && s.Name.ToLower() == lowered);
+
+            if (exists)
+                throw new ErrorException(StatusCodes.Status400BadRequest, SchoolErrorCodeConstants.NameExists,
+                    "School name already exists in this province.");
+        }
+
+        private static async Task EnsureProvinceExistsAsync(IGenericRepository<Province> provinceRepository, Guid provinceId)
+        {
+            bool exists = await provinceRepository.Entities.AnyAsync(p => p.ProvinceId == provinceId);
+            if (!exists)
+                throw new ErrorException(StatusCodes.Status404NotFound, ProvinceErrorCodeConstants.NotFound,
+                    $"No province with ID={provinceId}");
+        }
+
+        private static IQueryable<School> BuildSchoolQuery(
+            IGenericRepository<School> schoolRepository,
+            SchoolQueryParams queryParams,
+            Guid? managerUserId)
+        {
             IQueryable<School> q = schoolRepository.Entities
-                .Where(s => s.DeletedAt == null && s.ManagerUserId == userGuid)
+                .Where(s => s.DeletedAt == null)
                 .Include(s => s.Province)
                 .Include(s => s.ManagerUser)
                 .AsNoTracking();
+
+            if (managerUserId.HasValue)
+                q = q.Where(s => s.ManagerUserId == managerUserId.Value);
 
             if (queryParams.ProvinceId.HasValue)
                 q = q.Where(s => s.ProvinceId == queryParams.ProvinceId.Value);
@@ -220,16 +225,15 @@ namespace BusinessLogic.Services.Schools
 
             q = (queryParams.SortBy?.ToLowerInvariant()) switch
             {
-                "createdat" => queryParams.Desc ? q.OrderByDescending(s => s.CreatedAt) : q.OrderBy(s => s.CreatedAt),
-                "provincename" => queryParams.Desc ? q.OrderByDescending(s => s.Province.Name) : q.OrderBy(s => s.Province.Name),
-                _ => queryParams.Desc ? q.OrderByDescending(s => s.Name) : q.OrderBy(s => s.Name),
+                "createdat" => queryParams.Desc ? q.OrderByDescending(s => s.CreatedAt)
+                                                : q.OrderBy(s => s.CreatedAt),
+                "provincename" => queryParams.Desc ? q.OrderByDescending(s => s.Province.Name)
+                                                   : q.OrderBy(s => s.Province.Name),
+                _ => queryParams.Desc ? q.OrderByDescending(s => s.Name)
+                                      : q.OrderBy(s => s.Name),
             };
 
-            var paged = await schoolRepository.GetPagingAsync(q, queryParams.Page, queryParams.PageSize);
-            var items = paged.Items.Select(_mapper.Map<SchoolDTO>).ToList();
-
-            return new PaginatedList<SchoolDTO>(items, paged.TotalCount, paged.PageNumber, paged.PageSize);
+            return q;
         }
-
     }
 }
