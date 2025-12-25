@@ -59,6 +59,7 @@ namespace BusinessLogic.Services.Certificates
                 IGenericRepository<Certificate> certRepo = _unitOfWork.GetRepository<Certificate>();
                 IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
                 IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
 
                 // Fetch the template
                 _logger.LogDebug("Fetching certificate template with TemplateId={TemplateId}", dto.TemplateId);
@@ -69,6 +70,8 @@ namespace BusinessLogic.Services.Certificates
                     _logger.LogWarning("Certificate template not found. TemplateId={TemplateId}", dto.TemplateId);
                     throw new ErrorException(StatusCodes.Status404NotFound, CertificateErrorCodeConstants.TemplateNotFound, $"No template with ID={dto.TemplateId}");
                 }
+
+                await EnsureContestOwnedByOrganizerOrAdminAsync(tpl.ContestId);
 
                 _logger.LogDebug("Template found: {TemplateName}, FileUrl={FileUrl}", tpl.Name, tpl.FileUrl);
 
@@ -123,16 +126,30 @@ namespace BusinessLogic.Services.Certificates
                                     .FirstOrDefaultAsync(s => s.StudentId == r.StudentId && s.DeletedAt == null);
 
                                 // Validate student existence
-                                if (stu == null)
-                                {
-                                    _logger.LogWarning("Student not found. StudentId={StudentId}", r.StudentId);
-                                    throw new ErrorException(StatusCodes.Status404NotFound,
-                                        CertificateErrorCodeConstants.StudentNotFound,
-                                        $"No student with ID={r.StudentId}");
-                                }
-                                studentId = stu.StudentId;
-                                recipientName = r.DisplayName?.Trim() ?? (stu.User?.Fullname ?? "Student");
-                                _logger.LogDebug("Student found: {StudentName}", recipientName);
+                            if (stu == null)
+                            {
+                                _logger.LogWarning("Student not found. StudentId={StudentId}", r.StudentId);
+                                throw new ErrorException(StatusCodes.Status404NotFound,
+                                    CertificateErrorCodeConstants.StudentNotFound,
+                                    $"No student with ID={r.StudentId}");
+                            }
+
+                            bool isStudentInContest = await teamMemberRepo.Entities
+                                .Include(tm => tm.Team)
+                                .AnyAsync(tm => tm.StudentId == stu.StudentId &&
+                                                tm.Team.DeletedAt == null &&
+                                                tm.Team.ContestId == tpl.ContestId);
+
+                            if (!isStudentInContest)
+                            {
+                                throw new ErrorException(StatusCodes.Status400BadRequest,
+                                    ResponseCodeConstants.BADREQUEST,
+                                    "Student does not belong to this contest.");
+                            }
+
+                            studentId = stu.StudentId;
+                            recipientName = r.DisplayName?.Trim() ?? (stu.User?.Fullname ?? "Student");
+                            _logger.LogDebug("Student found: {StudentName}", recipientName);
                             }
                             else
                             {
@@ -147,6 +164,13 @@ namespace BusinessLogic.Services.Certificates
                                     throw new ErrorException(StatusCodes.Status404NotFound,
                                         CertificateErrorCodeConstants.TeamNotFound,
                                         $"No team with ID={r.TeamId}");
+                                }
+
+                                if (tm.ContestId != tpl.ContestId)
+                                {
+                                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                                        ResponseCodeConstants.BADREQUEST,
+                                        "Team does not belong to this contest.");
                                 }
 
                                 // Set team details
@@ -456,6 +480,8 @@ namespace BusinessLogic.Services.Certificates
                 return null;
             }
 
+            await EnsureContestOwnedByOrganizerOrAdminAsync(certificate.Template.ContestId);
+
             // Map to DTO and return
             return new CertificateDTO
             {
@@ -536,6 +562,18 @@ namespace BusinessLogic.Services.Certificates
                 q = q.Where(c =>
                     c.StudentId == currentStudentId.Value ||
                     (c.TeamId != null && myTeamIds.Contains(c.TeamId.Value)));
+            }
+            else
+            {
+                if (contestId.HasValue)
+                {
+                    await EnsureContestOwnedByOrganizerOrAdminAsync(contestId.Value);
+                }
+                else if (!IsAdmin())
+                {
+                    var userId = GetCurrentUserIdOrThrow();
+                    q = q.Where(c => c.Template.Contest.CreatedBy == userId.ToString());
+                }
             }
 
             // Apply filters
@@ -626,6 +664,8 @@ namespace BusinessLogic.Services.Certificates
             if (cert == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "CERT_NOT_FOUND", "Certificate not found.");
 
+            await EnsureContestOwnedByOrganizerOrAdminAsync(cert.Template.ContestId);
+
             if (!string.IsNullOrWhiteSpace(dto.FileUrl))
                 cert.FileUrl = dto.FileUrl;
 
@@ -658,10 +698,13 @@ namespace BusinessLogic.Services.Certificates
             var repo = _unitOfWork.GetRepository<Certificate>();
 
             var cert = await repo.Entities
+                .Include(x => x.Template).ThenInclude(t => t.Contest)
                 .FirstOrDefaultAsync(x => x.CertificateId == certificateId && x.DeletedAt == null);
 
             if (cert == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "CERT_NOT_FOUND", "Certificate not found.");
+
+            await EnsureContestOwnedByOrganizerOrAdminAsync(cert.Template.ContestId);
 
             cert.DeletedAt = DateTime.UtcNow;
             repo.Update(cert);
@@ -680,6 +723,42 @@ namespace BusinessLogic.Services.Certificates
         {
             string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
             return Guid.TryParse(userId, out var guid) ? guid : null;
+        }
+
+        private Guid GetCurrentUserIdOrThrow()
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(userId, out var guid)) return guid;
+
+            throw new ErrorException(StatusCodes.Status401Unauthorized,
+                ResponseCodeConstants.UNAUTHORIZED,
+                "User not authenticated.");
+        }
+
+        private bool IsAdmin()
+        {
+            var role = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+            return string.Equals(role, RoleConstants.Admin, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task EnsureContestOwnedByOrganizerOrAdminAsync(Guid contestId)
+        {
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            var contest = await contestRepo.Entities
+                .Where(c => c.ContestId == contestId && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND", $"No contest with ID={contestId}");
+
+            if (IsAdmin())
+                return;
+
+            var userId = GetCurrentUserIdOrThrow();
+            if (!string.Equals(contest.CreatedBy, userId.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Only the organizer who created this contest can manage certificates.");
         }
 
     }

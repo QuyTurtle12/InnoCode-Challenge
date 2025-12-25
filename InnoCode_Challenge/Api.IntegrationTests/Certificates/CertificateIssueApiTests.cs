@@ -274,8 +274,7 @@ namespace Api.IntegrationTests.Certificates
             var payload = new IssueCertificatesDTO
             {
                 TemplateId = seed.TemplateId,
-                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
-                Output = "png"
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } }
             };
 
             var res = await _client.PostAsJsonAsync("/api/certificates/issue", payload);
@@ -291,8 +290,7 @@ namespace Api.IntegrationTests.Certificates
             var payload = new IssueCertificatesDTO
             {
                 TemplateId = Guid.NewGuid(),
-                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
-                Output = "png"
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } }
             };
 
             var req = new HttpRequestMessage(HttpMethod.Post, "/api/certificates/issue");
@@ -318,8 +316,7 @@ namespace Api.IntegrationTests.Certificates
                 Recipients = new List<IssueRecipientDTO>
                 {
                     new IssueRecipientDTO { TeamId = seed.TeamId, StudentId = seed.StudentId }
-                },
-                Output = "png"
+                }
             };
 
             var req = new HttpRequestMessage(HttpMethod.Post, "/api/certificates/issue");
@@ -342,8 +339,7 @@ namespace Api.IntegrationTests.Certificates
             var payload = new IssueCertificatesDTO
             {
                 TemplateId = seed.TemplateId,
-                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.OtherTeamId } },
-                Output = "png"
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.OtherTeamId } }
             };
 
             var req = new HttpRequestMessage(HttpMethod.Post, "/api/certificates/issue");
@@ -366,8 +362,7 @@ namespace Api.IntegrationTests.Certificates
             var payload = new IssueCertificatesDTO
             {
                 TemplateId = seed.TemplateId,
-                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { StudentId = seed.OtherStudentId } },
-                Output = "png"
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { StudentId = seed.OtherStudentId } }
             };
 
             var req = new HttpRequestMessage(HttpMethod.Post, "/api/certificates/issue");
@@ -390,8 +385,7 @@ namespace Api.IntegrationTests.Certificates
             var payload = new IssueCertificatesDTO
             {
                 TemplateId = seed.TemplateId,
-                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
-                Output = "png"
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } }
             };
 
             var req = new HttpRequestMessage(HttpMethod.Post, "/api/certificates/issue");
@@ -415,7 +409,6 @@ namespace Api.IntegrationTests.Certificates
             {
                 TemplateId = seed.TemplateId,
                 Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
-                Output = "png",
                 Reissue = false
             });
 
@@ -425,7 +418,6 @@ namespace Api.IntegrationTests.Certificates
             {
                 TemplateId = seed.TemplateId,
                 Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
-                Output = "png",
                 Reissue = false
             });
 

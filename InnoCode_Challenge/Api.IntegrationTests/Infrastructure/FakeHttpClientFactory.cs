@@ -1,3 +1,6 @@
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Png;
+using SixLabors.ImageSharp.PixelFormats;
 using System.Net;
 using System.Net.Http;
 
@@ -12,9 +15,17 @@ namespace Api.IntegrationTests.Infrastructure
 
         private sealed class FakeHttpMessageHandler : HttpMessageHandler
         {
-            private static readonly byte[] PngBytes = Convert.FromBase64String(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA" +
-                "AAC0lEQVR42mP8/58HAAMBAQAYK9pYAAAAAElFTkSuQmCC");
+            private static readonly byte[] PngBytes = CreatePngBytes();
+
+            private static byte[] CreatePngBytes()
+            {
+                using var img = new Image<Rgba32>(1, 1);
+                img[0, 0] = new Rgba32(255, 255, 255, 255);
+
+                using var ms = new MemoryStream();
+                img.Save(ms, new PngEncoder());
+                return ms.ToArray();
+            }
 
             protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             {

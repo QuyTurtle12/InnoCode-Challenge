@@ -11,7 +11,6 @@ namespace Repository.DTOs.CertificateDTOs
     {
         [Required] public Guid TemplateId { get; set; }
         [Required, MinLength(1)] public List<IssueRecipientDTO> Recipients { get; set; } = new();
-        [Required, RegularExpression("^(png|pdf)$")] public string Output { get; set; } = "png";
         public bool Reissue { get; set; } = false;
     }
 }
