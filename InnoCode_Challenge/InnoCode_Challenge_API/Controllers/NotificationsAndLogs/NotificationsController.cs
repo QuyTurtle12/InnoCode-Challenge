@@ -88,7 +88,7 @@ namespace InnoCode_Challenge_API.Controllers.NotificationsAndLogs
         [HttpPost("read-all")]
         public async Task<IActionResult> MarkAllAsRead()
         {
-            var result = await _notificationService.MarkAllAsReadAsync(DateTime.Now);
+            var result = await _notificationService.MarkAllAsReadAsync(DateTime.UtcNow);
 
             return Ok(new BaseResponseModel<MarkReadResultDTO>(
                 statusCode: StatusCodes.Status200OK,

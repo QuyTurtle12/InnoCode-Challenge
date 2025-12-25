@@ -1,20 +1,16 @@
-﻿using Microsoft.AspNetCore.SignalR;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.SignalR;
 
 namespace BusinessLogic.Hubs
 {
+    [Authorize]
     public class NotificationsHub : Hub
     {
         private static string UserGroup(string userId) => $"notifications_{userId}";
 
         public async Task JoinMyNotificationGroup()
         {
-            var userId = Context.UserIdentifier; 
+            var userId = Context.UserIdentifier;
             if (string.IsNullOrWhiteSpace(userId)) return;
 
             await Groups.AddToGroupAsync(Context.ConnectionId, UserGroup(userId));
