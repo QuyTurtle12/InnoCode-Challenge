@@ -24,11 +24,11 @@ namespace BusinessLogic.Services.Contests
         private readonly ILogger<JudgeInviteService> _logger;
         private readonly IActivityLogWriter _logWriter;
 
-        private const string Pending = "pending";
-        private const string Accepted = "accepted";
-        private const string Declined = "declined";
-        private const string Revoked = "revoked";
-        private const string Expired = "expired";
+        private const string Pending = JudgeInviteStatusConstants.Pending;
+        private const string Accepted = JudgeInviteStatusConstants.Accepted;
+        private const string Declined = JudgeInviteStatusConstants.Declined;
+        private const string Revoked = JudgeInviteStatusConstants.Revoked;
+        private const string Expired = JudgeInviteStatusConstants.Expired;
 
         public JudgeInviteService(
             IUOW uow,
@@ -63,6 +63,9 @@ namespace BusinessLogic.Services.Contests
             DateTime? AcceptedAtEnd,
             bool desc)
         {
+            var contestRepo = _uow.GetRepository<Contest>();
+            await EnsureContestOwnedByOrganizerAsync(contestId, contestRepo);
+
             // Validate pagination parameters
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 20;
@@ -79,7 +82,7 @@ namespace BusinessLogic.Services.Contests
             // Filter by status using enum
             if (status.HasValue)
             {
-                string statusString = status.Value.ToString().ToLower();
+                string statusString = status.Value.ToString().ToLowerInvariant();
                 query = query.Where(i => i.Status == statusString);
             }
 
@@ -93,14 +96,14 @@ namespace BusinessLogic.Services.Contests
             // Filter by judge name
             if (!string.IsNullOrWhiteSpace(judgeNameSearch))
             {
-                judgeNameSearch = judgeNameSearch.Trim().ToLower();
+                judgeNameSearch = judgeNameSearch.Trim().ToLowerInvariant();
                 query = query.Where(i => i.Judge.Fullname.ToLower().Contains(judgeNameSearch));
             }
 
             // Filter by judge email
             if (!string.IsNullOrWhiteSpace(judgeEmailSearch))
             {
-                judgeEmailSearch = judgeEmailSearch.Trim().ToLower();
+                judgeEmailSearch = judgeEmailSearch.Trim().ToLowerInvariant();
                 query = query.Where(i => i.Judge.Email.ToLower().Contains(judgeEmailSearch));
             }
 
@@ -152,11 +155,8 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<JudgeInvite> inviteRepo = _uow.GetRepository<JudgeInvite>();
                 IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
 
-                // Get contest
-                Contest? contest = await contestRepo.Entities
-                    .Where(c => c.ContestId == contestId && c.DeletedAt == null)
-                    .FirstOrDefaultAsync()
-                    ?? throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"No contest with ID={contestId}");
+                // Get contest and ensure ownership
+                Contest contest = await EnsureContestOwnedByOrganizerAsync(contestId, contestRepo);
 
                 // Validate judge user
                 User? judgeUser = await userRepo.Entities
@@ -267,8 +267,13 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                _uow.BeginTransaction();
+
                 IGenericRepository<JudgeInvite> repo = _uow.GetRepository<JudgeInvite>();
                 IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+                IGenericRepository<Contest> contestRepo = _uow.GetRepository<Contest>();
+
+                await EnsureContestOwnedByOrganizerAsync(contestId, contestRepo);
 
                 JudgeInvite? invite = await repo.Entities
                     .Include(i => i.Contest)
@@ -331,6 +336,7 @@ namespace BusinessLogic.Services.Contests
                     }
 
                     // Use AutoMapper
+                    _uow.CommitTransaction();
                     return _mapper.Map<JudgeInviteDTO>(createdInvite);
                 }
                 else
@@ -354,11 +360,13 @@ namespace BusinessLogic.Services.Contests
                             invite.InviteId.ToString());
                     }
                     // Use AutoMapper
+                    _uow.CommitTransaction();
                     return _mapper.Map<JudgeInviteDTO>(invite);
                 }
             }
             catch (Exception ex)
             {
+                _uow.RollBack();
                 if (ex is ErrorException)
                     throw;
 
@@ -373,6 +381,9 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                IGenericRepository<Contest> contestRepo = _uow.GetRepository<Contest>();
+                await EnsureContestOwnedByOrganizerAsync(contestId, contestRepo);
+
                 // Get invite
                 IGenericRepository<JudgeInvite> repo = _uow.GetRepository<JudgeInvite>();
                 var invite = await repo.Entities
@@ -422,120 +433,115 @@ namespace BusinessLogic.Services.Contests
         }
         public async Task AcceptByCodeAsync(string inviteCode, string email)
         {
-            if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
-
-            var normEmail = email.Trim().ToLowerInvariant();
-
-            var inviteRepo = _uow.GetRepository<JudgeInvite>();
-            var configRepo = _uow.GetRepository<Config>();
-
-            var invite = await inviteRepo.Entities
-                .Where(i => i.InviteCode == inviteCode)
-                .Include(i => i.Contest)
-                .Include(i => i.Judge)
-                .FirstOrDefaultAsync();
-
-            if (invite == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
-
-            if (invite.Status != Pending)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invite is not pending.");
-
-            if (!invite.ExpiresAt.HasValue || invite.ExpiresAt.Value <= DateTime.UtcNow)
+            try
             {
-                invite.Status = Expired;
+                _uow.BeginTransaction();
+
+                var inviteRepo = _uow.GetRepository<JudgeInvite>();
+                var configRepo = _uow.GetRepository<Config>();
+
+                var (invite, _) = await ValidateInviteByCodeAsync(inviteCode, email, inviteRepo);
+
+                if (invite.Status != Pending)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invite is not pending.");
+
+                if (!invite.ExpiresAt.HasValue || invite.ExpiresAt.Value <= DateTime.UtcNow)
+                {
+                    invite.Status = Expired;
+                    inviteRepo.Update(invite);
+                    await _uow.SaveAsync();
+                    throw new ErrorException(StatusCodes.Status410Gone, ResponseCodeConstants.GONE, "Invite has expired.");
+                }
+
+                bool alreadyAssigned = await IsJudgeAssignedToContestAsync(invite.ContestId, invite.JudgeId, configRepo);
+                if (alreadyAssigned)
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.EXISTED, "You are already assigned to this contest.");
+
+                string configKey = ConfigKeys.ContestJudge(invite.ContestId, invite.JudgeId);
+                var existingConfig = await configRepo.Entities
+                    .FirstOrDefaultAsync(c => c.Key == configKey);
+                if (existingConfig == null)
+                {
+                    await configRepo.InsertAsync(new Config
+                    {
+                        Key = configKey,
+                        Value = "active",
+                        Scope = "contest",
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+                else
+                {
+                    existingConfig.Value = "active";
+                    existingConfig.Scope = "contest";
+                    existingConfig.UpdatedAt = DateTime.UtcNow;
+                    existingConfig.DeletedAt = null;
+                    await configRepo.UpdateAsync(existingConfig);
+                }
+
+                invite.Status = Accepted;
+                invite.AcceptedAt = DateTime.UtcNow;
                 inviteRepo.Update(invite);
+
                 await _uow.SaveAsync();
-                throw new ErrorException(StatusCodes.Status410Gone, ResponseCodeConstants.GONE, "Invite has expired.");
+                _uow.CommitTransaction();
+
+                // log activity
+                await _logWriter.TryWriteAsync(invite.JudgeId,
+                    ActivityActions.JudgeInviteAccepted,
+                    TargetTypes.JudgeInvite,
+                    invite.InviteId.ToString());
+
+                // notify inviter
+                var inviterId = TryParseGuid(invite.CreatedBy);
+                if (inviterId.HasValue)
+                {
+                    await TryNotifyInviterAcceptedAsync(inviterId.Value, invite);
+                }
             }
-
-            if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
-
-            if (invite.Judge.Role != RoleConstants.Judge)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User must have Judge role.");
-
-            if (!string.Equals(invite.Judge.Email.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
-                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
-
-            bool alreadyAssigned = await IsJudgeAssignedToContestAsync(invite.ContestId, invite.JudgeId, configRepo);
-            if (alreadyAssigned)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.EXISTED, "You are already assigned to this contest.");
-
-            string configKey = ConfigKeys.ContestJudge(invite.ContestId, invite.JudgeId);
-            var config = new Config
+            catch (Exception ex)
             {
-                Key = configKey,
-                Value = "active",
-                Scope = "contest",
-                UpdatedAt = DateTime.UtcNow
-            };
+                _uow.RollBack();
+                if (ex is ErrorException) throw;
 
-            await configRepo.InsertAsync(config);
-
-            invite.Status = Accepted;
-            invite.AcceptedAt = DateTime.UtcNow;
-            inviteRepo.Update(invite);
-
-            await _uow.SaveAsync();
-
-            // log activity
-            await _logWriter.TryWriteAsync(invite.JudgeId,
-                ActivityActions.JudgeInviteAccepted,
-                TargetTypes.JudgeInvite,
-                invite.InviteId.ToString());
-
-            // notify inviter
-            var inviterId = TryParseGuid(invite.CreatedBy);
-            if (inviterId.HasValue)
-            {
-                await TryNotifyInviterAcceptedAsync(inviterId.Value, invite);
+                throw new ErrorException(StatusCodes.Status500InternalServerError, ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    "An error occurred while accepting the invite: " + ex.Message);
             }
         }
 
         public async Task DeclineByCodeAsync(string inviteCode, string email)
         {
-            if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
-
-            var normEmail = email.Trim().ToLowerInvariant();
-
-            var inviteRepo = _uow.GetRepository<JudgeInvite>();
-
-            var invite = await inviteRepo.Entities
-                .Where(i => i.InviteCode == inviteCode)
-                .Include(i => i.Contest)
-                .Include(i => i.Judge)
-                .FirstOrDefaultAsync();
-
-            if (invite == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
-
-            if (invite.Status != Pending)
-                throw new ErrorException(StatusCodes.Status409Conflict, ResponseCodeConstants.CONFLICT, "Invite is not pending.");
-
-            if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
-
-            if (!string.Equals(invite.Judge.Email.Trim().ToLowerInvariant(), normEmail, StringComparison.Ordinal))
-                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
-
-            invite.Status = Declined;
-            inviteRepo.Update(invite);
-            await _uow.SaveAsync();
-
-            // log activity
-            await _logWriter.TryWriteAsync(invite.JudgeId,
-                ActivityActions.JudgeInviteDeclined,
-                TargetTypes.JudgeInvite,
-                invite.InviteId.ToString());
-
-            // notify inviter
-            var inviterId = TryParseGuid(invite.CreatedBy);
-            if (inviterId.HasValue)
+            try
             {
-                await TryNotifyInviterDeclinedAsync(inviterId.Value, invite, normEmail);
+                var inviteRepo = _uow.GetRepository<JudgeInvite>();
+                var (invite, normEmail) = await ValidateInviteByCodeAsync(inviteCode, email, inviteRepo);
+
+                if (invite.Status != Pending)
+                    throw new ErrorException(StatusCodes.Status409Conflict, ResponseCodeConstants.CONFLICT, "Invite is not pending.");
+
+                invite.Status = Declined;
+                inviteRepo.Update(invite);
+                await _uow.SaveAsync();
+
+                // log activity
+                await _logWriter.TryWriteAsync(invite.JudgeId,
+                    ActivityActions.JudgeInviteDeclined,
+                    TargetTypes.JudgeInvite,
+                    invite.InviteId.ToString());
+
+                // notify inviter
+                var inviterId = TryParseGuid(invite.CreatedBy);
+                if (inviterId.HasValue)
+                {
+                    await TryNotifyInviterDeclinedAsync(inviterId.Value, invite, normEmail);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException) throw;
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError, ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    "An error occurred while declining the invite: " + ex.Message);
             }
 
         }
@@ -597,6 +603,9 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
+                var contestRepo = _uow.GetRepository<Contest>();
+                await EnsureContestOwnedByOrganizerAsync(contestId, contestRepo);
+
                 // Validate pagination parameters
                 if (page < 1 || pageSize < 1)
                 {
@@ -606,19 +615,6 @@ namespace BusinessLogic.Services.Contests
                 if (pageSize > 100)
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page size cannot exceed 100.");
-                }
-
-                // Get contest repository
-                IGenericRepository<Contest> contestRepo = _uow.GetRepository<Contest>();
-
-                // Verify contest exists
-                Contest? contest = await contestRepo.Entities
-                    .Where(c => c.ContestId == contestId && !c.DeletedAt.HasValue)
-                    .FirstOrDefaultAsync();
-
-                if (contest == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"No contest found with ID={contestId}");
                 }
 
                 // Get user repository
@@ -634,113 +630,88 @@ namespace BusinessLogic.Services.Contests
                 // Apply filters on judge name
                 if (!string.IsNullOrWhiteSpace(judgeNameSearch))
                 {
-                    judgeQuery = judgeQuery.Where(j => j.Fullname.Contains(judgeNameSearch));
+                    var name = judgeNameSearch.Trim();
+                    judgeQuery = judgeQuery.Where(j => j.Fullname.Contains(name));
                 }
 
                 // Apply filters on judge email
                 if (!string.IsNullOrWhiteSpace(judgeEmailSearch))
                 {
-                    judgeQuery = judgeQuery.Where(j => j.Email.Contains(judgeEmailSearch));
+                    var email = judgeEmailSearch.Trim();
+                    judgeQuery = judgeQuery.Where(j => j.Email.Contains(email));
                 }
 
-                // Get all judges
-                List<User> allJudges = await judgeQuery
-                    .ToListAsync();
+                var latestInvites = inviteRepo.Entities
+                    .Where(i => i.ContestId == contestId)
+                    .GroupBy(i => i.JudgeId)
+                    .Select(g => g.OrderByDescending(x => x.CreatedAt).FirstOrDefault());
 
-                // Extract judge IDs
-                List<Guid> judgeIds = allJudges.Select(j => j.UserId).ToList();
-
-                // Get all invites for these judges in this contest
-                List<JudgeInvite> invites = await inviteRepo.Entities
-                    .Where(i => i.ContestId == contestId && judgeIds.Contains(i.JudgeId))
-                    .ToListAsync();
-
-                // Create a dictionary for faster lookup
-                Dictionary<Guid, JudgeInvite> inviteLookup = invites.GroupBy(i => i.JudgeId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First());
-
-                // Map judges to DTOs with invite status
-                List<JudgeWithInviteStatusDTO> judgeWithInvites = allJudges.Select(judge =>
-                {
-                    // Check if this judge has an invite
-                    inviteLookup.TryGetValue(judge.UserId, out JudgeInvite? invite);
-
-                    return new JudgeWithInviteStatusDTO
-                    {
-                        JudgeId = judge.UserId,
-                        JudgeName = judge.Fullname,
-                        JudgeEmail = judge.Email,
-                        JudgeStatus = judge.Status,
-                        InviteId = invite?.InviteId,
-                        InviteStatus = invite?.Status,
-                        InvitedAt = invite?.CreatedAt,
-                        ExpiresAt = invite?.ExpiresAt,
-                        AcceptedAt = invite?.AcceptedAt,
-                        InviteCode = invite?.InviteCode
-                    };
-                }).ToList();
+                var query = from judge in judgeQuery
+                            join invite in latestInvites on judge.UserId equals invite!.JudgeId into gj
+                            from invite in gj.DefaultIfEmpty()
+                            select new JudgeWithInviteStatusDTO
+                            {
+                                JudgeId = judge.UserId,
+                                JudgeName = judge.Fullname,
+                                JudgeEmail = judge.Email,
+                                JudgeStatus = judge.Status,
+                                InviteId = invite != null ? invite.InviteId : null,
+                                InviteStatus = invite != null ? invite.Status : null,
+                                InvitedAt = invite != null ? invite.CreatedAt : null,
+                                ExpiresAt = invite != null ? invite.ExpiresAt : null,
+                                AcceptedAt = invite != null ? invite.AcceptedAt : null,
+                                InviteCode = invite != null ? invite.InviteCode : null
+                            };
 
                 // Filter by invitation status
                 if (inviteStatus.HasValue)
                 {
-                    string statusString = inviteStatus.Value.ToString().ToLower();
-                    judgeWithInvites = judgeWithInvites.Where(j => j.InviteStatus == statusString).ToList();
+                    string statusString = inviteStatus.Value.ToString().ToLowerInvariant();
+                    query = query.Where(j => j.InviteStatus == statusString);
                 }
 
                 // Filter by whether judge has been invited
                 if (hasBeenInvited.HasValue)
                 {
-                    if (hasBeenInvited.Value)
-                    {
-                        // Only show judges who have been invited
-                        judgeWithInvites = judgeWithInvites.Where(j => j.InviteId != null).ToList();
-                    }
-                    else
-                    {
-                        // Only show judges who have NOT been invited
-                        judgeWithInvites = judgeWithInvites.Where(j => j.InviteId == null).ToList();
-                    }
+                    query = hasBeenInvited.Value
+                        ? query.Where(j => j.InviteId != null)
+                        : query.Where(j => j.InviteId == null);
                 }
 
                 // Apply sorting
-                judgeWithInvites = (sortBy?.ToLowerInvariant()) switch
+                query = (sortBy?.ToLowerInvariant()) switch
                 {
                     "name" or "judgename" => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.JudgeName).ToList()
-                        : judgeWithInvites.OrderBy(j => j.JudgeName).ToList(),
+                        ? query.OrderByDescending(j => j.JudgeName)
+                        : query.OrderBy(j => j.JudgeName),
                     "email" or "judgeemail" => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.JudgeEmail).ToList()
-                        : judgeWithInvites.OrderBy(j => j.JudgeEmail).ToList(),
+                        ? query.OrderByDescending(j => j.JudgeEmail)
+                        : query.OrderBy(j => j.JudgeEmail),
                     "invitedat" => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.InvitedAt).ToList()
-                        : judgeWithInvites.OrderBy(j => j.InvitedAt).ToList(),
+                        ? query.OrderByDescending(j => j.InvitedAt)
+                        : query.OrderBy(j => j.InvitedAt),
                     "status" or "invitestatus" => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.InviteStatus).ToList()
-                        : judgeWithInvites.OrderBy(j => j.InviteStatus).ToList(),
+                        ? query.OrderByDescending(j => j.InviteStatus)
+                        : query.OrderBy(j => j.InviteStatus),
                     "expiresat" => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.ExpiresAt).ToList()
-                        : judgeWithInvites.OrderBy(j => j.ExpiresAt).ToList(),
+                        ? query.OrderByDescending(j => j.ExpiresAt)
+                        : query.OrderBy(j => j.ExpiresAt),
                     "acceptedat" => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.AcceptedAt).ToList()
-                        : judgeWithInvites.OrderBy(j => j.AcceptedAt).ToList(),
+                        ? query.OrderByDescending(j => j.AcceptedAt)
+                        : query.OrderBy(j => j.AcceptedAt),
                     _ => desc
-                        ? judgeWithInvites.OrderByDescending(j => j.JudgeName).ToList()
-                        : judgeWithInvites.OrderBy(j => j.JudgeName).ToList(),
+                        ? query.OrderByDescending(j => j.JudgeName)
+                        : query.OrderBy(j => j.JudgeName),
                 };
 
-                // Get total count after filtering
-                int totalCount = judgeWithInvites.Count;
+                int totalCount = await query.CountAsync();
 
-                // Apply pagination
-                List<JudgeWithInviteStatusDTO> paginatedItems = judgeWithInvites
+                List<JudgeWithInviteStatusDTO> paginatedItems = await query
                     .Skip((page - 1) * pageSize)
                     .Take(pageSize)
-                    .ToList();
+                    .ToListAsync();
 
-                // Create paginated list
-                PaginatedList<JudgeWithInviteStatusDTO> paginatedList = new PaginatedList<JudgeWithInviteStatusDTO>(paginatedItems, totalCount, page, pageSize);
-
-                // Return the paginated list of DTOs
-                return paginatedList;
+                return new PaginatedList<JudgeWithInviteStatusDTO>(paginatedItems, totalCount, page, pageSize);
             }
             catch (Exception ex)
             {
@@ -762,10 +733,67 @@ namespace BusinessLogic.Services.Contests
             return null;
         }
 
+        private Guid GetCurrentUserIdOrThrow()
+        {
+            var str = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(str, out var g)) return g;
+            throw new ErrorException(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "User not authenticated.");
+        }
+
+        private static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
+
         private static Guid? TryParseGuid(string? str)
         {
             if (Guid.TryParse(str, out var g)) return g;
             return null;
+        }
+
+        private async Task<Contest> EnsureContestOwnedByOrganizerAsync(Guid contestId, IGenericRepository<Contest> contestRepo)
+        {
+            var userId = GetCurrentUserIdOrThrow();
+
+            var contest = await contestRepo.Entities
+                .Where(c => c.ContestId == contestId && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"No contest with ID={contestId}");
+
+            if (!string.Equals(contest.CreatedBy, userId.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "You do not have permission to manage judge invites for this contest.");
+
+            return contest;
+        }
+
+        private async Task<(JudgeInvite Invite, string NormalizedEmail)> ValidateInviteByCodeAsync(
+            string inviteCode,
+            string email,
+            IGenericRepository<JudgeInvite> inviteRepo)
+        {
+            if (string.IsNullOrWhiteSpace(inviteCode) || string.IsNullOrWhiteSpace(email))
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "InviteCode and Email are required.");
+
+            var normEmail = NormalizeEmail(email);
+
+            var invite = await inviteRepo.Entities
+                .Where(i => i.InviteCode == inviteCode)
+                .Include(i => i.Contest)
+                .Include(i => i.Judge)
+                .FirstOrDefaultAsync();
+
+            if (invite == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Invalid invite code.");
+
+            if (invite.Judge == null || invite.Judge.DeletedAt.HasValue)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Judge not found.");
+
+            if (invite.Judge.Role != RoleConstants.Judge)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User must have Judge role.");
+
+            if (!string.Equals(NormalizeEmail(invite.Judge.Email), normEmail, StringComparison.Ordinal))
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "This invite does not belong to your email.");
+
+            return (invite, normEmail);
         }
 
         private async Task TryNotifyJudgeInvitationAsync(Guid judgeUserId, JudgeInvite invite)
