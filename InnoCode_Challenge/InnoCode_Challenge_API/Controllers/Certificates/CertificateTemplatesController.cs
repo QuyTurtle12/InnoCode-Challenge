@@ -46,10 +46,9 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         [HttpGet]
         [Authorize(Policy = "RequireOrganizerOrAdmin")]
         public async Task<IActionResult> Get([FromQuery] Guid? contestId, [FromQuery] string? search,
-            [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
-            [FromQuery] string? sortBy = "createdAt", [FromQuery] bool desc = true)
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
-            var paged = await _certificateTemplateService.GetAsync(contestId, search, page, pageSize, sortBy, desc);
+            var paged = await _certificateTemplateService.GetAsync(contestId, search, page, pageSize);
             var paging = new { paged.PageNumber, paged.PageSize, paged.TotalPages, paged.TotalCount, paged.HasPreviousPage, paged.HasNextPage };
             return Ok(new BaseResponseModel<object>(
                 StatusCodes.Status200OK,
