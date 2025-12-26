@@ -252,10 +252,13 @@ namespace BusinessLogic.Services.Students
             var mentorRepository = _unitOfWork.GetRepository<Mentor>();
 
             var team = await teamRepository.Entities
+                .Include(t => t.Contest)
                 .FirstOrDefaultAsync(t => t.TeamId == id && t.DeletedAt == null);
 
             if (team == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={id}");
+
+            EnsureContestNotStarted(team.Contest);
 
             Guid targetContestId = dto.ContestId ?? team.ContestId;
             Guid targetSchoolId = dto.SchoolId ?? team.SchoolId;
@@ -357,6 +360,7 @@ namespace BusinessLogic.Services.Students
 
             var team = await teamRepository.Entities
                 .Include(t => t.TeamMembers)
+                .Include(t => t.Contest)
                 .Include(t => t.Submissions)
                 .Include(t => t.LeaderboardEntries)
                 .Include(t => t.Certificates)
@@ -365,6 +369,8 @@ namespace BusinessLogic.Services.Students
 
             if (team == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={id}");
+
+            EnsureContestNotStarted(team.Contest);
 
             bool hasRelations = team.TeamMembers.Any() ||
                                 team.Submissions.Any() ||
@@ -378,6 +384,35 @@ namespace BusinessLogic.Services.Students
 
             team.DeletedAt = DateTime.UtcNow;
             teamRepository.Update(team);
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task RemoveMemberAsync(Guid teamId, Guid studentId)
+        {
+            var teamRepository = _unitOfWork.GetRepository<Team>();
+            var mentorRepository = _unitOfWork.GetRepository<Mentor>();
+            var memberRepository = _unitOfWork.GetRepository<TeamMember>();
+
+            var currentMentor = await GetCurrentMentorOrThrowAsync(mentorRepository);
+
+            var team = await teamRepository.Entities
+                .Include(t => t.Contest)
+                .Include(t => t.TeamMembers)
+                .FirstOrDefaultAsync(t => t.TeamId == teamId && t.DeletedAt == null);
+
+            if (team == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, $"No team with ID={teamId}");
+
+            if (team.MentorId != currentMentor.MentorId)
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "You do not manage this team.");
+
+            EnsureContestNotStarted(team.Contest);
+
+            var member = team.TeamMembers.FirstOrDefault(tm => tm.StudentId == studentId);
+            if (member == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Team member not found.");
+
+            memberRepository.Delete(member);
             await _unitOfWork.SaveAsync();
         }
 
@@ -477,6 +512,44 @@ namespace BusinessLogic.Services.Students
                 throw new ErrorException(StatusCodes.Status401Unauthorized, "UNAUTHENTICATED", "Invalid user context.");
 
             return id;
+        }
+
+        private static void EnsureContestNotStarted(Contest contest)
+        {
+            if (contest == null) return;
+
+            var now = DateTime.UtcNow;
+            var status = contest.Status?.Trim();
+
+            var startedByTime = contest.Start.HasValue && now >= contest.Start.Value;
+            var startedByStatus =
+                string.Equals(status, ContestStatusEnum.Ongoing.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, ContestStatusEnum.Paused.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, ContestStatusEnum.Completed.ToString(), StringComparison.OrdinalIgnoreCase);
+
+            if (startedByTime || startedByStatus)
+            {
+                throw new ErrorException(StatusCodes.Status409Conflict, ResponseCodeConstants.CONFLICT,
+                    "Contest has started. Team cannot be modified.");
+            }
+        }
+
+        private async Task<Mentor> GetCurrentMentorOrThrowAsync(IGenericRepository<Mentor> mentorRepository)
+        {
+            string userId = GetCurrentUserIdOrThrow();
+            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid);
+
+            var mentor = await mentorRepository.Entities
+                .Include(m => m.User)
+                .FirstOrDefaultAsync(m =>
+                    m.User != null &&
+                    ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid) ||
+                     m.User.UserId.ToString() == userId));
+
+            if (mentor == null)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_MENTOR", "Only mentors can manage team members.");
+
+            return mentor;
         }
 
     }

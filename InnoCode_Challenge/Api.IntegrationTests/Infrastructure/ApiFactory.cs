@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore.Storage;
+using System.Net.Http;
 
 namespace Api.IntegrationTests.Infrastructure;
 
@@ -51,6 +52,12 @@ public class ApiFactory : WebApplicationFactory<Program>
                 d => d.ServiceType == typeof(ICloudinaryService));
             if (cloudDescriptor != null) services.Remove(cloudDescriptor);
             services.AddSingleton<ICloudinaryService, FakeCloudinaryService>();
+
+            // Replace HttpClientFactory to avoid external HTTP calls (certificate template download)
+            var httpFactoryDescriptor = services.SingleOrDefault(
+                d => d.ServiceType == typeof(IHttpClientFactory));
+            if (httpFactoryDescriptor != null) services.Remove(httpFactoryDescriptor);
+            services.AddSingleton<IHttpClientFactory, FakeHttpClientFactory>();
 
             // IMPORTANT: use same DbName + shared _dbRoot
             services.AddDbContext<ContestDbContext>(opt =>

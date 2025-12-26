@@ -1,7 +1,5 @@
-﻿using AutoMapper;
 using BusinessLogic.Hubs;
 using BusinessLogic.IServices.NotificationsAndLogs;
-using CloudinaryDotNet;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
@@ -80,7 +78,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 {
                     var entity = new Notification
                     {
-                        NotificationId = Guid.NewGuid(), 
+                        NotificationId = Guid.NewGuid(),
                         UserId = u.UserId,
                         Type = dto.Type.ToString(),
                         Channel = dto.Channel.ToString(),
@@ -89,24 +87,11 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
                         IsRead = false,
                         ReadAt = null
-
                     };
 
                     await notifRepo.InsertAsync(entity);
 
-                    createdDtos.Add(new GetNotificationDTO
-                    {
-                        NotificationId = entity.NotificationId,
-                        Type = entity.Type,
-                        Channel = entity.Channel,
-                        Payload = entity.Payload,
-                        SentAt = entity.SentAt,
-
-                        IsRead = entity.IsRead,
-                        ReadAt = entity.ReadAt,
-
-                        recipientEmailList = new List<string> { u.Email }
-                    });
+                    createdDtos.Add(MapToDto(entity, u.Email));
                 }
 
                 await _unitOfWork.SaveAsync();
@@ -137,8 +122,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
         public async Task<PaginatedList<GetNotificationDTO>> GetMyNotificationsAsync(int pageNumber, int pageSize, Guid? idSearch)
         {
-            if (pageNumber < 1 || pageSize < 1)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number or page size must be >= 1.");
+            ValidatePaging(pageNumber, pageSize);
 
             var userIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
             if (string.IsNullOrWhiteSpace(userIdStr) || !Guid.TryParse(userIdStr, out var userId))
@@ -160,27 +144,14 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
             var page = await repo.GetPagingAsync(q, pageNumber, pageSize);
 
-            var items = page.Items.Select(n => new GetNotificationDTO
-            {
-                NotificationId = n.NotificationId,
-                Type = n.Type,
-                Channel = n.Channel,
-                Payload = n.Payload,
-                SentAt = n.SentAt,
-
-                IsRead = n.IsRead,
-                ReadAt = n.ReadAt,
-
-                recipientEmailList = new List<string> { n.User.Email }
-            }).ToList();
+            var items = page.Items.Select(n => MapToDto(n, n.User.Email)).ToList();
 
             return new PaginatedList<GetNotificationDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
 
         public async Task<PaginatedList<GetNotificationDTO>> GetCreatedNotificationsAsync(int pageNumber, int pageSize, Guid? idSearch, string? recipientEmailSearch)
         {
-            if (pageNumber < 1 || pageSize < 1)
-                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number or page size must be >= 1.");
+            ValidatePaging(pageNumber, pageSize);
 
             var repo = _unitOfWork.GetRepository<Notification>();
 
@@ -203,19 +174,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
             var page = await repo.GetPagingAsync(q, pageNumber, pageSize);
 
-            var items = page.Items.Select(n => new GetNotificationDTO
-            {
-                NotificationId = n.NotificationId,
-                Type = n.Type,
-                Channel = n.Channel,
-                Payload = n.Payload,
-                SentAt = n.SentAt,
-
-                IsRead = n.IsRead,
-                ReadAt = n.ReadAt,
-
-                recipientEmailList = new List<string> { n.User.Email }
-            }).ToList();
+            var items = page.Items.Select(n => MapToDto(n, n.User.Email)).ToList();
 
             return new PaginatedList<GetNotificationDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
@@ -267,24 +226,11 @@ namespace BusinessLogic.Services.NotificationsAndLogs
 
                         IsRead = false,
                         ReadAt = null
-
                     };
 
                     await notifRepo.InsertAsync(entity);
 
-                    pushed.Add((uid, new GetNotificationDTO
-                    {
-                        NotificationId = entity.NotificationId,
-                        Type = entity.Type,
-                        Channel = entity.Channel,
-                        Payload = entity.Payload,
-                        SentAt = entity.SentAt,
-
-                        IsRead = entity.IsRead,
-                        ReadAt = entity.ReadAt,
-
-                        recipientEmailList = new List<string>() // optional for realtime
-                    }));
+                    pushed.Add((uid, MapToDto(entity, null)));
                 }
 
                 await _unitOfWork.SaveAsync();
@@ -311,6 +257,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                     $"Error creating Notifications: {ex.Message}");
             }
         }
+
         public async Task<MarkReadResultDTO> MarkAsReadAsync(Guid notificationId)
         {
             if (notificationId == Guid.Empty)
@@ -323,11 +270,57 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             var repo = _unitOfWork.GetRepository<Notification>();
             var now = DateTime.UtcNow;
 
-            var updated = await repo.Entities
-                .Where(n => n.NotificationId == notificationId && n.UserId == userId && !n.IsRead)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(n => n.IsRead, true)
-                    .SetProperty(n => n.ReadAt, now));
+            int updated;
+            try
+            {
+                updated = await repo.Entities
+                    .Where(n => n.NotificationId == notificationId && n.UserId == userId && !n.IsRead)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(n => n.IsRead, true)
+                        .SetProperty(n => n.ReadAt, now));
+            }
+            catch (InvalidOperationException)
+            {
+                var entity = await repo.Entities
+                    .FirstOrDefaultAsync(n => n.NotificationId == notificationId && n.UserId == userId);
+
+                if (entity == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, "NOTIFICATION_NOT_FOUND", "Notification not found.");
+
+                if (!entity.IsRead)
+                {
+                    entity.IsRead = true;
+                    entity.ReadAt = now;
+                    repo.Update(entity);
+                    await _unitOfWork.SaveAsync();
+                    updated = 1;
+                }
+                else
+                {
+                    updated = 0;
+                }
+            }
+            catch (NotSupportedException)
+            {
+                var entity = await repo.Entities
+                    .FirstOrDefaultAsync(n => n.NotificationId == notificationId && n.UserId == userId);
+
+                if (entity == null)
+                    throw new ErrorException(StatusCodes.Status404NotFound, "NOTIFICATION_NOT_FOUND", "Notification not found.");
+
+                if (!entity.IsRead)
+                {
+                    entity.IsRead = true;
+                    entity.ReadAt = now;
+                    repo.Update(entity);
+                    await _unitOfWork.SaveAsync();
+                    updated = 1;
+                }
+                else
+                {
+                    updated = 0;
+                }
+            }
 
             if (updated == 0)
             {
@@ -343,13 +336,13 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 return new MarkReadResultDTO
                 {
                     UpdatedCount = 0,
-                    ReadAt = row.ReadAt ?? now 
+                    ReadAt = row.ReadAt ?? now
                 };
             }
 
-
             return new MarkReadResultDTO { UpdatedCount = 1, ReadAt = now };
         }
+
         public async Task<MarkReadResultDTO> MarkAllAsReadAsync(DateTime? upTo = null)
         {
             var userIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -360,11 +353,51 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             var now = DateTime.UtcNow;
             var cutoff = upTo ?? now;
 
-            var updated = await repo.Entities
-                .Where(n => n.UserId == userId && !n.IsRead && n.SentAt <= cutoff)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(n => n.IsRead, true)
-                    .SetProperty(n => n.ReadAt, now));
+            int updated;
+            try
+            {
+                updated = await repo.Entities
+                    .Where(n => n.UserId == userId && !n.IsRead && n.SentAt <= cutoff)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(n => n.IsRead, true)
+                        .SetProperty(n => n.ReadAt, now));
+            }
+            catch (InvalidOperationException)
+            {
+                var rows = await repo.Entities
+                    .Where(n => n.UserId == userId && !n.IsRead && n.SentAt <= cutoff)
+                    .ToListAsync();
+
+                foreach (var row in rows)
+                {
+                    row.IsRead = true;
+                    row.ReadAt = now;
+                    repo.Update(row);
+                }
+
+                if (rows.Count > 0)
+                    await _unitOfWork.SaveAsync();
+
+                updated = rows.Count;
+            }
+            catch (NotSupportedException)
+            {
+                var rows = await repo.Entities
+                    .Where(n => n.UserId == userId && !n.IsRead && n.SentAt <= cutoff)
+                    .ToListAsync();
+
+                foreach (var row in rows)
+                {
+                    row.IsRead = true;
+                    row.ReadAt = now;
+                    repo.Update(row);
+                }
+
+                if (rows.Count > 0)
+                    await _unitOfWork.SaveAsync();
+
+                updated = rows.Count;
+            }
 
             return new MarkReadResultDTO { UpdatedCount = updated, ReadAt = now };
         }
@@ -384,6 +417,29 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             return new UnreadCountDTO { Count = count };
         }
 
-    }
+        private static void ValidatePaging(int pageNumber, int pageSize)
+        {
+            if (pageNumber < 1 || pageSize < 1)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number or page size must be >= 1.");
+        }
 
+        private static GetNotificationDTO MapToDto(Notification entity, string? recipientEmail)
+        {
+            var recipients = new List<string>();
+            if (!string.IsNullOrWhiteSpace(recipientEmail))
+                recipients.Add(recipientEmail);
+
+            return new GetNotificationDTO
+            {
+                NotificationId = entity.NotificationId,
+                Type = entity.Type,
+                Channel = entity.Channel,
+                Payload = entity.Payload,
+                SentAt = entity.SentAt,
+                IsRead = entity.IsRead,
+                ReadAt = entity.ReadAt,
+                recipientEmailList = recipients
+            };
+        }
+    }
 }

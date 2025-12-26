@@ -4,6 +4,8 @@ using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
+using Utility.Constant;
 using Repository.DTOs.CertificateTemplateDTOs;
 using Repository.IRepositories;
 using Utility.ExceptionCustom;
@@ -16,15 +18,21 @@ namespace BusinessLogic.Services.Certificates
         private readonly IMapper _mapper;
         private readonly IUOW _unitOfWork;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
         private const long MAX_FILE_SIZE = 10 * 1024 * 1024;
 
         // Constructor
-        public CertificateTemplateService(IMapper mapper, IUOW unitOfWork, ICloudinaryService cloudinaryService)
+        public CertificateTemplateService(
+            IMapper mapper,
+            IUOW unitOfWork,
+            ICloudinaryService cloudinaryService,
+            IHttpContextAccessor httpContextAccessor)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
             _cloudinaryService = cloudinaryService;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task<CertificateTemplateDTO> CreateAsync(CreateCertificateTemplateDTO dto)
@@ -32,11 +40,7 @@ namespace BusinessLogic.Services.Certificates
             IGenericRepository<CertificateTemplate> repo = _unitOfWork.GetRepository<CertificateTemplate>();
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
-            bool contestExists = await contestRepo.Entities
-                .AnyAsync(c => c.ContestId == dto.ContestId && c.DeletedAt == null);
-
-            if (!contestExists)
-                throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND", $"No contest with ID={dto.ContestId}");
+            await EnsureContestOwnedByOrganizerOrAdminAsync(dto.ContestId, contestRepo);
 
             var entity = new CertificateTemplate
             {
@@ -58,17 +62,7 @@ namespace BusinessLogic.Services.Certificates
                 ContestId = entity.ContestId,
                 Name = entity.Name,
                 FileUrl = entity.FileUrl,
-                Text = new TextLayoutDTO
-                {
-                    X = (int)(entity.TextX ?? 960),
-                    Y = (int)(entity.TextY ?? 540),
-
-                    FontFamily = dto.Text?.FontFamily ?? "Arial",
-                    FontSize = dto.Text?.FontSize ?? 64f,
-                    ColorHex = dto.Text?.ColorHex ?? "#1F2937",
-                    MaxWidth = dto.Text?.MaxWidth ?? 1600,
-                    Align = dto.Text?.Align ?? "center"
-                },
+                Text = BuildTextLayout(entity.TextX, entity.TextY)
             };
         }
 
@@ -83,34 +77,38 @@ namespace BusinessLogic.Services.Certificates
 
             if (tpl == null) return null;
 
+            await EnsureContestOwnedByOrganizerOrAdminAsync(tpl.ContestId, _unitOfWork.GetRepository<Contest>());
+
             return new CertificateTemplateDTO
             {
                 TemplateId = tpl.TemplateId,
                 ContestId = tpl.ContestId,
                 Name = tpl.Name,
                 FileUrl = tpl.FileUrl,
-                Text = new TextLayoutDTO
-                {
-                    X = (int)(tpl.TextX ?? 960),
-                    Y = (int)(tpl.TextY ?? 540),
-                    FontFamily = "Arial",
-                    FontSize = 64f,
-                    ColorHex = "#1F2937",
-                    MaxWidth = 1600,
-                    Align = "center"
-                },
+                Text = BuildTextLayout(tpl.TextX, tpl.TextY)
             };
         }
 
-        public async Task<PaginatedList<CertificateTemplateDTO>> GetAsync(Guid? contestId, string? search, int page, int pageSize, string? sortBy, bool desc)
+        public async Task<PaginatedList<CertificateTemplateDTO>> GetAsync(Guid? contestId, string? search, int page, int pageSize)
         {
             var repo = _unitOfWork.GetRepository<CertificateTemplate>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
 
             IQueryable<CertificateTemplate> query = repo.Entities
                 .AsNoTracking()
-                .Where(x => x.DeletedAt == null);
+                .Where(x => x.DeletedAt == null)
+                .Include(x => x.Contest);
 
-            if (contestId.HasValue) query = query.Where(x => x.ContestId == contestId.Value);
+            if (contestId.HasValue)
+            {
+                await EnsureContestOwnedByOrganizerOrAdminAsync(contestId.Value, contestRepo);
+                query = query.Where(x => x.ContestId == contestId.Value);
+            }
+            else if (!IsAdmin())
+            {
+                var userId = GetCurrentUserIdOrThrow();
+                query = query.Where(x => x.Contest.CreatedBy == userId.ToString());
+            }
 
             if (!string.IsNullOrWhiteSpace(search))
             {
@@ -118,11 +116,7 @@ namespace BusinessLogic.Services.Certificates
                 query = query.Where(x => x.Name.ToLower().Contains(s));
             }
 
-            query = (sortBy?.ToLowerInvariant()) switch
-            {
-                "name" => desc ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
-                _ => desc ? query.OrderByDescending(x => x.TemplateId) : query.OrderBy(x => x.TemplateId)
-            };
+            query = query.OrderByDescending(x => x.TemplateId);
 
             var pageData = await repo.GetPagingAsync(query, page, pageSize);
 
@@ -132,16 +126,7 @@ namespace BusinessLogic.Services.Certificates
                 ContestId = t.ContestId,
                 Name = t.Name,
                 FileUrl = t.FileUrl,
-                Text = new TextLayoutDTO
-                {
-                    X = (int)(t.TextX ?? 960),
-                    Y = (int)(t.TextY ?? 540),
-                    FontFamily = "Arial",
-                    FontSize = 64f,
-                    ColorHex = "#1F2937",
-                    MaxWidth = 1600,
-                    Align = "center"
-                },
+                Text = BuildTextLayout(t.TextX, t.TextY)
             }).ToList();
 
             return new PaginatedList<CertificateTemplateDTO>(items, pageData.TotalCount, pageData.PageNumber, pageData.PageSize);
@@ -158,10 +143,13 @@ namespace BusinessLogic.Services.Certificates
             var repo = _unitOfWork.GetRepository<CertificateTemplate>();
 
             var tpl = await repo.Entities
+                .Include(t => t.Contest)
                 .FirstOrDefaultAsync(t => t.TemplateId == templateId && t.DeletedAt == null);
 
             if (tpl == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEMPLATE_NOT_FOUND", "Template not found.");
+
+            await EnsureContestOwnedByOrganizerOrAdminAsync(tpl.ContestId, _unitOfWork.GetRepository<Contest>());
 
             // Optional updates
             if (!string.IsNullOrWhiteSpace(dto.Name))
@@ -185,17 +173,7 @@ namespace BusinessLogic.Services.Certificates
                 ContestId = tpl.ContestId,
                 Name = tpl.Name,
                 FileUrl = tpl.FileUrl,
-                Text = new TextLayoutDTO
-                {
-                    X = (int)(tpl.TextX ?? 960),
-                    Y = (int)(tpl.TextY ?? 540),
-
-                    FontFamily = "Arial",
-                    FontSize = 64f,
-                    ColorHex = "#1F2937",
-                    MaxWidth = 1600,
-                    Align = "center"
-                }
+                Text = BuildTextLayout(tpl.TextX, tpl.TextY)
             };
         }
 
@@ -207,14 +185,61 @@ namespace BusinessLogic.Services.Certificates
             var repo = _unitOfWork.GetRepository<CertificateTemplate>();
 
             var tpl = await repo.Entities
+                .Include(t => t.Contest)
                 .FirstOrDefaultAsync(t => t.TemplateId == templateId && t.DeletedAt == null);
 
             if (tpl == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEMPLATE_NOT_FOUND", "Template not found.");
 
+            await EnsureContestOwnedByOrganizerOrAdminAsync(tpl.ContestId, _unitOfWork.GetRepository<Contest>());
+
             tpl.DeletedAt = DateTime.UtcNow;
             repo.Update(tpl);
             await _unitOfWork.SaveAsync();
+        }
+
+        private TextLayoutDTO BuildTextLayout(decimal? x, decimal? y)
+        {
+            return new TextLayoutDTO
+            {
+                X = (int)(x ?? CertificateTemplateDefaults.TextX),
+                Y = (int)(y ?? CertificateTemplateDefaults.TextY),
+                FontFamily = CertificateTemplateDefaults.FontFamily,
+                FontSize = CertificateTemplateDefaults.FontSize,
+                ColorHex = CertificateTemplateDefaults.ColorHex,
+                MaxWidth = CertificateTemplateDefaults.MaxWidth,
+                Align = CertificateTemplateDefaults.Align
+            };
+        }
+
+        private Guid GetCurrentUserIdOrThrow()
+        {
+            var str = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (Guid.TryParse(str, out var g)) return g;
+            throw new ErrorException(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "User not authenticated.");
+        }
+
+        private bool IsAdmin()
+        {
+            var role = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+            return string.Equals(role, RoleConstants.Admin, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task EnsureContestOwnedByOrganizerOrAdminAsync(Guid contestId, IGenericRepository<Contest> contestRepo)
+        {
+            var contest = await contestRepo.Entities
+                .Where(c => c.ContestId == contestId && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND", $"No contest with ID={contestId}");
+
+            if (IsAdmin())
+                return;
+
+            var userId = GetCurrentUserIdOrThrow();
+            if (!string.Equals(contest.CreatedBy, userId.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "Only the organizer who created this contest can manage certificate templates.");
         }
 
 
