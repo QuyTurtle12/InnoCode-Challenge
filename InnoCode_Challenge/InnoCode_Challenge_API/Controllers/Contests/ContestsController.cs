@@ -1,5 +1,4 @@
 ﻿using BusinessLogic.IServices.Contests;
-using CloudinaryDotNet;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ContestDTOs;
@@ -325,6 +324,25 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
                 message: "Contest end time updated to now."
+            ));
+        }
+
+        /// <summary>
+        /// Download contest report (ZIP of CSVs) for organizer
+        /// </summary>
+        /// <param name="id">Contest ID</param>
+        /// <returns>Report URL</returns>
+        [HttpGet("{id}/report")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> DownloadContestReport(Guid id)
+        {
+            string url = await _contestService.DownloadContestReportZipAsync(id);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: new { url },
+                message: "Contest report URL retrieved successfully."
             ));
         }
 
