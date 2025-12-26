@@ -20,5 +20,7 @@ namespace BusinessLogic.IServices.Students
 
         Task<IReadOnlyList<TeamWithMembersDTO>> GetMyTeamsAsync();
 
+        Task RemoveMemberAsync(Guid teamId, Guid studentId);
+
     }
 }

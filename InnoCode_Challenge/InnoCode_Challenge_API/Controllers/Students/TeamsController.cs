@@ -128,6 +128,14 @@ namespace InnoCode_Challenge_API.Controllers.Students
             return NoContent();
         }
 
+        [HttpDelete("{teamId:guid}/members/{studentId:guid}")]
+        [Authorize(Roles = RoleConstants.Mentor)]
+        public async Task<IActionResult> RemoveMember(Guid teamId, Guid studentId)
+        {
+            await _teamService.RemoveMemberAsync(teamId, studentId);
+            return NoContent();
+        }
+
         [HttpGet("me")]
         [Authorize] 
         public async Task<IActionResult> GetMine()
