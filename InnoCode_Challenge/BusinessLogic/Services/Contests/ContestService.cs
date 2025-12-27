@@ -4,7 +4,6 @@ using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Hangfire;
-using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -13,7 +12,6 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
-using System;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.IO.Compression;
@@ -105,9 +103,8 @@ namespace BusinessLogic.Services.Contests
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
-
                 // Log contest cancellation activity
-                var actorId = GetCurrentUserGuidOrThrow();
+                Guid actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, id.ToString());
 
                 // Notify participants about contest cancellation

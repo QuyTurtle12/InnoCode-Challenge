@@ -1561,7 +1561,6 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("test_case_id");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Description)
-                .HasMaxLength(255)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("description");
             entity.Property(e => e.ExpectedOutput)

@@ -802,11 +802,11 @@ namespace BusinessLogic.Services.Mcqs
                     {
                         TestId = round.McqTest.TestId,
                         Questions = questionDTOs,
-                        TotalQuestions = totalQuestions,
-                        CurrentPage = pageNumber,
-                        PageSize = pageSize,
-                        TotalPages = (int)Math.Ceiling(totalQuestions / (double)pageSize)
-                    }
+                    },
+                    TotalCount = totalQuestions,
+                    CurrentPage = pageNumber,
+                    PageSize = pageSize,
+                    TotalPages = (int)Math.Ceiling(totalQuestions / (double)pageSize)
                 };
 
                 return quizDTO;

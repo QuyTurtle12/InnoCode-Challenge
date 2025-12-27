@@ -304,6 +304,7 @@ namespace BusinessLogic.Services.Appeals
                             .ThenInclude(m => m.User)
                     .Include(a => a.Owner)
                     .Include(a => a.Target)
+                        .ThenInclude(r => r.Contest)
                     .Include(a => a.AppealEvidences.Where(e => e.DeletedAt == null))
                     .FirstOrDefaultAsync();
 
