@@ -2374,6 +2374,11 @@ namespace BusinessLogic.Services.Submissions
                 .Include(x => x.Submission)
                     .ThenInclude(s => s.SubmittedByStudent)
                         .ThenInclude(st => st.User)
+                .Include(x => x.Submission)
+                    .ThenInclude(s => s.SubmissionArtifacts)
+                .Include(x => x.Submission)
+                    .ThenInclude(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
                 .OrderByDescending(x => x.Submission.CreatedAt)
                 .Select(x => new PlagiarismMatchDTO
                 {
@@ -2383,7 +2388,19 @@ namespace BusinessLogic.Services.Submissions
                     StudentId = x.Submission.SubmittedByStudentId,
                     StudentName = x.Submission.SubmittedByStudent.User.Fullname,
                     SubmittedAt = x.Submission.CreatedAt,
-                    Score = x.Submission.Score
+                    Score = x.Submission.Score,
+                    Artifacts = x.Submission.SubmissionArtifacts != null
+                        ? x.Submission.SubmissionArtifacts
+                            .Where(a => a.DeletedAt == null)
+                            .Select(a => _mapper.Map<GetSubmissionArtifactDTO>(a))
+                            .ToList()
+                        : new List<GetSubmissionArtifactDTO>(),
+                    Details = x.Submission.SubmissionDetails != null
+                        ? x.Submission.SubmissionDetails
+                            .Where(d => d.DeletedAt == null)
+                            .Select(d => _mapper.Map<GetSubmissionDetailDTO>(d))
+                            .ToList()
+                        : new List<GetSubmissionDetailDTO>()
                 })
                 .ToListAsync();
 

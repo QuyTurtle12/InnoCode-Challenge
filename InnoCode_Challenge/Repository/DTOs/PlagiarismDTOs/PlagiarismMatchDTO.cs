@@ -1,8 +1,7 @@
-﻿using System;
+using Repository.DTOs.SubmissionArtifactDTOs;
+using Repository.DTOs.SubmissionDetailDTOs;
+using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Repository.DTOs.PlagiarismDTOs
 {
@@ -17,5 +16,8 @@ namespace Repository.DTOs.PlagiarismDTOs
 
         public DateTime SubmittedAt { get; set; }
         public double Score { get; set; }
+
+        public List<GetSubmissionArtifactDTO> Artifacts { get; set; } = new();
+        public List<GetSubmissionDetailDTO> Details { get; set; } = new();
     }
 }
