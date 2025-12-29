@@ -5,6 +5,7 @@ using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Repository.DTOs.ContestDTOs;
@@ -40,6 +41,7 @@ namespace BusinessLogic.Services.Contests
         private const string CONTEST_REPORT_FOLDER = "contest_reports";
         private const string CONTEST_REPORT_ATTACHEMENT_TYPE = "contest_report";
         private const string CsvNewLine = "\r\n";
+        private const char CsvDelimiter = ';';
 
         public ContestService(
             IMapper mapper,
@@ -2101,14 +2103,12 @@ namespace BusinessLogic.Services.Contests
             var teamRepo = _unitOfWork.GetRepository<Team>();
 
             var studentIds = await teamRepo.Entities
-                .AsNoTracking()
                 .Where(t => t.ContestId == contestId && t.DeletedAt == null)
                 .SelectMany(t => t.TeamMembers
                 .Select(tm => tm.Student.UserId))
                 .ToListAsync();
 
             var mentorIds = await teamRepo.Entities
-                .AsNoTracking()
                 .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != null)
                 .Select(t => t.Mentor.UserId)
                 .ToListAsync();
@@ -2175,7 +2175,6 @@ namespace BusinessLogic.Services.Contests
 
             // Check for existing cached report attachment
             Config? reportConfig = await configRepo.Entities
-                .AsNoTracking()
                 .Where(c => c.Key == reportConfigKey && c.DeletedAt == null)
                 .FirstOrDefaultAsync();
 
@@ -2185,7 +2184,6 @@ namespace BusinessLogic.Services.Contests
                 && attachmentId != Guid.Empty)
             {
                 Attachment? existingAttachment = await attachmentRepo.Entities
-                    .AsNoTracking()
                     .Where(a => a.AttachmentId == attachmentId && a.DeletedAt == null)
                     .FirstOrDefaultAsync();
 
@@ -2213,7 +2211,6 @@ namespace BusinessLogic.Services.Contests
 
                 // Load contest rounds required for report
                 List<Round> rounds = await roundRepo.Entities
-                    .AsNoTracking()
                     .Where(r => r.ContestId == contestId && r.DeletedAt == null)
                     .Include(r => r.McqTest)
                     .Include(r => r.Problem)
@@ -2221,7 +2218,6 @@ namespace BusinessLogic.Services.Contests
 
                 // Load teams + related navigation properties required for report
                 List<Team> teams = await teamRepo.Entities
-                    .AsNoTracking()
                     .Where(t => t.ContestId == contestId && t.DeletedAt == null)
                     .Include(t => t.School)
                     .Include(t => t.Mentor)
@@ -2233,13 +2229,11 @@ namespace BusinessLogic.Services.Contests
 
                 // Identify latest leaderboard snapshot time to export the latest leaderboard state
                 DateTime? latestSnapshot = await leaderboardRepo.Entities
-                    .AsNoTracking()
                     .Where(e => e.ContestId == contestId)
                     .MaxAsync(e => (DateTime?)e.SnapshotAt);
 
                 // Load leaderboard entries for the latest snapshot
                 List<LeaderboardEntry> leaderboardEntries = await leaderboardRepo.Entities
-                    .AsNoTracking()
                     .Where(e => e.ContestId == contestId && (!latestSnapshot.HasValue || e.SnapshotAt == latestSnapshot.Value))
                     .ToListAsync();
 
@@ -2354,7 +2348,6 @@ namespace BusinessLogic.Services.Contests
 
             // Load all valid submissions for contest teams
             List<Submission> submissions = await submissionRepo.Entities
-                .AsNoTracking()
                 .Where(s => teamIds.Contains(s.TeamId)
                             && studentIds.Contains(s.SubmittedByStudentId)
                             && s.DeletedAt == null
@@ -2371,7 +2364,6 @@ namespace BusinessLogic.Services.Contests
 
             // Load all valid MCQ attempts for contest students
             List<McqAttempt> attempts = await attemptRepo.Entities
-                .AsNoTracking()
                 .Where(a => studentIds.Contains(a.StudentId)
                             && a.DeletedAt == null
                             && (a.Status == null || a.Status != cancelledAttempt))
@@ -2464,31 +2456,43 @@ namespace BusinessLogic.Services.Contests
             Dictionary<Guid, int> teamRank)
         {
             StringBuilder sb = new StringBuilder();
-            // CSV header row
-            sb.Append("Rank,TeamName,SchoolName,MentorName,TotalScore").Append(CsvNewLine);
 
-            foreach (Team team in teamsSorted)
+            // CSV header row
+            sb.Append("No.;Rank;TeamName;SchoolName;MentorName;TotalScore").Append(CsvNewLine);
+
+            // Sort teams by rank
+            List<Team> sortedTeams = teamsSorted
+                .OrderBy(t => teamRank.TryGetValue(t.TeamId, out int r) ? r : int.MaxValue)
+                .ToList();
+
+            int rowNumber = 1;
+
+            // Build CSV rows
+            foreach (Team team in sortedTeams)
             {
-                // Get rank (empty if not ranked)
+                // Get rank or empty if not ranked
                 int rank = teamRank.TryGetValue(team.TeamId, out int r) ? r : int.MaxValue;
                 string rankValue = rank == int.MaxValue ? string.Empty : rank.ToString(CultureInfo.InvariantCulture);
 
-                // Get total score from leaderboard (default to 0)
+                // Get total score from leaderboard
                 double totalScore = leaderboardByTeamId.TryGetValue(team.TeamId, out (int? Rank, double? Score) v) && v.Score.HasValue
                     ? v.Score.Value
                     : 0;
 
-                // Extract team details (use empty string if null)
+                // Get mentor name and school name
                 string mentorName = team.Mentor?.User?.Fullname ?? string.Empty;
                 string schoolName = team.School?.Name ?? string.Empty;
 
-                // Build CSV row
-                sb.Append(Csv(rankValue)).Append(',')
-                  .Append(Csv(team.Name)).Append(',')
-                  .Append(Csv(schoolName)).Append(',')
-                  .Append(Csv(mentorName)).Append(',')
+                // Build CSV row with semicolon delimiter
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(CsvField(rankValue, ';')).Append(';')
+                  .Append(CsvField(team.Name, ';')).Append(';')
+                  .Append(CsvField(schoolName, ';')).Append(';')
+                  .Append(CsvField(mentorName, ';')).Append(';')
                   .Append(totalScore.ToString(CultureInfo.InvariantCulture))
                   .Append(CsvNewLine);
+
+                rowNumber++;
             }
 
             return sb.ToString();
@@ -2501,37 +2505,50 @@ namespace BusinessLogic.Services.Contests
             Dictionary<Guid, int> teamRank)
         {
             StringBuilder sb = new StringBuilder();
-            // CSV header row
-            sb.Append("Rank,TeamName,RoundName,RoundType,TeamAverageScore").Append(CsvNewLine);
 
-            // Sort rounds by start time, then by name for consistent ordering
+            // CSV header row
+            sb.Append("No.;TeamName;RoundName;RoundType;TeamAverageScore").Append(CsvNewLine);
+
+            // Sort rounds ascending by name, then descending by start
             List<Round> roundsSorted = rounds
-                .OrderBy(r => r.Start)
-                .ThenBy(r => r.Name)
+                .OrderBy(r => r.Name)
+                .ThenByDescending(r => r.Start)
                 .ToList();
 
-            foreach (Team team in teamsSorted)
+            // Create a list of all rows
+            List<(string TeamName, string RoundName, string RoundType, double Avg)> rows =
+                new List<(string, string, string, double)>();
+
+            foreach (Round round in roundsSorted)
             {
-                // Get team rank (empty if not ranked)
-                int rank = teamRank.TryGetValue(team.TeamId, out int r) ? r : int.MaxValue;
-                string rankValue = rank == int.MaxValue ? string.Empty : rank.ToString(CultureInfo.InvariantCulture);
-
-                foreach (Round round in roundsSorted)
+                foreach (Team team in teamsSorted)
                 {
-                    // Determine round type (MCQ or problem type)
-                    string roundType = round.McqTest != null ? ProblemTypeEnum.McqTest.ToString() : (round.Problem?.Type ?? string.Empty);
+                    // Determine round type and convert to readable format
+                    string roundType = round.McqTest != null
+                        ? "MCQ Test"
+                        : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                            ? "Auto Evaluation"
+                            : round.Problem?.Type ?? string.Empty);
 
-                    // Get team average score for this round (default to 0)
+                    // Get team average score for this round
                     double avg = teamRoundAvgScores.TryGetValue((team.TeamId, round.RoundId), out double v) ? v : 0;
 
-                    // Build CSV row
-                    sb.Append(Csv(rankValue)).Append(',')
-                      .Append(Csv(team.Name)).Append(',')
-                      .Append(Csv(round.Name)).Append(',')
-                      .Append(Csv(roundType)).Append(',')
-                      .Append(avg.ToString(CultureInfo.InvariantCulture))
-                      .Append(CsvNewLine);
+                    rows.Add((team.Name, round.Name, roundType, avg));
                 }
+            }
+
+            // Add rows
+            int rowNumber = 1;
+            foreach (var row in rows)
+            {
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(CsvField(row.TeamName)).Append(';')
+                  .Append(CsvField(row.RoundName)).Append(';')
+                  .Append(CsvField(row.RoundType)).Append(';')
+                  .Append(row.Avg.ToString(CultureInfo.InvariantCulture))
+                  .Append(CsvNewLine);
+
+                rowNumber++;
             }
 
             return sb.ToString();
@@ -2544,21 +2561,22 @@ namespace BusinessLogic.Services.Contests
             Dictionary<Guid, int> teamRank)
         {
             StringBuilder sb = new StringBuilder();
-            // CSV header row
-            sb.Append("Rank,TeamName,StudentName,RoundName,RoundType,StudentScore").Append(CsvNewLine);
 
-            // Sort rounds by start time, then by name for consistent ordering
+            // CSV header row
+            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CsvNewLine);
+
+            // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
-                .OrderBy(r => r.Start)
-                .ThenBy(r => r.Name)
+                .OrderBy(r => r.Name)
+                .ThenBy(r => r.Start)
                 .ToList();
+
+            // Create a list of all rows
+            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score)> rows =
+                new List<(string, string, string, string, double)>();
 
             foreach (Team team in teamsSorted)
             {
-                // Get team rank (empty if not ranked)
-                int rank = teamRank.TryGetValue(team.TeamId, out int r) ? r : int.MaxValue;
-                string rankValue = rank == int.MaxValue ? string.Empty : rank.ToString(CultureInfo.InvariantCulture);
-
                 // Sort members by student name for consistent ordering
                 List<TeamMember> membersSorted = team.TeamMembers
                     .OrderBy(m => m.Student.User.Fullname)
@@ -2566,29 +2584,47 @@ namespace BusinessLogic.Services.Contests
 
                 foreach (TeamMember member in membersSorted)
                 {
-                    // Get student name (empty if null)
+                    // Get student name
                     string studentName = member.Student?.User?.Fullname ?? string.Empty;
 
                     foreach (Round round in roundsSorted)
                     {
-                        // Determine round type (MCQ or problem type)
-                        string roundType = round.McqTest != null ? ProblemTypeEnum.McqTest.ToString() : (round.Problem?.Type ?? string.Empty);
+                        // Determine round type and convert to readable format
+                        string roundType = round.McqTest != null
+                            ? "MCQ Test"
+                            : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                                ? "Auto Evaluation"
+                                : round.Problem?.Type ?? string.Empty);
 
-                        // Get student score for this round (default to 0 if not found)
+                        // Get student score for this round
                         double score = memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out double v)
                             ? v
                             : 0;
 
-                        // Build CSV row
-                        sb.Append(Csv(rankValue)).Append(',')
-                          .Append(Csv(team.Name)).Append(',')
-                          .Append(Csv(studentName)).Append(',')
-                          .Append(Csv(round.Name)).Append(',')
-                          .Append(Csv(roundType)).Append(',')
-                          .Append(score.ToString(CultureInfo.InvariantCulture))
-                          .Append(CsvNewLine);
+                        rows.Add((team.Name, studentName, round.Name, roundType, score));
                     }
                 }
+            }
+
+            // Sort ascending by round name, then ascending by team name
+            var sortedRows = rows
+                .OrderBy(r => r.RoundName)
+                .ThenBy(r => r.TeamName)
+                .ToList();
+
+            // Add rows with No. column
+            int rowNumber = 1;
+            foreach (var row in sortedRows)
+            {
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(CsvField(row.TeamName)).Append(';')
+                  .Append(CsvField(row.StudentName)).Append(';')
+                  .Append(CsvField(row.RoundName)).Append(';')
+                  .Append(CsvField(row.RoundType)).Append(';')
+                  .Append(row.Score.ToString(CultureInfo.InvariantCulture))
+                  .Append(CsvNewLine);
+
+                rowNumber++;
             }
 
             return sb.ToString();
@@ -2617,19 +2653,23 @@ namespace BusinessLogic.Services.Contests
             return ms.ToArray();
         }
 
-        private static string Csv(string? value)
+        private static string CsvField(string? value, char delimiter = ',')
         {
-            // Return empty string for null or empty values
             if (string.IsNullOrEmpty(value))
             {
                 return string.Empty;
             }
 
-            // Escape any existing quotes by doubling them
-            string escaped = value.Replace("\"", "\"\"");
+            // Check if the value contains special characters that require quoting
+            bool needsQuoting = value.Contains(delimiter) || value.Contains('"') || value.Contains('\n') || value.Contains('\r');
 
-            // Wrap in quotes (standard CSV escaping)
-            return "\"" + escaped + "\"";
+            if (needsQuoting)
+            {
+                string escaped = value.Replace("\"", "\"\"");
+                return "\"" + escaped + "\"";
+            }
+
+            return value;
         }
 
         private static string ToSafeFileName(string name)
@@ -2648,6 +2688,220 @@ namespace BusinessLogic.Services.Contests
             foreach (char c in name.Trim())
             {
                 sb.Append(invalid.Contains(c) ? '_' : c);
+            }
+
+            return sb.ToString();
+        }
+
+        public async Task<string> DownloadMentorContestReportAsync(Guid contestId)
+        {
+            // Get current user
+            string currentUserId = GetCurrentUserIdOrThrow();
+
+            // Get mentor repository
+            IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+
+            // Find the mentor ID for current user
+            Guid? mentorId = await mentorRepo.Entities
+                .Where(m => m.UserId.ToString() == currentUserId && m.DeletedAt == null)
+                .Select(m => m.MentorId)
+                .FirstOrDefaultAsync();
+
+            if (!mentorId.HasValue)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "You must be a mentor to download this report.");
+            }
+
+            // Verify contest exists
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+            }
+
+            // Config key storing the cached mentor report attachment id
+            string mentorReportConfigKey = ConfigKeys.ContestMentorReport(contestId, mentorId.Value);
+
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+            IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
+
+            // Check for existing cached mentor report attachment
+            Config? mentorReportConfig = await configRepo.Entities
+                .Where(c => c.Key == mentorReportConfigKey && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            // If cache exists, verify attachment
+            if (mentorReportConfig != null
+                && Guid.TryParse(mentorReportConfig.Value, out Guid attachmentId)
+                && attachmentId != Guid.Empty)
+            {
+                Attachment? existingAttachment = await attachmentRepo.Entities
+                    .Where(a => a.AttachmentId == attachmentId && a.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                // Valid cached attachment found
+                if (existingAttachment != null && !string.IsNullOrWhiteSpace(existingAttachment.Url))
+                {
+                    // return stored URL
+                    return existingAttachment.Url;
+                }
+
+                // Log invalid cache scenario
+                _logger.LogWarning(
+                    "Mentor contest report cache invalid. ContestId={ContestId}, MentorId={MentorId}, AttachmentId={AttachmentId}",
+                    contestId, mentorId.Value, attachmentId);
+            }
+
+            // Build report, upload, store attachment row, store config pointer
+            _unitOfWork.BeginTransaction();
+
+            try
+            {
+                // Get mentor's team in this contest
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                Team? mentorTeam = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.MentorId == mentorId.Value && t.DeletedAt == null)
+                    .Include(t => t.School)
+                    .Include(t => t.TeamMembers)
+                        .ThenInclude(tm => tm.Student)
+                            .ThenInclude(s => s.User)
+                    .FirstOrDefaultAsync();
+
+                if (mentorTeam == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "You don't have a team in this contest.");
+                }
+
+                // Load contest rounds
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                List<Round> rounds = await roundRepo.Entities
+                    .Where(r => r.ContestId == contestId && r.DeletedAt == null)
+                    .Include(r => r.McqTest)
+                    .Include(r => r.Problem)
+                    .ToListAsync();
+
+                // Compute member scores for mentor's team
+                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores =
+                    await GetLatestMemberRoundScoresAsync(contestId, new List<Team> { mentorTeam });
+
+                // Build CSV content
+                string csvContent = BuildMentorTeamReportCsv(rounds, mentorTeam, memberScores);
+
+                // Prepare CSV filename
+                string csvFileName = $"mentor-team-report-{contest.Year}-{ToSafeFileName(contest.Name)}-{ToSafeFileName(mentorTeam.Name)}.csv";
+
+                // Create ZIP in-memory containing the CSV file
+                byte[] zipBytes = CreateZip(new Dictionary<string, string>
+                {
+                    [csvFileName] = csvContent
+                });
+
+                // Prepare a friendly filename for Cloudinary
+                string zipFileName = $"mentor-team-report-{contest.Year}-{ToSafeFileName(contest.Name)}-{ToSafeFileName(mentorTeam.Name)}.zip";
+
+                // Wrap bytes as an IFormFile
+                IFormFile zipFormFile = CreateZipFormFile(zipBytes, zipFileName);
+
+                // Upload to Cloudinary
+                string url = await _cloudinaryService.UploadFileAsync(zipFormFile, CONTEST_REPORT_FOLDER);
+
+                // Store uploaded file URL in attachments table
+                Attachment attachment = new Attachment
+                {
+                    AttachmentId = Guid.NewGuid(),
+                    Url = url,
+                    Type = CONTEST_REPORT_ATTACHEMENT_TYPE,
+                    CreatedAt = DateTime.UtcNow,
+                    DeletedAt = null
+                };
+
+                await attachmentRepo.InsertAsync(attachment);
+
+                // Update config to point to new attachment
+                await UpsertConfigAsync(configRepo, mentorReportConfigKey, attachment.AttachmentId.ToString());
+
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+
+                return url;
+            }
+            catch
+            {
+                _unitOfWork.RollBack();
+                throw;
+            }
+        }
+
+        private static string BuildMentorTeamReportCsv(
+            List<Round> rounds,
+            Team team,
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            // CSV header row
+            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CsvNewLine);
+
+            // Sort rounds ascending by name, then ascending by start
+            List<Round> roundsSorted = rounds
+                .OrderBy(r => r.Name)
+                .ThenBy(r => r.Start)
+                .ToList();
+
+            // Create a list of all rows
+            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score)> rows =
+                new List<(string, string, string, string, double)>();
+
+            // Sort members by student name
+            List<TeamMember> membersSorted = team.TeamMembers
+                .OrderBy(m => m.Student.User.Fullname)
+                .ToList();
+
+            foreach (TeamMember member in membersSorted)
+            {
+                // Get student name
+                string studentName = member.Student?.User?.Fullname ?? string.Empty;
+
+                foreach (Round round in roundsSorted)
+                {
+                    // Determine round type and convert to readable format
+                    string roundType = round.McqTest != null
+                        ? "MCQ Test"
+                        : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                            ? "Auto Evaluation"
+                            : round.Problem?.Type ?? string.Empty);
+
+                    // Get student score for this round
+                    double score = memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out double v)
+                        ? v
+                        : 0;
+
+                    rows.Add((team.Name, studentName, round.Name, roundType, score));
+                }
+            }
+
+            // Sort ascending by round name, then ascending by student name
+            var sortedRows = rows
+                .OrderBy(r => r.RoundName)
+                .ThenBy(r => r.StudentName)
+                .ToList();
+
+            // Add rows with No. column
+            int rowNumber = 1;
+            foreach (var row in sortedRows)
+            {
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
+                  .Append(CsvField(row.TeamName)).Append(';')
+                  .Append(CsvField(row.StudentName)).Append(';')
+                  .Append(CsvField(row.RoundName)).Append(';')
+                  .Append(CsvField(row.RoundType)).Append(';')
+                  .Append(row.Score.ToString(CultureInfo.InvariantCulture))
+                  .Append(CsvNewLine);
+
+                rowNumber++;
             }
 
             return sb.ToString();

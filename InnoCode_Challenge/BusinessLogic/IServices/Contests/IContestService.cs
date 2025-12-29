@@ -34,6 +34,7 @@ namespace BusinessLogic.IServices.Contests
         Task<GetContestDTO> StartContestNowAsync(Guid contestId);
         Task<GetContestDTO> EndContestNowAsync(Guid contestId);
         Task<string> DownloadContestReportZipAsync(Guid contestId);
+        Task<string> DownloadMentorContestReportAsync(Guid contestId);
 
     }
 }

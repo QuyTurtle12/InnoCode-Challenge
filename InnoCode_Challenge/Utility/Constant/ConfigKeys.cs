@@ -18,6 +18,7 @@
         public static string ContestPolicy(Guid contestId, string policyKey) => $"contest:{contestId}:policy:{policyKey}";
         public static string ContestPolicyPrefix(Guid contestId) => $"contest:{contestId}:policy:";
         public static string ContestReport(Guid contestId) => $"contest:{contestId}:report";
+        public static string ContestMentorReport(Guid contestId, Guid mentorId) => $"contest:{contestId}:mentor_report:{mentorId}";
         public static string JudgeSubmission(Guid judgeUserId, Guid submissionId) => $"judge:{judgeUserId}:submission:{submissionId}";
         public static string RoundSubmissionsDistributed(Guid roundId) => $"round:{roundId}:submissions_distributed";
         public static string RoundTimeLimitSeconds(Guid roundId) => $"contest:round:{roundId}:time_limit_seconds";

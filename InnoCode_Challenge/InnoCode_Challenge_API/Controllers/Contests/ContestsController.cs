@@ -346,5 +346,17 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
+        [HttpGet("{id}/mentor-report")]
+        [Authorize(Policy = "RequireMentorRole")]
+        public async Task<IActionResult> DownloadMentorContestReport(Guid id)
+        {
+            string url = await _contestService.DownloadMentorContestReportAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: new { url },
+                message: "Mentor contest report URL retrieved successfully."
+            ));
+        }
     }
 }
