@@ -80,7 +80,16 @@ namespace BusinessLogic.Services.Certificates
                 {
                     _logger.LogDebug("Downloading template file from {FileUrl}", tpl.FileUrl);
                     HttpClient? http = _httpClientFactory.CreateClient();
-                    var bytes = await http.GetByteArrayAsync(tpl.FileUrl!);
+                    using var response = await http.GetAsync(tpl.FileUrl!);
+                    _logger.LogInformation(
+                        "Template download response. Status={StatusCode}, ContentType={ContentType}, ContentLength={ContentLength}",
+                        (int)response.StatusCode,
+                        response.Content.Headers.ContentType?.ToString() ?? "unknown",
+                        response.Content.Headers.ContentLength?.ToString() ?? "unknown");
+
+                    response.EnsureSuccessStatusCode();
+
+                    var bytes = await response.Content.ReadAsByteArrayAsync();
                     using MemoryStream templateStream = new MemoryStream(bytes);
 
                     _logger.LogInformation("Template file downloaded successfully. Size={FileSize} bytes", bytes.Length);
