@@ -633,7 +633,7 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<GetQuizDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId, string? openCode)
+        public async Task<McqTestDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId, string? openCode)
         {
             try
             {
@@ -779,37 +779,18 @@ namespace BusinessLogic.Services.Mcqs
                             .ToList() ?? new List<OptionDTO>()
                     }).ToList();
 
-                // Get time limit from config
-                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-
-                Config? timeLimitConfig = await configRepo.Entities
-                    .Where(c => c.Key == ConfigKeys.RoundTimeLimitSeconds(roundId) && c.DeletedAt == null)
-                    .FirstOrDefaultAsync();
-
-                // Parse time limit value
-                int timeLimitInSeconds = timeLimitConfig != null && int.TryParse(timeLimitConfig.Value, out int limit)
-                    ? limit
-                    : 0;
-
-                // Create the quiz DTO
-                GetQuizDTO quizDTO = new GetQuizDTO
+                // Create the McqTestDTO
+                McqTestDTO mcqTestDTO = new McqTestDTO
                 {
-                    RoundId = round.RoundId,
-                    RoundName = round.Name,
-                    RoundStatus = round.Status ?? RoundStatusEnum.Closed.ToString(),
-                    TimeLimitInSeconds = timeLimitInSeconds,
-                    McqTest = new McqTestDTO
-                    {
-                        TestId = round.McqTest.TestId,
-                        Questions = questionDTOs,
-                    },
+                    TestId = round.McqTest.TestId,
+                    Questions = questionDTOs,
                     TotalCount = totalQuestions,
                     CurrentPage = pageNumber,
                     PageSize = pageSize,
                     TotalPages = (int)Math.Ceiling(totalQuestions / (double)pageSize)
                 };
 
-                return quizDTO;
+                return mcqTestDTO;
             }
             catch (Exception ex)
             {

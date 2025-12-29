@@ -41,7 +41,7 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
             int pageSize = 10,
             string? openCode = null)
         {
-            GetQuizDTO result = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId, openCode);
+            McqTestDTO result = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId, openCode);
 
             var paging = new
             {
@@ -58,11 +58,8 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
                 code: ResponseCodeConstants.SUCCESS,
                 data: new
                 {
-                    roundId = result.RoundId,
-                    roundName = result.RoundName,
-                    roundStatus = result.RoundStatus,
-                    timeLimitInSeconds = result.TimeLimitInSeconds,
-                    mcqTest = result.McqTest
+                    TestId = result.TestId,
+                    Questions = result.Questions
                 },
                 additionalData: paging,
                 message: "Quiz retrieved successfully."
