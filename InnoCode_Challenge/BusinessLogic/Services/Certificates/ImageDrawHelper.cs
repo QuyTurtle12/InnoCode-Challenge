@@ -4,12 +4,18 @@ using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System;
+using System.IO;
 using System.Linq;
 
 namespace BusinessLogic.Services.Certificates
 {
     internal static class ImageDrawHelper
     {
+        private static readonly FontCollection BundledFonts = new FontCollection();
+        private static bool _bundledFontLoaded;
+        private static FontFamily? _bundledFontFamily;
+
         public static byte[] RenderTextOnImage(
             Stream template,
             string displayText,
@@ -74,11 +80,38 @@ namespace BusinessLogic.Services.Certificates
             if (!string.IsNullOrWhiteSpace(fontFamily) && SystemFonts.TryGet(fontFamily, out var family))
                 return family.CreateFont(fontSize, FontStyle.Regular);
 
+            var bundledFamily = TryGetBundledFont();
+            if (bundledFamily != null)
+                return bundledFamily.Value.CreateFont(fontSize, FontStyle.Regular);
+
             var fallbackFamily = SystemFonts.Collection.Families.FirstOrDefault();
             if (fallbackFamily != null)
                 return fallbackFamily.CreateFont(fontSize, FontStyle.Regular);
 
             throw new InvalidOperationException("No system fonts are available for certificate rendering.");
+        }
+
+        private static FontFamily? TryGetBundledFont()
+        {
+            if (_bundledFontLoaded)
+                return _bundledFontFamily;
+
+            _bundledFontLoaded = true;
+
+            try
+            {
+                var path = Path.Combine(AppContext.BaseDirectory, "assets", "Roboto-Regular.ttf");
+                if (!File.Exists(path))
+                    return null;
+
+                _bundledFontFamily = BundledFonts.Add(path);
+                return _bundledFontFamily;
+            }
+            catch
+            {
+                _bundledFontFamily = null;
+                return null;
+            }
         }
 
         private static Color ParseColor(string hex)

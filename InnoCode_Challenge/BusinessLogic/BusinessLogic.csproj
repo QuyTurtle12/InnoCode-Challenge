@@ -17,4 +17,11 @@
     <ProjectReference Include="..\Repository\Repository.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Services\Certificates\assets\Roboto-Regular.ttf">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <TargetPath>assets\Roboto-Regular.ttf</TargetPath>
+    </Content>
+  </ItemGroup>
+
 </Project>
