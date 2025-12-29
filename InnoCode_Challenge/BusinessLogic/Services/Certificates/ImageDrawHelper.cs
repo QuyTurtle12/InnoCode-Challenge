@@ -4,6 +4,7 @@ using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using System.Linq;
 
 namespace BusinessLogic.Services.Certificates
 {
@@ -22,9 +23,7 @@ namespace BusinessLogic.Services.Certificates
             template.Position = 0;
             using var img = Image.Load<Rgba32>(template);
 
-            Font font = SystemFonts.TryGet(fontFamily, out var family)
-                ? family.CreateFont(fontSize, FontStyle.Regular)
-                : SystemFonts.CreateFont("Arial", fontSize, FontStyle.Regular);
+            Font font = ResolveFont(fontFamily, fontSize);
 
             var options = new TextOptions(font)
             {
@@ -68,6 +67,18 @@ namespace BusinessLogic.Services.Certificates
             using var output = new MemoryStream();
             img.Save(output, new PngEncoder());
             return output.ToArray();
+        }
+
+        private static Font ResolveFont(string fontFamily, float fontSize)
+        {
+            if (!string.IsNullOrWhiteSpace(fontFamily) && SystemFonts.TryGet(fontFamily, out var family))
+                return family.CreateFont(fontSize, FontStyle.Regular);
+
+            var fallbackFamily = SystemFonts.Collection.Families.FirstOrDefault();
+            if (fallbackFamily != null)
+                return fallbackFamily.CreateFont(fontSize, FontStyle.Regular);
+
+            throw new InvalidOperationException("No system fonts are available for certificate rendering.");
         }
 
         private static Color ParseColor(string hex)
