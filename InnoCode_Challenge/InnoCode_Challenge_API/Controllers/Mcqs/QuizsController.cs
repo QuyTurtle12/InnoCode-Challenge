@@ -41,22 +41,26 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
             int pageSize = 10,
             string? openCode = null)
         {
-            GetQuizDTO quiz = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId, openCode);
+            McqTestDTO result = await _quizService.GetQuizByRoundIdAsync(pageNumber, pageSize, roundId, openCode);
 
             var paging = new
             {
-                quiz.McqTest?.CurrentPage,
-                quiz.McqTest?.PageSize,
-                quiz.McqTest?.TotalPages,
-                TotalCount = quiz.McqTest?.TotalQuestions ?? 0,
-                HasPreviousPage = (quiz.McqTest?.CurrentPage ?? 1) > 1,
-                HasNextPage = (quiz.McqTest?.CurrentPage ?? 1) < (quiz.McqTest?.TotalPages ?? 0)
+                currentPage = result.CurrentPage,
+                pageSize = result.PageSize,
+                totalPages = result.TotalPages,
+                totalCount = result.TotalCount,
+                hasPreviousPage = result.CurrentPage > 1,
+                hasNextPage = result.CurrentPage < result.TotalPages
             };
 
-            return Ok(new BaseResponseModel<GetQuizDTO>(
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                data: quiz,
+                data: new
+                {
+                    TestId = result.TestId,
+                    Questions = result.Questions
+                },
                 additionalData: paging,
                 message: "Quiz retrieved successfully."
             ));

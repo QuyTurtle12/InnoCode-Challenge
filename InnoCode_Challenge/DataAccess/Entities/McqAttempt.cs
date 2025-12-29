@@ -21,6 +21,8 @@ public partial class McqAttempt
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? Status { get; set; }
+
     public virtual ICollection<McqAttemptItem> McqAttemptItems { get; set; } = new List<McqAttemptItem>();
 
     public virtual Round Round { get; set; } = null!;

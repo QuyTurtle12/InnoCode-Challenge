@@ -583,6 +583,10 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.Start)
                 .HasPrecision(0)
                 .HasColumnName("start");
+            entity.Property(e => e.Status)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("status");
             entity.Property(e => e.StudentId).HasColumnName("student_id");
             entity.Property(e => e.TestId).HasColumnName("test_id");
 
@@ -1557,7 +1561,6 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("test_case_id");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
             entity.Property(e => e.Description)
-                .HasMaxLength(255)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("description");
             entity.Property(e => e.ExpectedOutput)

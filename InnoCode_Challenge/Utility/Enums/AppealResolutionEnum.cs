@@ -9,6 +9,7 @@ namespace Utility.Enums
     public enum AppealResolutionEnum
     {
         Retake,
-        Rescore
+        Rescore,
+        RecheckPlagiarism
     }
 }

@@ -3308,5 +3308,175 @@ namespace BusinessLogic.Services.Submissions
                     $"Your team is not in Top-{cutoff} of the previous round.");
         }
 
+        public async Task<GetSubmissionDTO> GetAutoTestResultsBySubmissionIdAsync(Guid submissionId)
+        {
+            try
+            {
+                // Get the submission repository
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+                // Get the submission with all required includes
+                Submission? submission = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                    .Where(s => s.SubmissionId == submissionId
+                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && !s.DeletedAt.HasValue)
+                    .Include(s => s.Team)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
+                    .Include(s => s.SubmissionArtifacts)
+                    .FirstOrDefaultAsync();
+
+                // Validate submission existence
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Auto-evaluation submission with ID {submissionId} not found");
+                }
+
+                // Calculate attempt number with a separate query
+                int attemptNumber = await submissionRepo.Entities
+                    .Where(s => s.Problem.RoundId == submission.Problem.RoundId
+                        && s.SubmittedByStudentId == submission.SubmittedByStudentId
+                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && !s.DeletedAt.HasValue
+                        && s.CreatedAt <= submission.CreatedAt)
+                    .CountAsync();
+
+                // Map to DTO
+                GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
+                dto.TeamName = submission.Team?.Name ?? string.Empty;
+                dto.SubmittedByStudentName = submission.SubmittedByStudent?.User?.Fullname ?? string.Empty;
+                dto.submissionAttemptNumber = attemptNumber;
+
+                // Map test case details to DTOs
+                if (submission.SubmissionDetails != null)
+                {
+                    dto.Details = submission.SubmissionDetails
+                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .ToList();
+                }
+                else
+                {
+                    dto.Details = null;
+                }
+
+                // Map Artifacts to DTOs
+                if (submission.SubmissionArtifacts != null)
+                {
+                    dto.Artifacts = submission.SubmissionArtifacts
+                        .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
+                        .ToList();
+                }
+                else
+                {
+                    dto.Artifacts = null;
+                }
+
+                return dto;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving auto test result by submission ID: {ex.Message}");
+            }
+        }
+
+        public async Task<RubricEvaluationResultDTO> GetManualTestResultsBySubmissionIdAsync(Guid submissionId)
+        {
+            try
+            {
+                // Get the submission for the specified submission ID
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                Submission? submission = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                        .ThenInclude(p => p.Round)
+                    .Include(s => s.SubmissionDetails)
+                        .ThenInclude(sd => sd.Testcase)
+                    .Where(s => s.SubmissionId == submissionId
+                        && s.Problem.Type == ProblemTypeEnum.Manual.ToString()
+                        && !s.DeletedAt.HasValue)
+                    .Include(s => s.SubmittedByStudent)
+                        .ThenInclude(st => st!.User)
+                    .Include(s => s.Team)
+                    .FirstOrDefaultAsync();
+
+                // Validate submission existence
+                if (submission == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Manual evaluation submission with ID {submissionId} not found");
+                }
+
+                // Get all rubric criteria for max scores
+                IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+                List<TestCase> rubricCriteria = await rubricRepo.Entities
+                    .Where(tc => tc.ProblemId == submission.ProblemId
+                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
+                        && !tc.DeletedAt.HasValue)
+                    .ToListAsync();
+
+                // Map submission details to criterion results
+                List<RubricCriterionResultDTO> results = submission.SubmissionDetails
+                    .Where(sd => sd.TestcaseId.HasValue && sd.Testcase != null && !sd.Testcase.DeletedAt.HasValue)
+                    .Select(d => new RubricCriterionResultDTO
+                    {
+                        RubricId = d.TestcaseId!.Value,
+                        Description = d.Testcase?.Description ?? d.Testcase?.Input ?? "Criterion",
+                        MaxScore = d.Testcase?.Weight ?? 0,
+                        Score = d.Weight ?? 0,
+                        Note = d.Note
+                    })
+                    .ToList();
+
+                // Get judge email if judge ID exists
+                string judgeEmail = "Not yet evaluated";
+                if (!string.IsNullOrEmpty(submission.JudgedBy) && Guid.TryParse(submission.JudgedBy, out Guid judgeGuid))
+                {
+                    IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                    judgeEmail = await userRepo.Entities
+                        .Where(u => u.UserId == judgeGuid && !u.DeletedAt.HasValue)
+                        .Select(u => u.Email)
+                        .FirstOrDefaultAsync() ?? submission.JudgedBy;
+                }
+
+                // Create result DTO
+                RubricEvaluationResultDTO result = new RubricEvaluationResultDTO
+                {
+                    SubmissionId = submission.SubmissionId,
+                    StudentName = submission.SubmittedByStudent?.User?.Fullname ?? "Unknown",
+                    TeamName = submission.Team?.Name ?? "Unknown",
+                    SubmittedAt = submission.CreatedAt,
+                    JudgedBy = judgeEmail,
+                    TotalScore = submission.Score,
+                    MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                    CriterionResults = results
+                };
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving manual test result by submission ID: {ex.Message}");
+            }
+        }
     }
 }

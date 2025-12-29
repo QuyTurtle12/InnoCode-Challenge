@@ -210,6 +210,26 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
+        /// Get manual test result by submission ID
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="submissionId"></param>
+        /// <returns></returns>
+        [HttpGet("{roundId}/manual-test/submissions/{submissionId}")]
+        public async Task<IActionResult> GetManualTestResultBySubmissionId(
+            [FromRoute] Guid roundId,
+            [FromRoute]  Guid submissionId)
+        {
+            RubricEvaluationResultDTO result = await _submissionService.GetManualTestResultsBySubmissionIdAsync(submissionId);
+            return Ok(new BaseResponseModel<RubricEvaluationResultDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Manual test result retrieved successfully."
+            ));
+        }
+
+        /// <summary>
         /// Upload a file submission (.zip or .rar)
         /// </summary>
         /// <param name="file">The file to upload (.zip or .rar)</param>
@@ -373,6 +393,20 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 data: results.Items,
                 additionalData: paging,
                 message: "Auto test results retrieved successfully."
+            ));
+        }
+
+        [HttpGet("{roundId}/auto-test/results/{submissionId}")]
+        public async Task<IActionResult> GetAutoTestResultBySubmissionId(
+            [FromRoute] Guid roundId,
+            [FromRoute] Guid submissionId)
+        {
+            GetSubmissionDTO result = await _submissionService.GetAutoTestResultsBySubmissionIdAsync(submissionId);
+            return Ok(new BaseResponseModel<GetSubmissionDTO>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Auto test result retrieved successfully."
             ));
         }
 

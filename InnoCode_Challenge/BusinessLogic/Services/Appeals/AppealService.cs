@@ -185,6 +185,7 @@ namespace BusinessLogic.Services.Appeals
                     OwnerId = student.UserId,
                     State = AppealStateEnum.Opened.ToString(),
                     Decision = AppealDecisionEnum.Pending.ToString(),
+                    AppealResolution = dto.AppealResolution.ToString(),
                     Reason = dto.Reason.Trim(),
                     CreatedAt = DateTime.UtcNow,
                     CreatedBy = currentMentorId
@@ -303,6 +304,7 @@ namespace BusinessLogic.Services.Appeals
                             .ThenInclude(m => m.User)
                     .Include(a => a.Owner)
                     .Include(a => a.Target)
+                        .ThenInclude(r => r.Contest)
                     .Include(a => a.AppealEvidences.Where(e => e.DeletedAt == null))
                     .FirstOrDefaultAsync();
 
@@ -529,7 +531,13 @@ namespace BusinessLogic.Services.Appeals
                 // If approved, process approval logic
                 if (dto.Decision == AppealDecisionEnum.Approved.ToString())
                 {
-                    await ProcessApprovedAppealLogicAsync(appeal, dto.AppealResolution);
+                    AppealResolutionEnum? parsedResolution = null;
+                    if (!string.IsNullOrEmpty(appeal.AppealResolution) &&
+                        Enum.TryParse<AppealResolutionEnum>(appeal.AppealResolution, out var enumValue))
+                    {
+                        parsedResolution = enumValue;
+                    }
+                    await ProcessApprovedAppealLogicAsync(appeal, parsedResolution);
                 }
 
                 await appealRepo.UpdateAsync(appeal);
@@ -639,6 +647,12 @@ namespace BusinessLogic.Services.Appeals
                     await ReassignSubmissionToNewJudgeAsync(appeal);
                     return;
                 }
+
+                if (appealResolution.Value == AppealResolutionEnum.RecheckPlagiarism)
+                {
+                    await RecheckSubmissionPlagiarismAsync(appeal);
+                    return;
+                }
             }
             else
             {
@@ -646,12 +660,9 @@ namespace BusinessLogic.Services.Appeals
                 appeal.AppealResolution = AppealResolutionEnum.Retake.ToString();
             }
 
-            // For Retake resolution (Manual, MCQ, AutoEval), clean up existing data
-            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+            // Get repositories
             IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
             IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-            IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
-            IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
             IGenericRepository<McqAttempt> mcqAttemptRepo = _unitOfWork.GetRepository<McqAttempt>();
 
             Guid roundId = appeal.TargetId;
@@ -665,22 +676,10 @@ namespace BusinessLogic.Services.Appeals
             if (!studentId.HasValue)
                 return;
 
-            // Soft delete finished mark for this specific student only
-            string finishKey = ConfigKeys.RoundStudent(roundId, studentId.Value);
-            Config? finishConfig = await configRepo.Entities
-                .FirstOrDefaultAsync(c => c.Key == finishKey);
-
-            if (finishConfig != null)
-            {
-                configRepo.Delete(finishConfig);
-            }
-
-            // Manual: soft delete the latest submission for this student in the round
+            // Manual: mark the latest submission as cancelled
             if (isManual)
             {
                 Submission? latest = await submissionRepo.Entities
-                    .Include(s => s.SubmissionArtifacts)
-                    .Include(s => s.SubmissionDetails)
                     .Where(s => s.Problem.RoundId == roundId
                                 && s.SubmittedByStudentId == studentId.Value
                                 && s.DeletedAt == null)
@@ -689,34 +688,14 @@ namespace BusinessLogic.Services.Appeals
 
                 if (latest != null)
                 {
-                    latest.DeletedAt = DateTime.UtcNow;
+                    latest.Status = SubmissionStatusEnum.Cancelled.ToString();
                     await submissionRepo.UpdateAsync(latest);
-
-                    foreach (SubmissionArtifact art in latest.SubmissionArtifacts)
-                    {
-                        if (art.DeletedAt == null)
-                        {
-                            art.DeletedAt = DateTime.UtcNow;
-                            await artifactRepo.UpdateAsync(art);
-                        }
-                    }
-
-                    foreach (SubmissionDetail det in latest.SubmissionDetails)
-                    {
-                        if (det.DeletedAt == null)
-                        {
-                            det.DeletedAt = DateTime.UtcNow;
-                            await detailRepo.UpdateAsync(det);
-                        }
-                    }
                 }
             }
-            // AutoEvaluation: soft delete all submissions for this student in the round
+            // AutoEvaluation: mark all submissions as cancelled
             else if (isAutoEval)
             {
                 List<Submission> subs = await submissionRepo.Entities
-                    .Include(s => s.SubmissionArtifacts)
-                    .Include(s => s.SubmissionDetails)
                     .Where(s => s.Problem.RoundId == roundId
                                 && s.SubmittedByStudentId == studentId.Value
                                 && s.DeletedAt == null)
@@ -724,29 +703,11 @@ namespace BusinessLogic.Services.Appeals
 
                 foreach (Submission s in subs)
                 {
-                    s.DeletedAt = DateTime.UtcNow;
+                    s.Status = SubmissionStatusEnum.Cancelled.ToString();
                     await submissionRepo.UpdateAsync(s);
-
-                    foreach (SubmissionArtifact art in s.SubmissionArtifacts)
-                    {
-                        if (art.DeletedAt == null)
-                        {
-                            art.DeletedAt = DateTime.UtcNow;
-                            await artifactRepo.UpdateAsync(art);
-                        }
-                    }
-
-                    foreach (SubmissionDetail det in s.SubmissionDetails)
-                    {
-                        if (det.DeletedAt == null)
-                        {
-                            det.DeletedAt = DateTime.UtcNow;
-                            await detailRepo.UpdateAsync(det);
-                        }
-                    }
                 }
             }
-            // MCQ: soft delete mcq attempts for this student and round
+            // MCQ: mark mcq attempts as cancelled
             else if (isMcq)
             {
                 List<McqAttempt> attempts = await mcqAttemptRepo.Entities
@@ -757,14 +718,54 @@ namespace BusinessLogic.Services.Appeals
 
                 foreach (McqAttempt at in attempts)
                 {
-                    at.DeletedAt = DateTime.UtcNow;
+                    at.Status = McqAttemptStatusEnum.Cancelled.ToString();
                     await mcqAttemptRepo.UpdateAsync(at);
                 }
             }
 
-            // Refresh the team score after data cleanup
+            // Refresh the team score after data update
             Guid teamId = appeal.TeamId;
             await _leaderboardEntryService.UpdateTeamScoreAsync(round!.ContestId, teamId);
+        }
+
+        private async Task RecheckSubmissionPlagiarismAsync(Appeal appeal)
+        {
+            // Get the student's submission for this round
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+
+            // Get the student ID from OwnerId
+            Guid? studentId = await studentRepo.Entities
+                .Where(s => s.UserId == appeal.OwnerId && s.DeletedAt == null)
+                .Select(s => (Guid?)s.StudentId)
+                .FirstOrDefaultAsync();
+
+            if (!studentId.HasValue)
+            {
+                return;
+            }
+
+            // Find the latest submission for this student in the appeal's round
+            Submission? submission = await submissionRepo.Entities
+                .Where(s => s.Problem.RoundId == appeal.TargetId
+                    && s.SubmittedByStudentId == studentId.Value
+                    && !s.DeletedAt.HasValue)
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            // If no submission found, nothing to recheck
+            if (submission == null)
+            {
+                return;
+            }
+
+            // Check if submission status is PlagiarismConfirmed
+            if (submission.Status == SubmissionStatusEnum.PlagiarismConfirmed.ToString())
+            {
+                // Change status to PlagiarismSuspected for rechecking
+                submission.Status = SubmissionStatusEnum.PlagiarismSuspected.ToString();
+                await submissionRepo.UpdateAsync(submission);
+            }
         }
 
         private async Task ReassignSubmissionToNewJudgeAsync(Appeal appeal)

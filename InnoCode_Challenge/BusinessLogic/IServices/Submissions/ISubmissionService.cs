@@ -20,8 +20,10 @@ namespace BusinessLogic.IServices.Submissions
         Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO);
         Task<RubricEvaluationResultDTO> GetMyManualTestResultAsync(Guid roundId);
         Task<PaginatedList<RubricEvaluationResultDTO>> GetAllManualTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
+        Task<RubricEvaluationResultDTO> GetManualTestResultsBySubmissionIdAsync(Guid submissionId);
         Task<GetSubmissionDTO> GetMyAutoTestResultAsync(Guid roundId);
         Task<PaginatedList<GetSubmissionDTO>> GetAllAutoTestResultsByRoundAsync(Guid roundId, int pageNumber, int pageSize, Guid? studentIdSearch, Guid? teamIdSearch, string? studentNameSearch, string? teamNameSearch);
+        Task<GetSubmissionDTO> GetAutoTestResultsBySubmissionIdAsync(Guid submissionId);
         Task<PaginatedList<SubmissionDistributionDTO>> GetSubmissionsByJudgeByAsync(int pageNumber, int pageSize, Guid? contestIdSearch, string? contestName, Guid? roundIdSearch, string? roundName, Guid? teamIdSearch, string? teamName, Guid? studentIdSearch, string? studentName, SubmissionStatusEnum? statusFilter = null);
         Task<SubmissionDistributionDTO> GetSubmissionByIdAsync(Guid submissionId);
         Task<PaginatedList<PlagiarismQueueItemDTO>> GetPlagiarismQueueAsync(

@@ -86,7 +86,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Validate retake round configuration
-                await ValidateRetakeRoundAsync(contestId, roundDTO.MainRoundId, roundDTO.IsRetakeRound);
+                await ValidateRetakeRoundAsync(contestId, roundDTO.MainRoundId, roundDTO.IsRetakeRound, roundDTO.ProblemType);
 
                 // Validate Problem Type
                 if (roundDTO.ProblemType == ProblemTypeEnum.Manual || roundDTO.ProblemType == ProblemTypeEnum.AutoEvaluation)
@@ -280,7 +280,7 @@ namespace BusinessLogic.Services.Contests
 
         }
 
-        private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound)
+        private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound, ProblemTypeEnum? retakeRoundType = null)
         {
             if (!isRetakeRound)
             {
@@ -300,9 +300,12 @@ namespace BusinessLogic.Services.Contests
             // Validate main round exists and belongs to same contest
             IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
             Round? mainRound = await roundRepo.Entities
-                .FirstOrDefaultAsync(r => r.RoundId == mainRoundId.Value
+                .Where(r => r.RoundId == mainRoundId.Value
                     && r.ContestId == contestId
-                    && !r.DeletedAt.HasValue);
+                    && !r.DeletedAt.HasValue)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync();
 
             if (mainRound == null)
             {
@@ -321,6 +324,39 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.BADREQUEST,
                     "Cannot create a retake round for another retake round."
                 );
+            }
+
+            // Validate that retake round has the same type as main round
+            if (retakeRoundType.HasValue)
+            {
+                string? mainRoundType = null;
+
+                if (mainRound.McqTest != null && mainRound.McqTest.DeletedAt == null)
+                {
+                    mainRoundType = ProblemTypeEnum.McqTest.ToString();
+                }
+                else if (mainRound.Problem != null && mainRound.Problem.DeletedAt == null)
+                {
+                    mainRoundType = mainRound.Problem.Type;
+                }
+
+                if (string.IsNullOrEmpty(mainRoundType))
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Main round does not have a valid problem type."
+                    );
+                }
+
+                if (!string.Equals(retakeRoundType.ToString(), mainRoundType, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Retake round type ({retakeRoundType}) must match main round type ({mainRoundType})."
+                    );
+                }
             }
         }
 
