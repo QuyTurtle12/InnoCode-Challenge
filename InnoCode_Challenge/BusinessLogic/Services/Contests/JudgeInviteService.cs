@@ -590,15 +590,15 @@ namespace BusinessLogic.Services.Contests
         }
 
         public async Task<PaginatedList<JudgeWithInviteStatusDTO>> GetJudgesWithInviteStatusAsync(
-            Guid contestId,
-            int page,
-            int pageSize,
-            string? judgeNameSearch,
-            string? judgeEmailSearch,
-            JudgeInviteStatusEnum? inviteStatus,
-            bool? hasBeenInvited,
-            string sortBy,
-            bool desc)
+    Guid contestId,
+    int page,
+    int pageSize,
+    string? judgeNameSearch,
+    string? judgeEmailSearch,
+    JudgeInviteStatusEnum? inviteStatus,
+    bool? hasBeenInvited,
+    string sortBy,
+    bool desc)
         {
             try
             {
@@ -623,92 +623,104 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<JudgeInvite> inviteRepo = _uow.GetRepository<JudgeInvite>();
 
                 // Get all judges with Judge role
-                IQueryable<User> judgeQuery = userRepo.Entities
+                var judgesQuery = userRepo.Entities
                     .Where(u => u.Role == RoleConstants.Judge && !u.DeletedAt.HasValue);
 
                 // Apply filters on judge name
                 if (!string.IsNullOrWhiteSpace(judgeNameSearch))
                 {
                     var name = judgeNameSearch.Trim();
-                    judgeQuery = judgeQuery.Where(j => j.Fullname.Contains(name));
+                    judgesQuery = judgesQuery.Where(j => j.Fullname.Contains(name));
                 }
 
                 // Apply filters on judge email
                 if (!string.IsNullOrWhiteSpace(judgeEmailSearch))
                 {
                     var email = judgeEmailSearch.Trim();
-                    judgeQuery = judgeQuery.Where(j => j.Email.Contains(email));
+                    judgesQuery = judgesQuery.Where(j => j.Email.Contains(email));
                 }
 
-                var latestInvites = inviteRepo.Entities
-                    .Where(i => i.ContestId == contestId)
-                    .GroupBy(i => i.JudgeId)
-                    .Select(g => g.OrderByDescending(x => x.CreatedAt).FirstOrDefault());
+                // Get all judges
+                List<User> judges = await judgesQuery.ToListAsync();
 
-                var query = from judge in judgeQuery
-                            join invite in latestInvites on judge.UserId equals invite!.JudgeId into gj
-                            from invite in gj.DefaultIfEmpty()
-                            select new JudgeWithInviteStatusDTO
-                            {
-                                JudgeId = judge.UserId,
-                                JudgeName = judge.Fullname,
-                                JudgeEmail = judge.Email,
-                                JudgeStatus = judge.Status,
-                                InviteId = invite != null ? invite.InviteId : null,
-                                InviteStatus = invite != null ? invite.Status : null,
-                                InvitedAt = invite != null ? invite.CreatedAt : null,
-                                ExpiresAt = invite != null ? invite.ExpiresAt : null,
-                                AcceptedAt = invite != null ? invite.AcceptedAt : null,
-                                InviteCode = invite != null ? invite.InviteCode : null
-                            };
+                // Get all invites for this contest
+                List<JudgeInvite> contestInvites = await inviteRepo.Entities
+                    .Where(i => i.ContestId == contestId)
+                    .OrderByDescending(i => i.CreatedAt)
+                    .ToListAsync();
+
+                // Group invites by judge and get the latest one
+                Dictionary<Guid, JudgeInvite> latestInvitesByJudge = contestInvites
+                    .GroupBy(i => i.JudgeId)
+                    .ToDictionary(g => g.Key, g => g.First());
+
+                // Combine judges with their latest invite status
+                var results = judges.Select(judge =>
+                {
+                    latestInvitesByJudge.TryGetValue(judge.UserId, out JudgeInvite? invite);
+
+                    return new JudgeWithInviteStatusDTO
+                    {
+                        JudgeId = judge.UserId,
+                        JudgeName = judge.Fullname,
+                        JudgeEmail = judge.Email,
+                        JudgeStatus = judge.Status,
+                        InviteId = invite?.InviteId,
+                        InviteStatus = invite?.Status,
+                        InvitedAt = invite?.CreatedAt,
+                        ExpiresAt = invite?.ExpiresAt,
+                        AcceptedAt = invite?.AcceptedAt,
+                        InviteCode = invite?.InviteCode
+                    };
+                }).AsQueryable();
 
                 // Filter by invitation status
                 if (inviteStatus.HasValue)
                 {
                     string statusString = inviteStatus.Value.ToString().ToLowerInvariant();
-                    query = query.Where(j => j.InviteStatus == statusString);
+                    results = results.Where(j => j.InviteStatus == statusString);
                 }
 
                 // Filter by whether judge has been invited
                 if (hasBeenInvited.HasValue)
                 {
-                    query = hasBeenInvited.Value
-                        ? query.Where(j => j.InviteId != null)
-                        : query.Where(j => j.InviteId == null);
+                    results = hasBeenInvited.Value
+                        ? results.Where(j => j.InviteId != null)
+                        : results.Where(j => j.InviteId == null);
                 }
 
                 // Apply sorting
-                query = (sortBy?.ToLowerInvariant()) switch
+                results = (sortBy?.ToLowerInvariant()) switch
                 {
                     "name" or "judgename" => desc
-                        ? query.OrderByDescending(j => j.JudgeName)
-                        : query.OrderBy(j => j.JudgeName),
+                        ? results.OrderByDescending(j => j.JudgeName)
+                        : results.OrderBy(j => j.JudgeName),
                     "email" or "judgeemail" => desc
-                        ? query.OrderByDescending(j => j.JudgeEmail)
-                        : query.OrderBy(j => j.JudgeEmail),
+                        ? results.OrderByDescending(j => j.JudgeEmail)
+                        : results.OrderBy(j => j.JudgeEmail),
                     "invitedat" => desc
-                        ? query.OrderByDescending(j => j.InvitedAt)
-                        : query.OrderBy(j => j.InvitedAt),
+                        ? results.OrderByDescending(j => j.InvitedAt)
+                        : results.OrderBy(j => j.InvitedAt),
                     "status" or "invitestatus" => desc
-                        ? query.OrderByDescending(j => j.InviteStatus)
-                        : query.OrderBy(j => j.InviteStatus),
+                        ? results.OrderByDescending(j => j.InviteStatus)
+                        : results.OrderBy(j => j.InviteStatus),
                     "expiresat" => desc
-                        ? query.OrderByDescending(j => j.ExpiresAt)
-                        : query.OrderBy(j => j.ExpiresAt),
+                        ? results.OrderByDescending(j => j.ExpiresAt)
+                        : results.OrderBy(j => j.ExpiresAt),
                     "acceptedat" => desc
-                        ? query.OrderByDescending(j => j.AcceptedAt)
-                        : query.OrderBy(j => j.AcceptedAt),
+                        ? results.OrderByDescending(j => j.AcceptedAt)
+                        : results.OrderBy(j => j.AcceptedAt),
                     _ => desc
-                        ? query.OrderByDescending(j => j.JudgeName)
-                        : query.OrderBy(j => j.JudgeName),
+                        ? results.OrderByDescending(j => j.JudgeName)
+                        : results.OrderBy(j => j.JudgeName),
                 };
 
-                int totalCount = await query.CountAsync();
+                int totalCount = results.Count();
 
-                List<JudgeWithInviteStatusDTO> paginatedItems = await query
+                List<JudgeWithInviteStatusDTO> paginatedItems = results
                     .Skip((page - 1) * pageSize)
                     .Take(pageSize)
-                    .ToListAsync();
+                    .ToList();
 
                 return new PaginatedList<JudgeWithInviteStatusDTO>(paginatedItems, totalCount, page, pageSize);
             }
