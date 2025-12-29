@@ -258,6 +258,8 @@ namespace BusinessLogic.Services.Students
             if (team == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={id}");
 
+            await EnsureMentorOwnsTeamOrAdminAsync(team, mentorRepository);
+
             EnsureContestNotStarted(team.Contest);
 
             Guid targetContestId = dto.ContestId ?? team.ContestId;
@@ -357,6 +359,7 @@ namespace BusinessLogic.Services.Students
         public async Task DeleteAsync(Guid id)
         {
             var teamRepository = _unitOfWork.GetRepository<Team>();
+            var mentorRepository = _unitOfWork.GetRepository<Mentor>();
 
             var team = await teamRepository.Entities
                 .Include(t => t.TeamMembers)
@@ -369,6 +372,8 @@ namespace BusinessLogic.Services.Students
 
             if (team == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "TEAM_NOT_FOUND", $"No team with ID={id}");
+
+            await EnsureMentorOwnsTeamOrAdminAsync(team, mentorRepository);
 
             EnsureContestNotStarted(team.Contest);
 
@@ -550,6 +555,25 @@ namespace BusinessLogic.Services.Students
                 throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_MENTOR", "Only mentors can manage team members.");
 
             return mentor;
+        }
+
+        private async Task EnsureMentorOwnsTeamOrAdminAsync(Team team, IGenericRepository<Mentor> mentorRepository)
+        {
+            if (IsAdmin())
+                return;
+
+            var mentor = await GetCurrentMentorOrThrowAsync(mentorRepository);
+            if (team.MentorId != mentor.MentorId)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
+                    "You do not manage this team.");
+            }
+        }
+
+        private bool IsAdmin()
+        {
+            var user = _httpContextAccessor.HttpContext?.User;
+            return user != null && user.IsInRole(RoleConstants.Admin);
         }
 
     }

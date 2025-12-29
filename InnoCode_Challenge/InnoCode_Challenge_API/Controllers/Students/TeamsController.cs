@@ -107,8 +107,8 @@ namespace InnoCode_Challenge_API.Controllers.Students
                 ));
         }
 
-            [HttpPut("{id:guid}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [HttpPut("{id:guid}")]
+        [Authorize(Roles = $"{RoleConstants.Mentor},{RoleConstants.Admin}")]
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateTeamDTO dto)
         {
             var updated = await _teamService.UpdateAsync(id, dto);
@@ -121,7 +121,7 @@ namespace InnoCode_Challenge_API.Controllers.Students
         }
 
         [HttpDelete("{id:guid}")]
-        [Authorize(Roles = RoleConstants.Admin)]
+        [Authorize(Roles = $"{RoleConstants.Mentor},{RoleConstants.Admin}")]
         public async Task<IActionResult> Delete(Guid id)
         {
             await _teamService.DeleteAsync(id);
