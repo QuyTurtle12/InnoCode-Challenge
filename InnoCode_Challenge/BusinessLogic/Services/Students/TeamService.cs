@@ -247,8 +247,6 @@ namespace BusinessLogic.Services.Students
         public async Task<TeamDTO> UpdateAsync(Guid id, UpdateTeamDTO dto)
         {
             var teamRepository = _unitOfWork.GetRepository<Team>();
-            var contestRepository = _unitOfWork.GetRepository<Contest>();
-            var schoolRepository = _unitOfWork.GetRepository<School>();
             var mentorRepository = _unitOfWork.GetRepository<Mentor>();
 
             var team = await teamRepository.Entities
@@ -262,44 +260,7 @@ namespace BusinessLogic.Services.Students
 
             EnsureContestNotStarted(team.Contest);
 
-            Guid targetContestId = dto.ContestId ?? team.ContestId;
-            Guid targetSchoolId = dto.SchoolId ?? team.SchoolId;
-            Guid targetMentorId = dto.MentorId ?? team.MentorId;
-
-            if (dto.ContestId.HasValue)
-            {
-                bool contestExists = await contestRepository.Entities.AnyAsync(c => c.ContestId == targetContestId);
-                if (!contestExists)
-                    throw new ErrorException(StatusCodes.Status404NotFound, "CONTEST_NOT_FOUND",
-                        $"No contest with ID={targetContestId}");
-                team.ContestId = targetContestId;
-            }
-
-            if (dto.SchoolId.HasValue)
-            {
-                bool schoolExists = await schoolRepository.Entities.AnyAsync(s => s.SchoolId == targetSchoolId && s.DeletedAt == null);
-                if (!schoolExists)
-                    throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND",
-                        $"No school with ID={targetSchoolId}");
-                team.SchoolId = targetSchoolId;
-            }
-
-            if (dto.MentorId.HasValue)
-            {
-                var mentor = await mentorRepository.Entities.Include(m => m.User)
-                    .FirstOrDefaultAsync(m => m.MentorId == targetMentorId);
-                
-                if (mentor == null)
-                    throw new ErrorException(StatusCodes.Status404NotFound, "MENTOR_NOT_FOUND",
-                        $"No mentor with ID={targetMentorId}");
-                
-                if (mentor.SchoolId != targetSchoolId)
-                    throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL",
-                        "This mentor does not belong to the selected school.");
-
-
-                team.MentorId = targetMentorId;
-            }
+            // Only allow changing team name via this endpoint.
 
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
@@ -315,23 +276,6 @@ namespace BusinessLogic.Services.Students
 
                 team.Name = newName;
             }
-
-            bool isActive = string.Equals(team.Status, TeamStatusConstants.Active, StringComparison.OrdinalIgnoreCase);
-            if (isActive)
-            {
-                bool existsOtherActive = await teamRepository.Entities.AnyAsync(t =>
-                    t.TeamId != id &&
-                    t.ContestId == targetContestId &&
-                    t.MentorId == targetMentorId &&
-                    t.DeletedAt == null &&
-                    t.Status == TeamStatusConstants.Active);
-
-                if (existsOtherActive)
-                    throw new ErrorException(StatusCodes.Status409Conflict,
-                        TeamErrorCodeConstants.MentorContestLimit,
-                        "A mentor can have only one active team in the same contest.");
-            }
-
 
             teamRepository.Update(team);
             await _unitOfWork.SaveAsync();
