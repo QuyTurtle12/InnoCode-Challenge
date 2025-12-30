@@ -80,6 +80,7 @@ namespace BusinessLogic.Services.Appeals
                     .Where(r => r.RoundId == dto.RoundId && r.DeletedAt == null)
                     .Include(r => r.McqTest)
                     .Include(r => r.Problem)
+                    .Include(r => r.Contest)
                     .FirstOrDefaultAsync();
 
                 if (round == null)
@@ -87,6 +88,16 @@ namespace BusinessLogic.Services.Appeals
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         "Round not found.");
+                }
+
+                string contestStatus = round.Contest.Status ?? string.Empty;
+
+                // Check if contest is ongoing
+                if (contestStatus != ContestStatusEnum.Ongoing.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeals can only be created for rounds in ongoing contests.");
                 }
 
                 // Validate team exists
@@ -505,7 +516,8 @@ namespace BusinessLogic.Services.Appeals
                         .ThenInclude(r => r.Problem)
                     .Include(a => a.Target)
                         .ThenInclude(r => r.McqTest)
-                    .Include(a => a.Target.Contest)
+                    .Include(a => a.Target)
+                        .ThenInclude(r => r.Contest)
                     .FirstOrDefaultAsync();
 
                 if (appeal == null)
@@ -521,6 +533,16 @@ namespace BusinessLogic.Services.Appeals
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
                         "Appeal has already been reviewed.");
+                }
+
+                string contestStatus = appeal.Target.Contest.Status ?? string.Empty;
+
+                // Check if contest is ongoing
+                if (contestStatus != ContestStatusEnum.Ongoing.ToString())
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeals can only be reviewed for rounds in ongoing contests.");
                 }
 
                 // Update appeal
