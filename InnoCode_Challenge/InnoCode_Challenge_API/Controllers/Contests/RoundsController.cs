@@ -1,6 +1,5 @@
 ﻿using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.Submissions;
-using BusinessLogic.Services.Contests;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.JudgeDTOs;

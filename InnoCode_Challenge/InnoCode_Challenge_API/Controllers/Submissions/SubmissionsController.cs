@@ -8,7 +8,6 @@ using Repository.DTOs.SubmissionDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.Enums;
-using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Submissions
 {

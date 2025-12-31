@@ -16,11 +16,7 @@ using Repository.DTOs.SubmissionDetailDTOs;
 using Repository.DTOs.SubmissionDTOs;
 using Repository.IRepositories;
 using SharpCompress.Archives;
-using System;
 using System.IO.Compression;
-using System.Linq;
-using System.Reflection.Emit;
-using System.Runtime.Intrinsics.X86;
 using System.Security.Claims;
 using System.Text;
 using Utility.Constant;
@@ -52,14 +48,20 @@ namespace BusinessLogic.Services.Submissions
         private const string CODE_ARTIFACT_TYPE = "code";
         private const string AUTO_TEST_SUBMISSION_FOLDER = "code-submissions";
         private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
+        private const string SCOPE_CONTEST = "contest";
 
         private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
         private const string STATUS_PLAGIARISM_CONFIRMED = "PlagiarismConfirmed";
         private const string FP_ALGORITHM = "sha256_py_v1";
         private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
-        private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;       //25 MB 
-        private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;        //2 MB all .py files
+        private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+        private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
         private const int MAX_PY_FILES = 50;
+
+        private const string EXTENSION_PY = ".py";
+        private const string EXTENSION_PYTHON = ".python";
+        private const string EXTENSION_ZIP = ".zip";
+        private const string EXTENSION_RAR = ".rar";
 
         // ignore these file in archive
         private static readonly string[] IGNORE_PATH_CONTAINS = new[]
@@ -149,7 +151,7 @@ namespace BusinessLogic.Services.Submissions
                 _unitOfWork.BeginTransaction();
 
                 // Check round deadline before allowing submission
-                await ValidateRoundDeadlineAsync(roundId, "submit code");
+                await ValidateRoundDeadlineAsync(roundId, OPERATION_NAME);
 
                 // Get problem info
                 IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
@@ -486,7 +488,7 @@ namespace BusinessLogic.Services.Submissions
 
                     // Validate file type (Python files only)
                     string fileExtension = Path.GetExtension(submissionDTO.File.FileName).ToLower();
-                    List<string> allowedExtensions = new List<string> { ".py", ".python" };
+                    List<string> allowedExtensions = new List<string> { EXTENSION_PY, EXTENSION_PYTHON };
 
                     if (!allowedExtensions.Contains(fileExtension))
                     {
@@ -820,7 +822,7 @@ namespace BusinessLogic.Services.Submissions
                 }
 
                 // Validate file type
-                List<string> allowedExtensions = new List<string> { ".zip", ".rar" };
+                List<string> allowedExtensions = new List<string> { EXTENSION_ZIP, EXTENSION_RAR };
                 string fileExtension = Path.GetExtension(file.FileName).ToLower();
                 if (!allowedExtensions.Contains(fileExtension))
                 {
@@ -2624,7 +2626,7 @@ namespace BusinessLogic.Services.Submissions
                 if (archiveFile.Length > MAX_ARCHIVE_BYTES) return null;
 
                 string ext = Path.GetExtension(archiveFile.FileName).ToLowerInvariant();
-                if (ext != ".zip" && ext != ".rar") return null;
+                if (ext != EXTENSION_ZIP && ext != EXTENSION_RAR) return null;
 
                 using var input = archiveFile.OpenReadStream();
                 using var ms = new MemoryStream(capacity: (int)Math.Min(archiveFile.Length, int.MaxValue));
@@ -2632,7 +2634,7 @@ namespace BusinessLogic.Services.Submissions
                 await input.CopyToAsync(ms);
                 ms.Position = 0;
 
-                List<string> normalizedPieces = ext == ".zip"
+                List<string> normalizedPieces = ext == EXTENSION_ZIP
                     ? await ReadZipPythonAsync(ms)
                     : await ReadRarPythonAsync(ms);
 
@@ -2681,7 +2683,7 @@ namespace BusinessLogic.Services.Submissions
                     if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
 
                     if (string.IsNullOrWhiteSpace(entry.FullName) || entry.FullName.EndsWith("/")) continue;
-                    if (!entry.FullName.EndsWith(".py", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!entry.FullName.EndsWith(EXTENSION_PY, StringComparison.OrdinalIgnoreCase)) continue;
 
                     string path = entry.FullName.Replace('\\', '/');
                     if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
@@ -2738,7 +2740,7 @@ namespace BusinessLogic.Services.Submissions
 
                     if (entry.IsDirectory) continue;
                     if (string.IsNullOrWhiteSpace(entry.Key)) continue;
-                    if (!entry.Key.EndsWith(".py", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!entry.Key.EndsWith(EXTENSION_PY, StringComparison.OrdinalIgnoreCase)) continue;
 
                     string path = entry.Key.Replace('\\', '/');
                     if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
@@ -3170,7 +3172,7 @@ namespace BusinessLogic.Services.Submissions
 
             string? value = await configRepo.Entities
                 .AsNoTracking()
-                .Where(c => c.Key == key && c.Scope == "contest" && c.DeletedAt == null)
+                .Where(c => c.Key == key && c.Scope == SCOPE_CONTEST && c.DeletedAt == null)
                 .Select(c => c.Value)
                 .FirstOrDefaultAsync();
 

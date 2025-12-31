@@ -36,7 +36,14 @@ namespace BusinessLogic.Services.Contests
 
         private readonly INotificationService _notificationService;   
         private readonly IActivityLogWriter _activityLogWriter;       
-        private readonly ILogger<RoundService> _logger;               
+        private readonly ILogger<RoundService> _logger;
+
+        private const string CODE_TEMPLATE_FOLDER = "code_template";
+        private const string SCOPE_CONTEST = "contest";
+        private const string JUDGE_STATUS_ACTIVE = "active";
+        private const int OPEN_CODE_MIN = 1000;
+        private const int OPEN_CODE_MAX = 10000;
+
         public RoundService(
             IMapper mapper,
             IUOW unitOfWork,
@@ -201,7 +208,7 @@ namespace BusinessLogic.Services.Contests
                             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
 
                             // upload new template
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
 
                             // load the created problem and set TemplateUrl
                             Problem? createdProblem = await problemRepo.Entities
@@ -230,7 +237,7 @@ namespace BusinessLogic.Services.Contests
                         if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
                         {
                             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
 
                             Problem? createdProblem = await problemRepo.Entities
                                 .Where(p => p.RoundId == round.RoundId && p.DeletedAt == null)
@@ -867,7 +874,7 @@ namespace BusinessLogic.Services.Contests
                             string? oldUrl = round.Problem.TemplateUrl;
 
                             // upload new template
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
 
                             // set new url on problem
                             round.Problem.TemplateUrl = uploadedUrl;
@@ -902,7 +909,7 @@ namespace BusinessLogic.Services.Contests
                         {
                             string? oldUrl = round.Problem.TemplateUrl;
 
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, "code_template");
+                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
 
                             round.Problem.TemplateUrl = uploadedUrl;
                             await _unitOfWork.GetRepository<Problem>().UpdateAsync(round.Problem);
@@ -1138,7 +1145,7 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Filter only active judges
-                List<JudgeInContestDTO> activeJudges = judges.Where(j => j.Status.ToLower() == "active").ToList();
+                List<JudgeInContestDTO> activeJudges = judges.Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE).ToList();
 
                 if (!activeJudges.Any())
                 {
@@ -1228,7 +1235,7 @@ namespace BusinessLogic.Services.Contests
             string key = ConfigKeys.RoundTimeLimitSeconds(roundId);
 
             string? value = await configRepo.Entities
-                .Where(c => c.Key == key && c.Scope == "contest" && c.DeletedAt == null)
+                .Where(c => c.Key == key && c.Scope == SCOPE_CONTEST && c.DeletedAt == null)
                 .Select(c => c.Value)
                 .FirstOrDefaultAsync();
 
@@ -1248,7 +1255,7 @@ namespace BusinessLogic.Services.Contests
                 {
                     Key = key,
                     Value = value,
-                    Scope = "contest",
+                    Scope = SCOPE_CONTEST,
                     UpdatedAt = DateTime.UtcNow,
                     DeletedAt = null
                 });
@@ -1318,7 +1325,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Generate 4-digit random code
                 Random random = new Random();
-                string openCode = random.Next(1000, 10000).ToString();
+                string openCode = random.Next(OPEN_CODE_MIN, OPEN_CODE_MAX).ToString();
 
                 // Create open code in config if not exists, else update it
                 if (config == null)

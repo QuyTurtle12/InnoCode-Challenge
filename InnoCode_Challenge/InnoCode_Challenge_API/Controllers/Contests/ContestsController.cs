@@ -217,13 +217,13 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> CreateAdvanced([FromForm] CreateContestAdvancedDTO dto)
         {
-            var created = await _contestService.CreateContestWithPolicyAsync(dto);
+            var created = await _contestService.CreateContestAsync(dto);
             return CreatedAtAction(nameof(CheckPublishReadiness), new { id = created.ContestId },
                 new BaseResponseModel<object>(
                     statusCode: StatusCodes.Status201Created,
                     code: ResponseCodeConstants.SUCCESS,
                     data: created,
-                    message: "Contest created (draft) and policies bootstrapped."
+                    message: "Contest created (draft)."
                     ));
         }
 
@@ -256,7 +256,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> CancelContest(Guid id)
         {
-            await _contestService.CancelledContest(id);
+            await _contestService.CancelContestAsync(id);
             return Ok(new BaseResponseModel(
                         statusCode: StatusCodes.Status200OK,
                         code: ResponseCodeConstants.SUCCESS,

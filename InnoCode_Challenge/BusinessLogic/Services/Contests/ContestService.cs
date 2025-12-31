@@ -5,7 +5,6 @@ using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Repository.DTOs.ContestDTOs;
@@ -40,8 +39,8 @@ namespace BusinessLogic.Services.Contests
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
         private const string CONTEST_REPORT_FOLDER = "contest_reports";
         private const string CONTEST_REPORT_ATTACHEMENT_TYPE = "contest_report";
-        private const string CsvNewLine = "\r\n";
-        private const char CsvDelimiter = ';';
+        private const string CSV_NEW_LINE = "\r\n";
+        private const char CSV_DELIMITER = ';';
 
         public ContestService(
             IMapper mapper,
@@ -905,7 +904,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<ContestCreatedDTO> CreateContestWithPolicyAsync(CreateContestAdvancedDTO dto)
+        public async Task<ContestCreatedDTO> CreateContestAsync(CreateContestAdvancedDTO dto)
         {
             try
             {
@@ -1696,7 +1695,7 @@ namespace BusinessLogic.Services.Contests
             if (policies == null)
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policies cannot be null.");
 
-            Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+            Contest contest = await GetContestOwnedByCurrentOrganizerAsync(contestId);
 
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
@@ -1725,7 +1724,7 @@ namespace BusinessLogic.Services.Contests
                 if (string.IsNullOrWhiteSpace(policyKey))
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Policy key is required.");
 
-                Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+                Contest contest = await GetContestOwnedByCurrentOrganizerAsync(contestId);
 
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
@@ -1784,7 +1783,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        private async Task<Contest> GetContestOwnedByCurrentOrganizer(Guid contestId)
+        private async Task<Contest> GetContestOwnedByCurrentOrganizerAsync(Guid contestId)
         {
             string currentUserId = GetCurrentUserIdOrThrow();
 
@@ -1882,7 +1881,7 @@ namespace BusinessLogic.Services.Contests
             return int.TryParse(value, out int n) ? n : null;
         }
 
-        public async Task CancelledContest(Guid contestId)
+        public async Task CancelContestAsync(Guid contestId)
         {
             try
             {
@@ -1953,7 +1952,7 @@ namespace BusinessLogic.Services.Contests
                 if (contestId == Guid.Empty)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
 
-                Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+                Contest contest = await GetContestOwnedByCurrentOrganizerAsync(contestId);
 
                 DateTime now = DateTime.UtcNow;
 
@@ -2009,7 +2008,7 @@ namespace BusinessLogic.Services.Contests
                 if (contestId == Guid.Empty)
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid contest ID.");
 
-                Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+                Contest contest = await GetContestOwnedByCurrentOrganizerAsync(contestId);
 
                 DateTime now = DateTime.UtcNow;
 
@@ -2165,7 +2164,7 @@ namespace BusinessLogic.Services.Contests
         public async Task<string> DownloadContestReportZipAsync(Guid contestId)
         {
             // Ensure the caller is the contest owner (organizer) and contest exists
-            Contest contest = await GetContestOwnedByCurrentOrganizer(contestId);
+            Contest contest = await GetContestOwnedByCurrentOrganizerAsync(contestId);
 
             // Config key storing the cached report attachment id
             string reportConfigKey = ConfigKeys.ContestReport(contestId);
@@ -2458,7 +2457,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;Rank;TeamName;SchoolName;MentorName;TotalScore").Append(CsvNewLine);
+            sb.Append("No.;Rank;TeamName;SchoolName;MentorName;TotalScore").Append(CSV_NEW_LINE);
 
             // Sort teams by rank
             List<Team> sortedTeams = teamsSorted
@@ -2484,13 +2483,13 @@ namespace BusinessLogic.Services.Contests
                 string schoolName = team.School?.Name ?? string.Empty;
 
                 // Build CSV row with semicolon delimiter
-                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
-                  .Append(CsvField(rankValue, ';')).Append(';')
-                  .Append(CsvField(team.Name, ';')).Append(';')
-                  .Append(CsvField(schoolName, ';')).Append(';')
-                  .Append(CsvField(mentorName, ';')).Append(';')
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(rankValue, CSV_DELIMITER)).Append(CSV_DELIMITER)
+                  .Append(CsvField(team.Name, CSV_DELIMITER)).Append(CSV_DELIMITER)
+                  .Append(CsvField(schoolName, CSV_DELIMITER)).Append(CSV_DELIMITER)
+                  .Append(CsvField(mentorName, CSV_DELIMITER)).Append(CSV_DELIMITER)
                   .Append(totalScore.ToString(CultureInfo.InvariantCulture))
-                  .Append(CsvNewLine);
+                  .Append(CSV_NEW_LINE);
 
                 rowNumber++;
             }
@@ -2507,7 +2506,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;RoundName;RoundType;TeamAverageScore").Append(CsvNewLine);
+            sb.Append("No.;TeamName;RoundName;RoundType;TeamAverageScore").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then descending by start
             List<Round> roundsSorted = rounds
@@ -2541,12 +2540,12 @@ namespace BusinessLogic.Services.Contests
             int rowNumber = 1;
             foreach (var row in rows)
             {
-                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
-                  .Append(CsvField(row.TeamName)).Append(';')
-                  .Append(CsvField(row.RoundName)).Append(';')
-                  .Append(CsvField(row.RoundType)).Append(';')
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.TeamName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
                   .Append(row.Avg.ToString(CultureInfo.InvariantCulture))
-                  .Append(CsvNewLine);
+                  .Append(CSV_NEW_LINE);
 
                 rowNumber++;
             }
@@ -2563,7 +2562,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CsvNewLine);
+            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
@@ -2616,13 +2615,13 @@ namespace BusinessLogic.Services.Contests
             int rowNumber = 1;
             foreach (var row in sortedRows)
             {
-                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
-                  .Append(CsvField(row.TeamName)).Append(';')
-                  .Append(CsvField(row.StudentName)).Append(';')
-                  .Append(CsvField(row.RoundName)).Append(';')
-                  .Append(CsvField(row.RoundType)).Append(';')
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.TeamName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.StudentName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
                   .Append(row.Score.ToString(CultureInfo.InvariantCulture))
-                  .Append(CsvNewLine);
+                  .Append(CSV_NEW_LINE);
 
                 rowNumber++;
             }
@@ -2843,7 +2842,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CsvNewLine);
+            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
@@ -2893,13 +2892,13 @@ namespace BusinessLogic.Services.Contests
             int rowNumber = 1;
             foreach (var row in sortedRows)
             {
-                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(';')
-                  .Append(CsvField(row.TeamName)).Append(';')
-                  .Append(CsvField(row.StudentName)).Append(';')
-                  .Append(CsvField(row.RoundName)).Append(';')
-                  .Append(CsvField(row.RoundType)).Append(';')
+                sb.Append(rowNumber.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.TeamName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.StudentName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
                   .Append(row.Score.ToString(CultureInfo.InvariantCulture))
-                  .Append(CsvNewLine);
+                  .Append(CSV_NEW_LINE);
 
                 rowNumber++;
             }
