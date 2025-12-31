@@ -29,8 +29,18 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             int pageNumber = 1,
             int pageSize = 10)
         {
-            GetLeaderboardEntryDTO result = await _leaderboardService.GetLeaderboardAsync(
+            GetLeaderboardEntryDTO? result = await _leaderboardService.GetLeaderboardAsync(
                 pageNumber, pageSize, contestId);
+
+            if (result == null)
+            {
+                return Ok(new BaseResponseModel<object>(
+                    statusCode: StatusCodes.Status200OK,
+                    code: ResponseCodeConstants.SUCCESS,
+                    data: result,
+                    message: "Leaderboard retrieved successfully."
+                ));
+            }
 
             // Calculate pagination info based on the team list
             int totalTeams = result.TotalTeamCount;

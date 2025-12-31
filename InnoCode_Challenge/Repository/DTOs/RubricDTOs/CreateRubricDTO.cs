@@ -16,7 +16,7 @@ namespace Repository.DTOs.RubricDTOs
         public string Description { get; set; } = string.Empty;
 
         [Required]
-        [Range(0.1, double.MaxValue, ErrorMessage = "Max score must be greater than 0")]
+        [Range(0.1, double.MaxValue, ErrorMessage = "Max score must be greater or equal 0.1")]
         public double MaxScore { get; set; }
     }
 }

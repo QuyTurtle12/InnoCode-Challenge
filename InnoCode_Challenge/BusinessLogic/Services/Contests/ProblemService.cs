@@ -347,29 +347,12 @@ namespace BusinessLogic.Services.Contests
                         continue;
                     }
 
-                    c.Description = c.Description?.Trim();
-
-                    // Validate description
-                    if (string.IsNullOrWhiteSpace(c.Description))
-                    {
-                        errors.Add($"Row {index}: Description is required.");
-                    }
-                    // Validate description length
-                    else if (c.Description.Length > 255)
-                    {
-                        errors.Add($"Row {index}: Description cannot exceed 255 characters.");
-                    }
+                    c.Description = c.Description?.Trim()!;
 
                     // Check for duplicate descriptions
                     if (!seenDescriptions.Add(c.Description ?? string.Empty))
                     {
                         errors.Add($"Row {index}: Duplicate criterion description '{c.Description}'.");
-                    }
-
-                    // Validate max score
-                    if (c.MaxScore <= 0)
-                    {
-                        errors.Add($"Row {index}: MaxScore must be a positive number.");
                     }
                 }
 

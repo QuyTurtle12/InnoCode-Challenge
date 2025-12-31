@@ -374,7 +374,7 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<GetLeaderboardEntryDTO> GetLeaderboardAsync(int pageNumber, int pageSize, Guid contestIdSearch)
+        public async Task<GetLeaderboardEntryDTO?> GetLeaderboardAsync(int pageNumber, int pageSize, Guid contestIdSearch)
         {
             try
             {
@@ -450,9 +450,7 @@ namespace BusinessLogic.Services.Contests
 
                 if (!allEntries.Any())
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        "No leaderboard entries found for the specified contest.");
+                    return null;
                 }
 
                 // Get the first entry to extract contest information
