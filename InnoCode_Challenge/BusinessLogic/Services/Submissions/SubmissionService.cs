@@ -7,6 +7,7 @@ using BusinessLogic.IServices.Submissions;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.PlagiarismDTOs;
@@ -39,6 +40,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly IMockTestExecutor _mockTestExecutor;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
+        private readonly ILogger<SubmissionService> _logger;
 
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
@@ -49,6 +51,19 @@ namespace BusinessLogic.Services.Submissions
         private const string AUTO_TEST_SUBMISSION_FOLDER = "code-submissions";
         private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
         private const string SCOPE_CONTEST = "contest";
+
+        // Submission status enum values
+        private static readonly string SUBMISSION_STATUS_PENDING = SubmissionStatusEnum.Pending.ToString();
+        private static readonly string SUBMISSION_STATUS_FINISHED = SubmissionStatusEnum.Finished.ToString();
+
+        // Problem type enum values
+        private static readonly string PROBLEM_TYPE_MANUAL = ProblemTypeEnum.Manual.ToString();
+        private static readonly string PROBLEM_TYPE_AUTO_EVALUATION = ProblemTypeEnum.AutoEvaluation.ToString();
+
+        // Test case type enum values
+        private static readonly string TESTCASE_TYPE_TESTCASE = TestCaseTypeEnum.TestCase.ToString();
+        private static readonly string TESTCASE_TYPE_MANUAL = TestCaseTypeEnum.Manual.ToString();
+
 
         private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
         private const string STATUS_PLAGIARISM_CONFIRMED = "PlagiarismConfirmed";
@@ -384,234 +399,72 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(Guid roundId, CreateSubmissionDTO submissionDTO, TestCaseEvaluationTypeEnum evaluationType)
+        public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(
+    Guid roundId,
+    CreateSubmissionDTO submissionDTO,
+    TestCaseEvaluationTypeEnum evaluationType)
         {
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Check round deadline before allowing submission
+                // Validate round deadline
                 await ValidateRoundDeadlineAsync(roundId, OPERATION_NAME);
 
-                // Get problem info
-                IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+                // Get and validate problem
+                Problem problem = await GetProblemForRoundAsync(roundId);
 
-                // Find the problem by RoundId
-                Problem? problem = await problemRepo
-                    .Entities
-                    .Where(p => p.RoundId == roundId)
-                    .FirstOrDefaultAsync();
+                // Get and validate test cases
+                IList<TestCase> testCases = await GetTestCasesForProblemAsync(problem.ProblemId);
 
-                // If no problem found, throw error
-                if (problem == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"The round {roundId} does not have problem");
-                }
+                // Get student and team information
+                var (studentId, teamId, contestId) = await GetStudentAndTeamInfoAsync(roundId);
 
-                // Get test cases for the problem
-                IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
-                IList<TestCase> testCases = testCaseRepo.Entities
-                    .Where(tc => tc.ProblemId == problem.ProblemId
-                        && tc.Type == TestCaseTypeEnum.TestCase.ToString())
-                    .ToList();
-
-                if (!testCases.Any())
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"No test cases found for problem {problem.ProblemId}");
-                }
-
-                // Get user ID from JWT token
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Null User Id");
-
-                // Get student ID from user ID
-                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
-                    .Select(s => s.StudentId)
-                    .FirstOrDefault();
-
-                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
-
-                if (IsAlreadyFinishedRound)
-                {
-                    throw new ErrorException(StatusCodes.Status403Forbidden,
-                        ResponseCodeConstants.FORBIDDEN,
-                        $"Cannot execute code. You have already finished this round.");
-                }
-
-                // Get contest ID from round ID
-                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-                Guid contestId = contestRepo.Entities
-                    .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
-                    .Select(c => c.ContestId)
-                    .FirstOrDefault();
-
-                // Get team ID for the student in this contest
-                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
-                Guid teamId = teamRepo.Entities
-                    .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId) && !t.DeletedAt.HasValue && t.ContestId == contestId)
-                    .Select(t => t.TeamId)
-                    .FirstOrDefault();
+                // Validate student hasn't finished round
+                await ValidateStudentNotFinishedRoundAsync(roundId, studentId);
 
                 // Ensure team is eligible for this round
                 await EnsureTeamEligibleForRoundAsync(roundId, teamId);
 
-                // Count previous submissions of logged-in student for this problem
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                int previousSubmissionsCount = await submissionRepo.Entities
-                    .Where(s => s.ProblemId == problem.ProblemId &&
-                           s.SubmittedByStudentId == studentId
-                           && s.DeletedAt == null)
-                    .CountAsync();
+                // Count previous submissions
+                int previousSubmissionsCount = await CountPreviousSubmissionsAsync(problem.ProblemId, studentId);
 
-                // Determine the source code and artifact details based on evaluation type
-                string sourceCode;
-                string artifactType;
-                string artifactUrl;
+                // Process submission artifact (file or code)
+                var (sourceCode, artifactType, artifactUrl) = await ProcessSubmissionArtifactAsync(
+                    submissionDTO, evaluationType, studentId);
 
-                if (evaluationType == TestCaseEvaluationTypeEnum.File)
-                {
-                    // For file-based evaluation, upload file to Cloudinary and get URL
-                    if (submissionDTO.File == null || submissionDTO.File.Length == 0)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            "File is required for File evaluation type");
-                    }
+                // Create submission record
+                Submission submission = await CreateSubmissionRecordAsync(
+                    teamId, problem.ProblemId, studentId, artifactType, artifactUrl);
 
-                    // Validate file type (Python files only)
-                    string fileExtension = Path.GetExtension(submissionDTO.File.FileName).ToLower();
-                    List<string> allowedExtensions = new List<string> { EXTENSION_PY, EXTENSION_PYTHON };
+                // Log activity
+                await LogSubmissionCreationAsync(submission.SubmissionId);
 
-                    if (!allowedExtensions.Contains(fileExtension))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
-                    }
+                // Evaluate submission using Judge0
+                JudgeSubmissionResultDTO result = await EvaluateWithJudge0Async(
+                    problem, testCases, sourceCode, submission.SubmissionId);
 
-                    // Upload file to Cloudinary
-                    artifactUrl = await _cloudinaryService.UploadFileAsync(submissionDTO.File, AUTO_TEST_SUBMISSION_FOLDER);
+                // Save results with penalty
+                await SaveSubmissionResultAsync(
+                    submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
 
-                    // Download file content from Cloudinary URL for Judge0 execution
-                    sourceCode = await SubmissionHelpers.DownloadFileContentAsync(artifactUrl);
-                    artifactType = FILE_ARTIFACT_TYPE;
-                }
-                else
-                {
-                    // For code-based evaluation, convert code to file and upload to Cloudinary
-                    if (string.IsNullOrEmpty(submissionDTO.Code))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            "Code is required for Code evaluation type");
-                    }
+                // Check for plagiarism
+                await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
 
-                    // Unescape the code to convert \n, \t,... to actual characters
-                    sourceCode = System.Text.RegularExpressions.Regex.Unescape(submissionDTO.Code);
-
-                    // Upload code directly to Cloudinary as a text file
-                    string fileName = $"code_{studentId}_{DateTime.UtcNow:yyyyMMddHHmmss}.py";
-                    artifactUrl = await UploadCodeAsFileAsync(submissionDTO.Code, fileName);
-                    artifactType = CODE_ARTIFACT_TYPE;
-                }
-
-                // Create a submission record
-                Submission submission = new Submission
-                {
-                    SubmissionId = Guid.NewGuid(),
-                    TeamId = teamId,
-                    ProblemId = problem.ProblemId,
-                    SubmittedByStudentId = studentId,
-                    JudgedBy = DEFAULT_JUDGED_BY,
-                    Status = SubmissionStatusEnum.Pending.ToString(),
-                    Score = 0,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                await submissionRepo.InsertAsync(submission);
-
-                // Save submission artifact
-                IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
-                SubmissionArtifact artifact = new SubmissionArtifact
-                {
-                    ArtifactId = Guid.NewGuid(),
-                    SubmissionId = submission.SubmissionId,
-                    Type = artifactType,
-                    Url = artifactUrl,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                await artifactRepo.InsertAsync(artifact);
-                await _unitOfWork.SaveAsync();
-
-                if (Guid.TryParse(userId, out var actorUserId))
-                {
-                    await _logWriter.TryWriteAsync(
-                        actorUserId,
-                        ActivityActions.SubmissionCreate,
-                        TargetTypes.Submission,
-                        submission.SubmissionId.ToString());
-                }
-
-                // Convert to Judge0 request format
-                JudgeSubmissionRequestDTO judge0Request = new JudgeSubmissionRequestDTO
-                {
-                    LanguageId = SubmissionHelpers.ConvertToJudge0LanguageId(problem.Language),
-                    Code = sourceCode,
-                    Problem = new JudgeProblemDTO
-                    {
-                        Id = problem.ProblemId.ToString(),
-                        Title = problem.Type ?? "Unknown"
-                    },
-                    TestCases = testCases.Select(tc => new JudgeTestCaseDTO
-                    {
-                        Id = tc.TestCaseId.ToString(),
-                        Stdin = tc.Input ?? string.Empty,
-                        ExpectedOutput = tc.ExpectedOutput ?? string.Empty
-                    }).ToList(),
-                    TimeLimitSec = testCases.Max(tc => tc.TimeLimitMs) / 1000.0 ?? DEFAULT_TIMELIMIT,
-                    MemoryLimitKb = testCases.Max(tc => tc.MemoryKb) ?? DEFAULT_MEMORY
-                };
-
-                // Auto evaluate submission using Judge0 service
-                JudgeSubmissionResultDTO result = await _judge0Service.AutoEvaluateSubmissionAsync(judge0Request);
-
-                // Set submission ID in result
-                result.SubmissionId = submission.SubmissionId.ToString();
-
-                // Save results with penalty applied
-                await SaveSubmissionResultAsync(submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
-                var (suspected, matchedSubmissionId) =
-                    await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
-
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
 
                 return result;
             }
             catch (Exception ex)
             {
-                // Roll back transaction on error
                 _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
+                if (ex is ErrorException) throw;
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error evaluating submission: {ex.Message}");
             }
         }
+
 
         private async Task<string> UploadCodeAsFileAsync(string code, string fileName)
         {
@@ -770,222 +623,54 @@ namespace BusinessLogic.Services.Submissions
         {
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Get the round ID from the problem
-                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
-                string? roundName = await roundRepo.Entities
-                    .Where(r => r.RoundId == roundId)
-                    .Select(r => r.Name)
-                    .FirstOrDefaultAsync();
-
-                // Validate problem existence
-                if (string.IsNullOrWhiteSpace(roundName))
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Round with ID {roundId} not found");
-                }
-
-                // Check round deadline before allowing submission
+                // Validate round and file
                 await ValidateRoundDeadlineAsync(roundId, "submit file");
+                ValidateSubmissionFile(file);
 
-                // Get user ID from JWT token
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Null User Id");
+                // Get student information
+                Guid studentId = await GetCurrentStudentIdAsync();
 
-                // Get student ID from user ID
-                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                Guid studentId = studentRepo.Entities.Where(s => s.UserId.ToString() == userId)
-                    .Select(s => s.StudentId)
-                    .FirstOrDefault();
+                // Validate student hasn't finished
+                await ValidateStudentNotFinishedRoundAsync(roundId, studentId);
 
-                // Check if student has already finished this round
-                bool IsAlreadyFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
-
-                if (IsAlreadyFinishedRound)
-                {
-                    throw new ErrorException(StatusCodes.Status403Forbidden,
-                        ResponseCodeConstants.FORBIDDEN,
-                        $"Cannot {OPERATION_NAME}. You have already finished this round.");
-                }
-
-                // Validate file
-                if (file == null || file.Length == 0)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"No file was provided");
-                }
-
-                // Validate file type
-                List<string> allowedExtensions = new List<string> { EXTENSION_ZIP, EXTENSION_RAR };
-                string fileExtension = Path.GetExtension(file.FileName).ToLower();
-                if (!allowedExtensions.Contains(fileExtension))
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
-                }
-
-                // Get team ID for the student in this round's contest
-                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
-                Guid teamId = await teamRepo.Entities
-                    .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId) &&
-                                !t.DeletedAt.HasValue &&
-                                t.Contest.Rounds.Any(r => r.RoundId == roundId))
-                    .Select(t => t.TeamId)
-                    .FirstOrDefaultAsync();
+                // Get team ID
+                Guid teamId = await GetTeamIdForStudentInRoundAsync(studentId, roundId);
 
                 // Validate team existence
                 if (teamId == Guid.Empty)
-                    throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN, "You are not in a team for this contest.");
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "You are not in a team for this contest.");
 
-                //  Ensure team is eligible for this round
+                // Ensure team is eligible
                 await EnsureTeamEligibleForRoundAsync(roundId, teamId);
 
-                // Get the submission repository
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                // Delete previous submissions
+                await DeletePreviousSubmissionsAsync(roundId, teamId);
 
-                // Get previous submissions for this problem by this student's team
-                List<Submission>? previousSubmissions = await _unitOfWork.GetRepository<Submission>()
-                    .Entities
-                    .Where(s => s.Problem.Round.RoundId == roundId &&
-                                s.TeamId == teamId &&
-                                !s.DeletedAt.HasValue)
-                    .ToListAsync();
-
-                // If there are previous submissions, attempt to delete their uploaded files and mark artifacts deleted
-                if (previousSubmissions != null && previousSubmissions.Any())
-                {
-                    IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
-
-                    List<Guid> prevSubmissionIds = previousSubmissions.Select(s => s.SubmissionId).ToList();
-
-                    List<SubmissionArtifact> previousArtifacts = await artifactRepo.Entities
-                        .Where(a => prevSubmissionIds.Contains(a.SubmissionId) && a.Type == "file" && a.DeletedAt == null)
-                        .ToListAsync();
-
-                    foreach (SubmissionArtifact art in previousArtifacts)
-                    {
-                        try
-                        {
-                            string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(art.Url);
-                            if (!string.IsNullOrWhiteSpace(publicId))
-                            {
-                                // Attempt to delete remote file; failures are logged but do not abort operation
-                                try
-                                {
-                                    await _cloudinaryService.DeleteFileAsync(publicId);
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"Failed to delete old submission file from Cloudinary (publicId={publicId}): {ex.Message}");
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Failed to extract/delete previous artifact: {ex.Message}");
-                        }
-
-                        // Mark artifact as deleted
-                        art.DeletedAt = DateTime.UtcNow;
-                        await artifactRepo.UpdateAsync(art);
-                    }
-
-                    // Mark previous submissions as deleted
-                    foreach (Submission item in previousSubmissions)
-                    {
-                        item.DeletedAt = DateTime.UtcNow;
-                        await submissionRepo.UpdateAsync(item);
-                    }
-
-                    await _unitOfWork.SaveAsync();
-                }
-
-                // Upload file to Cloudinary
+                // Upload file
                 string fileUrl = await _cloudinaryService.UploadFileAsync(file, MANUAL_TEST_SUBMISSION_FOLDER);
 
-                // Get problem ID of the round
-                Guid problemId = await roundRepo.Entities
-                    .Where(r => r.RoundId == roundId)
-                    .Select(r => r.Problem!.ProblemId)
-                    .FirstOrDefaultAsync();
+                // Get problem ID
+                Guid problemId = await GetProblemIdForRoundAsync(roundId);
 
-                // Create a submission record
-                Submission submission = new Submission
-                {
-                    SubmissionId = Guid.NewGuid(),
-                    TeamId = teamId,
-                    ProblemId = problemId,
-                    SubmittedByStudentId = studentId,
-                    JudgedBy = null,
-                    Status = SubmissionStatusEnum.Pending.ToString(),
-                    Score = 0,
-                    CreatedAt = DateTime.UtcNow
-                };
+                // Create submission
+                Submission submission = await CreateFileSubmissionRecordAsync(
+                    teamId, problemId, studentId, fileUrl);
 
-                await submissionRepo.InsertAsync(submission);
+                // Check plagiarism for archives
+                await CheckPlagiarismForArchiveAsync(submission, file);
 
-                // Save submission artifact
-                IGenericRepository<SubmissionArtifact> newArtifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
-                SubmissionArtifact artifact = new SubmissionArtifact
-                {
-                    ArtifactId = Guid.NewGuid(),
-                    SubmissionId = submission.SubmissionId,
-                    Type = "file",
-                    Url = fileUrl,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                await newArtifactRepo.InsertAsync(artifact);
-
-                // Save changes to the database
-                await _unitOfWork.SaveAsync();
-
-                if (Guid.TryParse(userId, out var actorUserId))
-                {
-                    await _logWriter.TryWriteAsync(
-                        actorUserId,
-                        ActivityActions.SubmissionCreate,
-                        TargetTypes.Submission,
-                        submission.SubmissionId.ToString());
-                }
-
-                var problemRepo = _unitOfWork.GetRepository<Problem>();
-                Problem? problem = await problemRepo.Entities
-                    .Where(p => p.ProblemId == problemId && p.DeletedAt == null)
-                    .FirstOrDefaultAsync();
-
-                if (problem != null)
-                {
-                    string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
-
-                    if (!string.IsNullOrWhiteSpace(combinedNormalized))
-                    {
-                        await CheckAndFlagPlagiarismNormalizedAsync(submission, problem, combinedNormalized);
-                        // CheckAndFlagPlagiarismAsync sẽ tự SaveAsync và nếu match thì set Status = PlagiarismSuspected
-                    }
-                }
-                // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
                 return submission.SubmissionId;
             }
             catch (Exception ex)
             {
-                // Roll back transaction on error
                 _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
+                if (ex is ErrorException) throw;
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error creating file submission: {ex.Message}");
@@ -1253,205 +938,42 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(Guid submissionId, SubmitRubricScoreDTO rubricScoreDTO)
+        public async Task<RubricEvaluationResultDTO> SubmitRubricEvaluationAsync(
+            Guid submissionId,
+            SubmitRubricScoreDTO rubricScoreDTO)
         {
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
-                IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
+                // Get and validate submission
+                Submission submission = await GetSubmissionForRubricEvaluationAsync(submissionId);
 
-                // Get submission and verify it exists
-                Submission? submission = await submissionRepo.Entities
-                    .Include(s => s.Problem)
-                        .ThenInclude(p => p.Round)
-                    .Where(s => s.SubmissionId == submissionId)
-                    .FirstOrDefaultAsync();
+                // Get rubric criteria
+                List<TestCase> rubricCriteria = await GetRubricCriteriaAsync(submission.ProblemId);
 
-                if (submission == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"Submission with ID {submissionId} not found");
-                }
+                // Validate all criteria are scored
+                ValidateAllCriteriaScored(rubricCriteria, rubricScoreDTO.CriterionScores);
 
-                // Verify this is a manual problem
-                if (submission.Problem.Type != ProblemTypeEnum.Manual.ToString())
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"Rubric evaluation is only available for manual problem types");
-                }
+                // Process and save criterion scores
+                var (totalScore, results) = await ProcessCriterionScoresAsync(
+                    submissionId, rubricScoreDTO.CriterionScores, rubricCriteria);
 
-                // Get all rubric criteria for validation
-                List<TestCase> rubricCriteria = await rubricRepo.Entities
-                    .Where(tc => tc.ProblemId == submission.ProblemId
-                        && tc.Type == TestCaseTypeEnum.Manual.ToString()
-                        && !tc.DeletedAt.HasValue)
-                    .ToListAsync();
+                // Get judge information
+                string judgeEmail = await GetCurrentJudgeEmailAsync();
 
-                if (!rubricCriteria.Any())
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"No rubric criteria found for this problem");
-                }
-
-                Dictionary<Guid, TestCase> rubricsDict = rubricCriteria.ToDictionary(tc => tc.TestCaseId);
-
-                // Get submitted criteria IDs
-                HashSet<Guid> submittedCriteriaIds = rubricScoreDTO.CriterionScores
-                    .Select(cs => cs.RubricId)
-                    .ToHashSet();
-
-                // Get all required criteria IDs
-                HashSet<Guid> allRequiredCriteriaIds = rubricCriteria
-                    .Select(rc => rc.TestCaseId)
-                    .ToHashSet();
-
-                // Find missing criteria
-                List<Guid> missingCriteriaIds = allRequiredCriteriaIds
-                    .Except(submittedCriteriaIds)
-                    .ToList();
-
-                // Check if all criteria have been scored
-                if (missingCriteriaIds.Any())
-                {
-                    // Get missing criteria descriptions for better error message
-                    List<string> missingDescriptions = rubricCriteria
-                        .Where(rc => missingCriteriaIds.Contains(rc.TestCaseId))
-                        .Select(rc => rc.Description ?? "Unnamed criterion")
-                        .ToList();
-
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        $"All criteria must be scored. Missing scores for {missingCriteriaIds.Count} criterion/criteria: {string.Join(", ", missingDescriptions)}");
-                }
-
-                // Check for duplicate criteria in submission
-                if (rubricScoreDTO.CriterionScores.Count != submittedCriteriaIds.Count)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Duplicate criteria found in submission. Each criterion should be scored only once.");
-                }
-
-                // Validate all criterion scores
-                double totalScore = 0;
-                List<RubricCriterionResultDTO> results = new List<RubricCriterionResultDTO>();
-
-                foreach (RubricCriterionScoreDTO criterionScore in rubricScoreDTO.CriterionScores)
-                {
-                    // Validate rubric exists
-                    if (!rubricsDict.TryGetValue(criterionScore.RubricId, out TestCase? criterion))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            $"Rubric {criterionScore.RubricId} not found or does not belong to this problem");
-                    }
-
-                    // Validate score doesn't exceed max score
-                    if (criterionScore.Score > criterion.Weight)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            $"Score {criterionScore.Score} exceeds max score {criterion.Weight} for criterion: {criterion.Description}");
-                    }
-
-                    if (criterionScore.Score < 0)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            $"Score cannot be negative for criterion: {criterion.Description}");
-                    }
-
-                    // Check if submission detail already exists for this criterion
-                    SubmissionDetail? existingDetail = await detailRepo.Entities
-                        .FirstOrDefaultAsync(sd => sd.SubmissionId == submissionId
-                            && sd.TestcaseId == criterionScore.RubricId);
-
-                    if (existingDetail != null)
-                    {
-                        // Update existing detail
-                        existingDetail.Weight = criterionScore.Score;
-                        existingDetail.Note = criterionScore.Note;
-                        await detailRepo.UpdateAsync(existingDetail);
-                    }
-                    else
-                    {
-                        // Create new submission detail
-                        SubmissionDetail detail = new SubmissionDetail
-                        {
-                            DetailsId = Guid.NewGuid(),
-                            SubmissionId = submissionId,
-                            TestcaseId = criterionScore.RubricId,
-                            Weight = criterionScore.Score,
-                            Note = criterionScore.Note,
-                            RuntimeMs = 0,
-                            MemoryKb = 0,
-                            CreatedAt = DateTime.UtcNow
-                        };
-
-                        await detailRepo.InsertAsync(detail);
-                    }
-
-                    totalScore += criterionScore.Score;
-
-                    results.Add(new RubricCriterionResultDTO
-                    {
-                        RubricId = criterionScore.RubricId,
-                        Description = criterion.Description ?? criterion.Input,
-                        MaxScore = criterion.Weight,
-                        Score = criterionScore.Score,
-                        Note = criterionScore.Note
-                    });
-                }
-
-                // Get user ID from JWT token (the judge)
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "User ID not found");
-
-                // Get judge email
-                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
-                User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
-
-                // Update submission with total score and status
-                submission.Score = Math.Round(totalScore, 2);
-                submission.Status = SubmissionStatusEnum.Finished.ToString();
-                submission.JudgedBy = user?.UserId.ToString() ?? "Unknown Judge Id";
-
-                // Update submission record
-                await submissionRepo.UpdateAsync(submission);
-
-                await _unitOfWork.SaveAsync();
-
-                await TryNotifySubmissionResultAsync(submission);
+                // Update submission with results
+                await UpdateSubmissionWithRubricScoreAsync(submission, totalScore, judgeEmail);
 
                 // Update leaderboard
-                Guid contestId = submission.Problem.Round.ContestId;
-                try
-                {
-                    // Update team score in leaderboard
-                    await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
-                }
-                catch (Exception ex)
-                {
-                    // Log the error but do not fail the entire operation
-                    Console.WriteLine($"Failed to update leaderboard: {ex.Message}");
-                }
+                await UpdateLeaderboardAfterRubricEvaluationAsync(submission);
 
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
 
                 return new RubricEvaluationResultDTO
                 {
                     SubmissionId = submissionId,
-                    JudgedBy = user?.Email ?? "Unknown",
+                    JudgedBy = judgeEmail,
                     TotalScore = Math.Round(totalScore, 2),
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
@@ -1459,14 +981,8 @@ namespace BusinessLogic.Services.Submissions
             }
             catch (Exception ex)
             {
-                // Roll back transaction on error
                 _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
+                if (ex is ErrorException) throw;
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error submitting rubric evaluation: {ex.Message}");
@@ -1790,7 +1306,7 @@ namespace BusinessLogic.Services.Submissions
                         .ThenInclude(p => p.Round)
                     .Where(s => s.Problem.RoundId == roundId
                         && s.SubmittedByStudentId == studentId
-                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && s.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
                         && !s.DeletedAt.HasValue)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
@@ -1805,7 +1321,7 @@ namespace BusinessLogic.Services.Submissions
                 int attemptNumber = await submissionRepo.Entities
                     .Where(s => s.Problem.RoundId == roundId
                         && s.SubmittedByStudentId == studentId
-                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && s.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
                         && !s.DeletedAt.HasValue)
                     .CountAsync();
 
@@ -1881,7 +1397,7 @@ namespace BusinessLogic.Services.Submissions
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
                     .Where(s => s.Problem.RoundId == roundId
-                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && s.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
                         && !s.DeletedAt.HasValue)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
@@ -2899,17 +2415,6 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        private string GetCurrentUserIdString()
-        {
-            return _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                ?? throw new ErrorException(StatusCodes.Status401Unauthorized,
-                    ResponseCodeConstants.UNAUTHORIZED,
-                    "User ID not found.");
-        }
-
-        private bool IsAdmin()
-            => _httpContextAccessor.HttpContext?.User?.IsInRole("Admin") == true;
-
         public async Task<MockTestResultDTO> EvaluateMockTestSubmissionAsync(
             Guid roundId,
             CreateSubmissionDTO submissionDTO,
@@ -3322,7 +2827,7 @@ namespace BusinessLogic.Services.Submissions
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
                     .Where(s => s.SubmissionId == submissionId
-                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && s.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
                         && !s.DeletedAt.HasValue)
                     .Include(s => s.Team)
                     .Include(s => s.SubmittedByStudent)
@@ -3344,7 +2849,7 @@ namespace BusinessLogic.Services.Submissions
                 int attemptNumber = await submissionRepo.Entities
                     .Where(s => s.Problem.RoundId == submission.Problem.RoundId
                         && s.SubmittedByStudentId == submission.SubmittedByStudentId
-                        && s.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                        && s.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
                         && !s.DeletedAt.HasValue
                         && s.CreatedAt <= submission.CreatedAt)
                     .CountAsync();
@@ -3479,6 +2984,814 @@ namespace BusinessLogic.Services.Submissions
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error retrieving manual test result by submission ID: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Gets problem for the specified round
+        /// </summary>
+        private async Task<Problem> GetProblemForRoundAsync(Guid roundId)
+        {
+            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+
+            Problem? problem = await problemRepo.Entities
+                .Where(p => p.RoundId == roundId)
+                .FirstOrDefaultAsync();
+
+            if (problem == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"The round {roundId} does not have problem");
+            }
+
+            return problem;
+        }
+
+        /// <summary>
+        /// Gets test cases for the specified problem
+        /// </summary>
+        private async Task<IList<TestCase>> GetTestCasesForProblemAsync(Guid problemId)
+        {
+            IGenericRepository<TestCase> testCaseRepo = _unitOfWork.GetRepository<TestCase>();
+
+            IList<TestCase> testCases = await testCaseRepo.Entities
+                .Where(tc => tc.ProblemId == problemId && tc.Type == TESTCASE_TYPE_TESTCASE)
+                .ToListAsync();
+
+            if (!testCases.Any())
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"No test cases found for problem {problemId}");
+            }
+
+            return testCases;
+        }
+
+        /// <summary>
+        /// Gets current student and team information
+        /// </summary>
+        private async Task<(Guid StudentId, Guid TeamId, Guid ContestId)> GetStudentAndTeamInfoAsync(Guid roundId)
+        {
+            // Get user ID from JWT token
+            string userId = GetCurrentUserIdOrThrow();
+
+            // Get student ID
+            Guid studentId = await GetStudentIdFromUserIdAsync(userId);
+
+            // Get contest ID
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            Guid contestId = await contestRepo.Entities
+                .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
+                .Select(c => c.ContestId)
+                .FirstOrDefaultAsync();
+
+            // Get team ID
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+            Guid teamId = await teamRepo.Entities
+                .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId)
+                    && !t.DeletedAt.HasValue
+                    && t.ContestId == contestId)
+                .Select(t => t.TeamId)
+                .FirstOrDefaultAsync();
+
+            return (studentId, teamId, contestId);
+        }
+
+        /// <summary>
+        /// Validates student hasn't finished the round
+        /// </summary>
+        private async Task ValidateStudentNotFinishedRoundAsync(Guid roundId, Guid studentId)
+        {
+            bool isAlreadyFinished = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+            if (isAlreadyFinished)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Cannot execute code. You have already finished this round.");
+            }
+        }
+
+        /// <summary>
+        /// Counts previous submissions for student
+        /// </summary>
+        private async Task<int> CountPreviousSubmissionsAsync(Guid problemId, Guid studentId)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            return await submissionRepo.Entities
+                .Where(s => s.ProblemId == problemId
+                    && s.SubmittedByStudentId == studentId
+                    && s.DeletedAt == null)
+                .CountAsync();
+        }
+
+        /// <summary>
+        /// Processes submission artifact (file or code) and returns source code, type, and URL
+        /// </summary>
+        private async Task<(string SourceCode, string ArtifactType, string ArtifactUrl)> ProcessSubmissionArtifactAsync(
+            CreateSubmissionDTO submissionDTO,
+            TestCaseEvaluationTypeEnum evaluationType,
+            Guid studentId)
+        {
+            if (evaluationType == TestCaseEvaluationTypeEnum.File)
+            {
+                return await ProcessFileSubmissionAsync(submissionDTO.File);
+            }
+            else
+            {
+                return await ProcessCodeSubmissionAsync(submissionDTO.Code, studentId);
+            }
+        }
+
+        /// <summary>
+        /// Processes file-based submission
+        /// </summary>
+        private async Task<(string SourceCode, string ArtifactType, string ArtifactUrl)> ProcessFileSubmissionAsync(
+            IFormFile? file)
+        {
+            if (file == null || file.Length == 0)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "File is required for File evaluation type");
+            }
+
+            // Validate file type
+            ValidatePythonFileExtension(file.FileName);
+
+            // Upload file to Cloudinary
+            string artifactUrl = await _cloudinaryService.UploadFileAsync(file, AUTO_TEST_SUBMISSION_FOLDER);
+
+            // Download file content from Cloudinary URL
+            string sourceCode = await SubmissionHelpers.DownloadFileContentAsync(artifactUrl);
+
+            return (sourceCode, FILE_ARTIFACT_TYPE, artifactUrl);
+        }
+
+        /// <summary>
+        /// Processes code-based submission
+        /// </summary>
+        private async Task<(string SourceCode, string ArtifactType, string ArtifactUrl)> ProcessCodeSubmissionAsync(
+            string? code,
+            Guid studentId)
+        {
+            if (string.IsNullOrEmpty(code))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Code is required for Code evaluation type");
+            }
+
+            // Unescape the code
+            string sourceCode = System.Text.RegularExpressions.Regex.Unescape(code);
+
+            // Upload code as file
+            string fileName = $"code_{studentId}_{DateTime.UtcNow:yyyyMMddHHmmss}.py";
+            string artifactUrl = await UploadCodeAsFileAsync(code, fileName);
+
+            return (sourceCode, CODE_ARTIFACT_TYPE, artifactUrl);
+        }
+
+        /// <summary>
+        /// Validates Python file extension
+        /// </summary>
+        private void ValidatePythonFileExtension(string fileName)
+        {
+            string fileExtension = Path.GetExtension(fileName).ToLower();
+            List<string> allowedExtensions = new List<string> { EXTENSION_PY, EXTENSION_PYTHON };
+
+            if (!allowedExtensions.Contains(fileExtension))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
+            }
+        }
+
+        /// <summary>
+        /// Creates submission record and artifact
+        /// </summary>
+        private async Task<Submission> CreateSubmissionRecordAsync(
+            Guid teamId,
+            Guid problemId,
+            Guid studentId,
+            string artifactType,
+            string artifactUrl)
+        {
+            // Create submission
+            Submission submission = new Submission
+            {
+                SubmissionId = Guid.NewGuid(),
+                TeamId = teamId,
+                ProblemId = problemId,
+                SubmittedByStudentId = studentId,
+                JudgedBy = DEFAULT_JUDGED_BY,
+                Status = SUBMISSION_STATUS_PENDING,
+                Score = 0,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            await submissionRepo.InsertAsync(submission);
+
+            // Save artifact
+            await SaveSubmissionArtifactAsync(submission.SubmissionId, artifactType, artifactUrl);
+
+            await _unitOfWork.SaveAsync();
+
+            return submission;
+        }
+
+        /// <summary>
+        /// Saves submission artifact
+        /// </summary>
+        private async Task SaveSubmissionArtifactAsync(Guid submissionId, string artifactType, string artifactUrl)
+        {
+            IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+
+            SubmissionArtifact artifact = new SubmissionArtifact
+            {
+                ArtifactId = Guid.NewGuid(),
+                SubmissionId = submissionId,
+                Type = artifactType,
+                Url = artifactUrl,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await artifactRepo.InsertAsync(artifact);
+        }
+
+        /// <summary>
+        /// Logs submission creation activity
+        /// </summary>
+        private async Task LogSubmissionCreationAsync(Guid submissionId)
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (Guid.TryParse(userId, out var actorUserId))
+            {
+                await _logWriter.TryWriteAsync(
+                    actorUserId,
+                    ActivityActions.SubmissionCreate,
+                    TargetTypes.Submission,
+                    submissionId.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Evaluates submission using Judge0 service
+        /// </summary>
+        private async Task<JudgeSubmissionResultDTO> EvaluateWithJudge0Async(
+            Problem problem,
+            IList<TestCase> testCases,
+            string sourceCode,
+            Guid submissionId)
+        {
+            // Build Judge0 request
+            JudgeSubmissionRequestDTO judge0Request = BuildJudge0Request(problem, testCases, sourceCode);
+
+            // Auto evaluate submission
+            JudgeSubmissionResultDTO result = await _judge0Service.AutoEvaluateSubmissionAsync(judge0Request);
+
+            // Set submission ID in result
+            result.SubmissionId = submissionId.ToString();
+
+            return result;
+        }
+
+        /// <summary>
+        /// Builds Judge0 request DTO
+        /// </summary>
+        private JudgeSubmissionRequestDTO BuildJudge0Request(
+            Problem problem,
+            IList<TestCase> testCases,
+            string sourceCode)
+        {
+            return new JudgeSubmissionRequestDTO
+            {
+                LanguageId = SubmissionHelpers.ConvertToJudge0LanguageId(problem.Language),
+                Code = sourceCode,
+                Problem = new JudgeProblemDTO
+                {
+                    Id = problem.ProblemId.ToString(),
+                    Title = problem.Type ?? "Unknown"
+                },
+                TestCases = testCases.Select(tc => new JudgeTestCaseDTO
+                {
+                    Id = tc.TestCaseId.ToString(),
+                    Stdin = tc.Input ?? string.Empty,
+                    ExpectedOutput = tc.ExpectedOutput ?? string.Empty
+                }).ToList(),
+                TimeLimitSec = testCases.Max(tc => tc.TimeLimitMs) / 1000.0 ?? DEFAULT_TIMELIMIT,
+                MemoryLimitKb = testCases.Max(tc => tc.MemoryKb) ?? DEFAULT_MEMORY
+            };
+        }
+
+        /// <summary>
+        /// Validates submission file
+        /// </summary>
+        private void ValidateSubmissionFile(IFormFile? file)
+        {
+            if (file == null || file.Length == 0)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "No file was provided");
+            }
+
+            // Validate file type
+            List<string> allowedExtensions = new List<string> { EXTENSION_ZIP, EXTENSION_RAR };
+            string fileExtension = Path.GetExtension(file.FileName).ToLower();
+
+            if (!allowedExtensions.Contains(fileExtension))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"File type {fileExtension} is not supported. Allowed types: {string.Join(", ", allowedExtensions)}");
+            }
+        }
+
+        /// <summary>
+        /// Gets current student ID from JWT token
+        /// </summary>
+        private async Task<Guid> GetCurrentStudentIdAsync()
+        {
+            string userId = GetCurrentUserIdOrThrow();
+
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Guid studentId = await studentRepo.Entities
+                .Where(s => s.UserId.ToString() == userId)
+                .Select(s => s.StudentId)
+                .FirstOrDefaultAsync();
+
+            if (studentId == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Student not found");
+            }
+
+            return studentId;
+        }
+
+        /// <summary>
+        /// Gets team ID for student in specified round
+        /// </summary>
+        private async Task<Guid> GetTeamIdForStudentInRoundAsync(Guid studentId, Guid roundId)
+        {
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            return await teamRepo.Entities
+                .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId)
+                    && !t.DeletedAt.HasValue
+                    && t.Contest.Rounds.Any(r => r.RoundId == roundId))
+                .Select(t => t.TeamId)
+                .FirstOrDefaultAsync();
+        }
+
+        /// <summary>
+        /// Gets problem ID for the specified round
+        /// </summary>
+        private async Task<Guid> GetProblemIdForRoundAsync(Guid roundId)
+        {
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+
+            return await roundRepo.Entities
+                .Where(r => r.RoundId == roundId)
+                .Select(r => r.Problem!.ProblemId)
+                .FirstOrDefaultAsync();
+        }
+
+        /// <summary>
+        /// Deletes previous submissions for team in round
+        /// </summary>
+        private async Task DeletePreviousSubmissionsAsync(Guid roundId, Guid teamId)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            List<Submission>? previousSubmissions = await submissionRepo.Entities
+                .Where(s => s.Problem.Round.RoundId == roundId
+                    && s.TeamId == teamId
+                    && !s.DeletedAt.HasValue)
+                .ToListAsync();
+
+            if (previousSubmissions == null || !previousSubmissions.Any())
+                return;
+
+            // Delete artifacts
+            await DeleteSubmissionArtifactsAsync(previousSubmissions);
+
+            // Mark submissions as deleted
+            foreach (Submission item in previousSubmissions)
+            {
+                item.DeletedAt = DateTime.UtcNow;
+                await submissionRepo.UpdateAsync(item);
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        /// <summary>
+        /// Deletes submission artifacts from cloud storage
+        /// </summary>
+        private async Task DeleteSubmissionArtifactsAsync(List<Submission> submissions)
+        {
+            IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+
+            List<Guid> submissionIds = submissions.Select(s => s.SubmissionId).ToList();
+
+            List<SubmissionArtifact> artifacts = await artifactRepo.Entities
+                .Where(a => submissionIds.Contains(a.SubmissionId)
+                    && a.Type == FILE_ARTIFACT_TYPE
+                    && a.DeletedAt == null)
+                .ToListAsync();
+
+            foreach (SubmissionArtifact art in artifacts)
+            {
+                await TryDeleteCloudinaryFileAsync(art.Url);
+
+                art.DeletedAt = DateTime.UtcNow;
+                await artifactRepo.UpdateAsync(art);
+            }
+        }
+
+        /// <summary>
+        /// Attempts to delete file from Cloudinary
+        /// </summary>
+        private async Task TryDeleteCloudinaryFileAsync(string url)
+        {
+            try
+            {
+                string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(url);
+                if (!string.IsNullOrWhiteSpace(publicId))
+                {
+                    await _cloudinaryService.DeleteFileAsync(publicId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to delete file from Cloudinary: {Url}", url);
+            }
+        }
+
+        /// <summary>
+        /// Creates file submission record
+        /// </summary>
+        private async Task<Submission> CreateFileSubmissionRecordAsync(
+            Guid teamId,
+            Guid problemId,
+            Guid studentId,
+            string fileUrl)
+        {
+            // Create submission
+            Submission submission = new Submission
+            {
+                SubmissionId = Guid.NewGuid(),
+                TeamId = teamId,
+                ProblemId = problemId,
+                SubmittedByStudentId = studentId,
+                JudgedBy = null,
+                Status = SUBMISSION_STATUS_PENDING,
+                Score = 0,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            await submissionRepo.InsertAsync(submission);
+
+            // Save artifact
+            await SaveSubmissionArtifactAsync(submission.SubmissionId, FILE_ARTIFACT_TYPE, fileUrl);
+
+            await _unitOfWork.SaveAsync();
+
+            // Log activity
+            await LogSubmissionCreationAsync(submission.SubmissionId);
+
+            return submission;
+        }
+
+        /// <summary>
+        /// Checks plagiarism for archive submissions
+        /// </summary>
+        private async Task CheckPlagiarismForArchiveAsync(Submission submission, IFormFile file)
+        {
+            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+            Problem? problem = await problemRepo.Entities
+                .Where(p => p.ProblemId == submission.ProblemId && p.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (problem == null) return;
+
+            string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
+
+            if (!string.IsNullOrWhiteSpace(combinedNormalized))
+            {
+                await CheckAndFlagPlagiarismNormalizedAsync(submission, problem, combinedNormalized);
+            }
+        }
+
+        /// <summary>
+        /// Gets submission for rubric evaluation with validation
+        /// </summary>
+        private async Task<Submission> GetSubmissionForRubricEvaluationAsync(Guid submissionId)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            Submission? submission = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                    .ThenInclude(p => p.Round)
+                .Where(s => s.SubmissionId == submissionId)
+                .FirstOrDefaultAsync();
+
+            if (submission == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"Submission with ID {submissionId} not found");
+            }
+
+            if (submission.Problem.Type != PROBLEM_TYPE_MANUAL)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Rubric evaluation is only available for manual problem types");
+            }
+
+            return submission;
+        }
+
+        /// <summary>
+        /// Gets rubric criteria for problem
+        /// </summary>
+        private async Task<List<TestCase>> GetRubricCriteriaAsync(Guid problemId)
+        {
+            IGenericRepository<TestCase> rubricRepo = _unitOfWork.GetRepository<TestCase>();
+
+            List<TestCase> criteria = await rubricRepo.Entities
+                .Where(tc => tc.ProblemId == problemId
+                    && tc.Type == TESTCASE_TYPE_MANUAL
+                    && !tc.DeletedAt.HasValue)
+                .ToListAsync();
+
+            if (!criteria.Any())
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "No rubric criteria found for this problem");
+            }
+
+            return criteria;
+        }
+
+        /// <summary>
+        /// Validates all rubric criteria are scored
+        /// </summary>
+        private void ValidateAllCriteriaScored(
+            List<TestCase> rubricCriteria,
+            List<RubricCriterionScoreDTO> criterionScores)
+        {
+            HashSet<Guid> submittedCriteriaIds = criterionScores
+                .Select(cs => cs.RubricId)
+                .ToHashSet();
+
+            HashSet<Guid> allRequiredCriteriaIds = rubricCriteria
+                .Select(rc => rc.TestCaseId)
+                .ToHashSet();
+
+            List<Guid> missingCriteriaIds = allRequiredCriteriaIds
+                .Except(submittedCriteriaIds)
+                .ToList();
+
+            if (missingCriteriaIds.Any())
+            {
+                List<string> missingDescriptions = rubricCriteria
+                    .Where(rc => missingCriteriaIds.Contains(rc.TestCaseId))
+                    .Select(rc => rc.Description ?? "Unnamed criterion")
+                    .ToList();
+
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"All criteria must be scored. Missing scores for {missingCriteriaIds.Count} criterion/criteria: {string.Join(", ", missingDescriptions)}");
+            }
+
+            // Check for duplicates
+            if (criterionScores.Count != submittedCriteriaIds.Count)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Duplicate criteria found in submission. Each criterion should be scored only once.");
+            }
+        }
+
+        /// <summary>
+        /// Processes and saves criterion scores
+        /// </summary>
+        private async Task<(double TotalScore, List<RubricCriterionResultDTO> Results)> ProcessCriterionScoresAsync(
+            Guid submissionId,
+            List<RubricCriterionScoreDTO> criterionScores,
+            List<TestCase> rubricCriteria)
+        {
+            Dictionary<Guid, TestCase> rubricsDict = rubricCriteria.ToDictionary(tc => tc.TestCaseId);
+            IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
+
+            double totalScore = 0;
+            List<RubricCriterionResultDTO> results = new List<RubricCriterionResultDTO>();
+
+            foreach (RubricCriterionScoreDTO criterionScore in criterionScores)
+            {
+                // Validate criterion exists
+                if (!rubricsDict.TryGetValue(criterionScore.RubricId, out TestCase? criterion))
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        $"Rubric {criterionScore.RubricId} not found or does not belong to this problem");
+                }
+
+                // Validate score
+                ValidateCriterionScore(criterionScore.Score, criterion);
+
+                // Save or update submission detail
+                await UpsertSubmissionDetailAsync(submissionId, criterionScore, detailRepo);
+
+                totalScore += criterionScore.Score;
+
+                results.Add(new RubricCriterionResultDTO
+                {
+                    RubricId = criterionScore.RubricId,
+                    Description = criterion.Description ?? criterion.Input,
+                    MaxScore = criterion.Weight,
+                    Score = criterionScore.Score,
+                    Note = criterionScore.Note
+                });
+            }
+
+            return (totalScore, results);
+        }
+
+        /// <summary>
+        /// Validates criterion score
+        /// </summary>
+        private void ValidateCriterionScore(double score, TestCase criterion)
+        {
+            if (score > criterion.Weight)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"Score {score} exceeds max score {criterion.Weight} for criterion: {criterion.Description}");
+            }
+
+            if (score < 0)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    $"Score cannot be negative for criterion: {criterion.Description}");
+            }
+        }
+
+        /// <summary>
+        /// Upserts submission detail for criterion
+        /// </summary>
+        private async Task UpsertSubmissionDetailAsync(
+            Guid submissionId,
+            RubricCriterionScoreDTO criterionScore,
+            IGenericRepository<SubmissionDetail> detailRepo)
+        {
+            SubmissionDetail? existingDetail = await detailRepo.Entities
+                .FirstOrDefaultAsync(sd => sd.SubmissionId == submissionId
+                    && sd.TestcaseId == criterionScore.RubricId);
+
+            if (existingDetail != null)
+            {
+                existingDetail.Weight = criterionScore.Score;
+                existingDetail.Note = criterionScore.Note;
+                await detailRepo.UpdateAsync(existingDetail);
+            }
+            else
+            {
+                SubmissionDetail detail = new SubmissionDetail
+                {
+                    DetailsId = Guid.NewGuid(),
+                    SubmissionId = submissionId,
+                    TestcaseId = criterionScore.RubricId,
+                    Weight = criterionScore.Score,
+                    Note = criterionScore.Note,
+                    RuntimeMs = 0,
+                    MemoryKb = 0,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await detailRepo.InsertAsync(detail);
+            }
+        }
+
+        /// <summary>
+        /// Gets current judge email
+        /// </summary>
+        private async Task<string> GetCurrentJudgeEmailAsync()
+        {
+            string userId = GetCurrentUserIdOrThrow();
+
+            IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+            User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
+
+            return user?.Email ?? "Unknown Judge";
+        }
+
+        /// <summary>
+        /// Updates submission with rubric evaluation results
+        /// </summary>
+        private async Task UpdateSubmissionWithRubricScoreAsync(
+            Submission submission,
+            double totalScore,
+            string judgeEmail)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            submission.Score = Math.Round(totalScore, 2);
+            submission.Status = SUBMISSION_STATUS_FINISHED;
+            submission.JudgedBy = judgeEmail;
+
+            await submissionRepo.UpdateAsync(submission);
+            await _unitOfWork.SaveAsync();
+
+            await TryNotifySubmissionResultAsync(submission);
+        }
+
+        /// <summary>
+        /// Updates leaderboard after rubric evaluation
+        /// </summary>
+        private async Task UpdateLeaderboardAfterRubricEvaluationAsync(Submission submission)
+        {
+            try
+            {
+                Guid contestId = submission.Problem.Round.ContestId;
+                await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to update leaderboard for submission {SubmissionId}",
+                    submission.SubmissionId);
+            }
+        }
+
+        /// <summary>
+        /// Gets current user ID from JWT token or throws
+        /// </summary>
+        private string GetCurrentUserIdOrThrow()
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "User ID not found");
+            }
+
+            return userId;
+        }
+
+        /// <summary>
+        /// Gets student ID from user ID
+        /// </summary>
+        private async Task<Guid> GetStudentIdFromUserIdAsync(string userId)
+        {
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+
+            Guid studentId = await studentRepo.Entities
+                .Where(s => s.UserId.ToString() == userId)
+                .Select(s => s.StudentId)
+                .FirstOrDefaultAsync();
+
+            if (studentId == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Student not found");
+            }
+
+            return studentId;
+        }
+
+        /// <summary>
+        /// Checks if current user is admin
+        /// </summary>
+        private bool IsAdmin()
+        {
+            return _httpContextAccessor.HttpContext?.User?.IsInRole("Admin") == true;
+        }
+
+        /// <summary>
+        /// Gets current user ID as string
+        /// </summary>
+        private string GetCurrentUserIdString()
+        {
+            return _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status401Unauthorized,
+                    ResponseCodeConstants.UNAUTHORIZED,
+                    "User ID not found.");
         }
     }
 }

@@ -44,6 +44,18 @@ namespace BusinessLogic.Services.Contests
         private const int OPEN_CODE_MIN = 1000;
         private const int OPEN_CODE_MAX = 10000;
 
+        // Round status enum values
+        private static readonly string ROUND_STATUS_INCOMING = RoundStatusEnum.Incoming.ToString();
+        private static readonly string ROUND_STATUS_OPENED = RoundStatusEnum.Opened.ToString();
+        private static readonly string ROUND_STATUS_CLOSED = RoundStatusEnum.Closed.ToString();
+
+        // Submission and appeal status values
+        private static readonly string SUBMISSION_STATUS_PENDING = SubmissionStatusEnum.Pending.ToString();
+        private static readonly string SUBMISSION_STATUS_FINISHED = SubmissionStatusEnum.Finished.ToString();
+        private static readonly string APPEAL_STATE_CLOSED = AppealStateEnum.Closed.ToString();
+        private static readonly string APPEAL_DECISION_APPROVED = AppealDecisionEnum.Approved.ToString();
+        private static readonly string APPEAL_RESOLUTION_RETAKE = AppealResolutionEnum.Retake.ToString();
+
         public RoundService(
             IMapper mapper,
             IUOW unitOfWork,
@@ -73,196 +85,45 @@ namespace BusinessLogic.Services.Contests
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
         {
-            bool committed = false; 
-            Round? createdRound = null; 
+            bool committed = false;
+            Round? createdRound = null;
+
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Validate input data
-                if (roundDTO == null)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round data cannot be null.");
-                }
-
-                // Validate name
-                if (string.IsNullOrWhiteSpace(roundDTO.Name))
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round name is required.");
-                }
+                // Validate all input parameters
+                ValidateCreateRoundInput(roundDTO);
 
                 // Validate retake round configuration
                 await ValidateRetakeRoundAsync(contestId, roundDTO.MainRoundId, roundDTO.IsRetakeRound, roundDTO.ProblemType);
 
-                // Validate Problem Type
-                if (roundDTO.ProblemType == ProblemTypeEnum.Manual || roundDTO.ProblemType == ProblemTypeEnum.AutoEvaluation)
-                {
-                    // Problem configuration is required for these types
-                    if (roundDTO.ProblemConfig == null)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Problem configuration is required for the selected problem type.");
-                    }
-
-                    // Validate penalty range
-                    if (roundDTO.ProblemConfig.PenaltyRate.HasValue && (roundDTO.ProblemConfig.PenaltyRate.Value < 0 || roundDTO.ProblemConfig.PenaltyRate.Value > 1))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Penalty rate must be between 0 and 1");
-                    }
-                }
-                else if (roundDTO.ProblemType == ProblemTypeEnum.McqTest)
-                {
-                    // MCQ test configuration is required for this type
-                    if (roundDTO.McqTestConfig == null)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "MCQ test configuration is required for the selected problem type.");
-                    }
-
-                    if (string.IsNullOrWhiteSpace(roundDTO.McqTestConfig.Name))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "MCQ test name is required.");
-                    }
-                }
-
-                // Validate rounds
+                // Validate round dates and conflicts
                 await ValidateRoundInputAsync(contestId, roundDTO, null);
 
-                // Get Round Repository
+                // Get repositories
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
-                // Map DTO to Entity    
-                Round round = _mapper.Map<Round>(roundDTO);
-
-                // Store times in database
-                round.Start = roundDTO.Start;
-                round.End = roundDTO.End;
-
-                // Assign contest ID
-                round.ContestId = contestId;
-
-                // Set retake round properties
-                round.IsRetakeRound = roundDTO.IsRetakeRound;
-                round.MainRoundId = roundDTO.MainRoundId;
-
-                DateTime now = DateTime.UtcNow;
-
-                // Set initial status based on current time
-                if (now < round.Start) round.Status = RoundStatusEnum.Incoming.ToString();
-                else if (now >= round.End) round.Status = RoundStatusEnum.Closed.ToString();
-                else round.Status = RoundStatusEnum.Opened.ToString();
+                // Create round entity
+                Round round = CreateRoundEntity(contestId, roundDTO);
 
                 // Insert new round
                 await roundRepo.InsertAsync(round);
-
-                // Save changes so that RoundId exists for related Problem creation
                 await _unitOfWork.SaveAsync();
 
-                // Store time limit in config
-                if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
-                {
-                    await UpsertConfigAsync(
-                        configRepo,
-                        ConfigKeys.RoundTimeLimitSeconds(round.RoundId),
-                        roundDTO.TimeLimitSeconds.Value.ToString()
-                    );
-                }
+                // Configure round settings (time limit, rank cutoff)
+                await ConfigureRoundSettingsAsync(round.RoundId, roundDTO, configRepo);
 
-                // Store rank cutoff in config
-                if (roundDTO.RankCutoff.HasValue)
-                {
-                    if (roundDTO.RankCutoff.Value < 0)
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
-                            "RankCutoff must be >= 0 (0 = disabled).");
-
-                    await UpsertConfigAsync(
-                        configRepo,
-                        ConfigKeys.RoundRankCutoff(round.RoundId),
-                        roundDTO.RankCutoff.Value.ToString()
-                    );
-                }
-
-                // Handle problem type specific logic
-                switch (roundDTO.ProblemType)
-                {
-                    case ProblemTypeEnum.McqTest:
-                        await _mcqTestService.CreateMcqTestAsync(round.RoundId, new CreateMcqTestDTO
-                        {
-                            Name = roundDTO.McqTestConfig?.Name ?? "Default MCQ Test",
-                            Config = roundDTO.McqTestConfig?.Config
-                        });
-                        break;
-
-                    case ProblemTypeEnum.AutoEvaluation:
-                        await _problemService.CreateProblemAsync(round.RoundId, new CreateProblemDTO
-                        {
-                            Type = ProblemTypeEnum.AutoEvaluation,
-                            Description = roundDTO.ProblemConfig?.Description ?? "Default Auto Evaluation Problem",
-                            Language = roundDTO.ProblemConfig?.Language ?? "python3",
-                            PenaltyRate = roundDTO.ProblemConfig?.PenaltyRate ?? 0
-                        });
-
-                        // If template file provided, upload it
-                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
-                        {
-                            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-
-                            // upload new template
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
-
-                            // load the created problem and set TemplateUrl
-                            Problem? createdProblem = await problemRepo.Entities
-                                .Where(p => p.RoundId == round.RoundId && p.DeletedAt == null)
-                                .FirstOrDefaultAsync();
-
-                            if (createdProblem != null)
-                            {
-                                createdProblem.TemplateUrl = uploadedUrl;
-                                await problemRepo.UpdateAsync(createdProblem);
-                            }
-                        }
-
-                        break;
-
-                    case ProblemTypeEnum.Manual:
-                        await _problemService.CreateProblemAsync(round.RoundId, new CreateProblemDTO
-                        {
-                            Type = ProblemTypeEnum.Manual,
-                            Description = roundDTO.ProblemConfig?.Description ?? "Default Manual Problem",
-                            Language = roundDTO.ProblemConfig?.Language ?? "python3",
-                            PenaltyRate = roundDTO.ProblemConfig?.PenaltyRate ?? 0
-                        });
-
-                        // Optional template for manual problems
-                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
-                        {
-                            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
-
-                            Problem? createdProblem = await problemRepo.Entities
-                                .Where(p => p.RoundId == round.RoundId && p.DeletedAt == null)
-                                .FirstOrDefaultAsync();
-
-                            if (createdProblem != null)
-                            {
-                                createdProblem.TemplateUrl = uploadedUrl;
-                                await problemRepo.UpdateAsync(createdProblem);
-                            }
-                        }
-                        break;
-
-                    default:
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
-                }
+                // Create problem or MCQ test based on type
+                await CreateRoundContentAsync(round.RoundId, roundDTO);
 
                 // Save all changes
                 await _unitOfWork.SaveAsync();
-
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
+
                 committed = true;
                 createdRound = round;
-
             }
             catch (Exception ex)
             {
@@ -273,18 +134,8 @@ namespace BusinessLogic.Services.Contests
                     $"Error creating Rounds: {ex.Message}");
             }
 
-            // Activity log
-            var actorId = GetCurrentUserGuidOrThrow();
-
-            await SafeWriteActivityAsync(actorId,
-                ActivityActions.RoundCreate,       
-                TargetTypes.Round,                   
-                createdRound!.RoundId.ToString());
-
-            SafeEnqueue(() =>
-                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(createdRound.RoundId)),
-                "ScheduleRoundStateTransitionsAsync"); 
-
+            // Post-creation operations (logging, scheduling)
+            await PerformPostCreateRoundOperationsAsync(createdRound!);
         }
 
         private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound, ProblemTypeEnum? retakeRoundType = null)
@@ -370,104 +221,43 @@ namespace BusinessLogic.Services.Contests
         public async Task DeleteRoundAsync(Guid id)
         {
             bool committed = false;
+            Guid contestId = Guid.Empty;
+            string roundName = string.Empty;
+            Guid roundId = id;
+
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
                 // Validate input
-                if (id == Guid.Empty)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round ID cannot be empty.");
-                }
+                ValidateRoundId(id);
 
-                // Get Round Repository
+                // Get repositories
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
-                // Find round by id with related entities
-                Round? round = await roundRepo.Entities
-                    .Where(r => r.RoundId == id)
-                    .Include(r => r.Problem)
-                    .Include(r => r.McqTest)
-                    .FirstOrDefaultAsync();
+                // Find round with related entities
+                Round round = await GetRoundForDeletionAsync(roundRepo, id);
 
-                // Check if round exists
-                if (round == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
-                }
+                // Delete related content
+                await DeleteRoundContentAsync(round);
 
-                // Delete related Problem and its child entities
-                if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
-                {
-                    await _problemService.DeleteProblemAsync(round.Problem.ProblemId);
-                }
+                // Delete round configurations
+                await DeleteRoundConfigurationsAsync(round.RoundId);
 
-                // Delete related McqTest and its child entities
-                if (round.McqTest != null && !round.McqTest.DeletedAt.HasValue)
-                {
-                    await _mcqTestService.DeleteMcqTestAsync(round.McqTest.TestId);
-                }
-
-                // Delete round time limit config
-                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-                string timeLimitKey = ConfigKeys.RoundTimeLimitSeconds(round.RoundId);
-                Config? timeLimitConfig = await configRepo.Entities
-                    .FirstOrDefaultAsync(c => c.Key == timeLimitKey && c.Scope == "contest");
-
-                if (timeLimitConfig != null)
-                {
-                    timeLimitConfig.DeletedAt = DateTime.UtcNow;
-                    await configRepo.UpdateAsync(timeLimitConfig);
-                }
-
-                // Delete round rank cutoff config
-                string rankCutoffKey = ConfigKeys.RoundRankCutoff(round.RoundId);
-                Config? rankCutoffConfig = await configRepo.Entities
-                    .FirstOrDefaultAsync(c => c.Key == rankCutoffKey && c.Scope == "contest");
-
-                if (rankCutoffConfig != null)
-                {
-                    rankCutoffConfig.DeletedAt = DateTime.UtcNow;
-                    await configRepo.UpdateAsync(rankCutoffConfig);
-                }
-
-                // Delete distribution status config if exists
-                await _configService.ResetDistributionStatusAsync(round.RoundId);
-
-                // Delete the round
+                // Soft delete the round
                 round.DeletedAt = DateTime.UtcNow;
                 await roundRepo.UpdateAsync(round);
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
-
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
+
                 committed = true;
-
-                var actorId = GetCurrentUserGuidOrThrow();
-
-                await SafeWriteActivityAsync(actorId,
-                    ActivityActions.RoundDelete,
-                    TargetTypes.Round,
-                    round.RoundId.ToString());
-
-                await SafeNotifyContestParticipantsAsync(round.ContestId,
-                    NotificationTypes.RoundDeleted,
-                    new
-                    {
-                        contestId = round.ContestId,
-                        roundId = round.RoundId,
-                        name = round.Name,
-                        targetType = TargetTypes.Round,
-                        targetId = round.RoundId.ToString(),
-                        message = $"Round '{round.Name}' has deleted."
-                    });
+                contestId = round.ContestId;
+                roundName = round.Name;
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
                 if (!committed) _unitOfWork.RollBack();
 
                 if (ex is ErrorException)
@@ -479,6 +269,9 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error deleting Round: {ex.Message}");
             }
+
+            // Post-deletion operations
+            await PerformPostDeleteRoundOperationsAsync(roundId, contestId, roundName);
         }
 
         private async Task<bool> HasApprovedRetakeAppealAsync(Guid studentUserId, Guid mainRoundId)
@@ -501,152 +294,19 @@ namespace BusinessLogic.Services.Contests
             try
             {
                 // Validate input
-                if (id == Guid.Empty)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Round ID cannot be empty.");
-                }
+                ValidateRoundId(id);
 
-                // Get Round Repository
-                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                // Get round with related entities
+                Round round = await FetchRoundWithIncludesAsync(id);
 
-                // Get the specific round with related entities
-                Round? round = await roundRepo.Entities
-                    .Where(r => r.RoundId == id && !r.DeletedAt.HasValue)
-                    .Include(r => r.Contest)
-                    .Include(r => r.Problem)
-                    .Include(r => r.McqTest)
-                    .Include(r => r.MainRound)
-                    .FirstOrDefaultAsync();
+                // Load configurations
+                var (timeLimitSeconds, rankCutoff) = await LoadRoundConfigurationsAsync(id);
 
-                // Check if round exists
-                if (round == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        "Round not found.");
-                }
+                // Map to DTO
+                GetRoundDTO roundDTO = MapRoundToDTO(round, timeLimitSeconds, rankCutoff);
 
-                // Load time limit config for this round
-                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-                string tlKey = ConfigKeys.RoundTimeLimitSeconds(round.RoundId);
-
-                Config? tlConfig = await configRepo.Entities
-                    .Where(c => c.Key == tlKey && c.Scope == "contest" && c.DeletedAt == null)
-                    .FirstOrDefaultAsync();
-
-                // Map entity to DTO using AutoMapper
-                GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
-
-                // Map time limit from config
-                if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
-                {
-                    roundDTO.TimeLimitSeconds = secs;
-                }
-
-                // Map rank cutoff from config
-                string rcKey = ConfigKeys.RoundRankCutoff(round.RoundId);
-
-                Config? rcConfig = await configRepo.Entities
-                    .Where(c => c.Key == rcKey && c.Scope == "contest" && c.DeletedAt == null)
-                    .FirstOrDefaultAsync();
-
-                if (rcConfig != null && int.TryParse(rcConfig.Value, out int cutoff))
-                {
-                    roundDTO.RankCutoff = cutoff;
-                }
-                else
-                {
-                    roundDTO.RankCutoff = 0;
-                }
-
-                // Get user role from HttpContext
-                string? userRole = _httpContextAccessor.HttpContext?.User.FindFirst(ClaimTypes.Role)?.Value;
-
-                // If user is a student, perform additional validations
-                if (!string.IsNullOrWhiteSpace(userRole) && userRole == RoleConstants.Student)
-                {
-                    // Get user ID from JWT token
-                    string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                    if (string.IsNullOrWhiteSpace(userId))
-                    {
-                        throw new ErrorException(StatusCodes.Status401Unauthorized,
-                            ResponseCodeConstants.UNAUTHORIZED,
-                            "User ID not found.");
-                    }
-
-                    // Get student ID associated with this user
-                    IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                    Student? student = await studentRepo.Entities
-                        .Where(s => s.UserId.ToString() == userId && !s.DeletedAt.HasValue)
-                        .FirstOrDefaultAsync();
-
-                    // Check if student exists
-                    if (student == null)
-                    {
-                        throw new ErrorException(StatusCodes.Status404NotFound,
-                            ResponseCodeConstants.NOT_FOUND,
-                            "Student not found.");
-                    }
-
-                    Guid studentId = student.StudentId;
-                    Guid studentUserId = student.UserId;
-
-                    // If this is a retake round, validate student has approved retake appeal for main round
-                    if (round.IsRetakeRound && round.MainRoundId.HasValue)
-                    {
-                        bool hasApprovedRetake = await HasApprovedRetakeAppealAsync(studentUserId, round.MainRoundId.Value);
-
-                        if (!hasApprovedRetake)
-                        {
-                            throw new ErrorException(StatusCodes.Status403Forbidden,
-                                ResponseCodeConstants.FORBIDDEN,
-                                "You do not have permission to access this retake round. An approved appeal for the main round is required.");
-                        }
-                    }
-
-                    // Check if student has already finished this round
-                    bool hasFinishedRound = await _configService.IsStudentFinishedRoundAsync(id, studentId);
-
-                    if (hasFinishedRound)
-                    {
-                        throw new ErrorException(StatusCodes.Status403Forbidden,
-                            ResponseCodeConstants.FORBIDDEN,
-                            "You have already finished this round and cannot access its content anymore.");
-                    }
-
-                    // Enforce rank cutoff if applicable
-                    await EnforceRoundRankCutoffForStudentAsync(round, studentId);
-
-                    // Check if student has already inputted the open code once
-                    bool hasInputtedCode = await _configService.HasStudentInputtedOpenCodeAsync(id, studentId);
-
-                    // If student hasn't inputted code yet, validate the provided code
-                    if (!hasInputtedCode)
-                    {
-                        // Validate open code
-                        await ValidateOpenCode(id, openCode);
-
-                        // Mark that student has inputted the code
-                        await _configService.MarkStudentOpenCodeInputtedAsync(id, studentId);
-                    }
-                }
-
-                // Map problem information if exists
-                if (round.Problem != null && round.Problem.DeletedAt == null)
-                {
-                    roundDTO.ProblemType = round.Problem.Type;
-                    roundDTO.Problem = _mapper.Map<GetProblemDTO>(round.Problem);
-                    roundDTO.Problem.TemplateUrl = round.Problem.TemplateUrl;
-                }
-                // Map MCQ test information if exists
-                else if (round.McqTest != null && round.McqTest.DeletedAt == null)
-                {
-                    roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
-                    roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(round.McqTest);
-                }
+                // Apply student-specific validations if user is a student
+                await ApplyStudentValidationsAsync(round, openCode);
 
                 return roundDTO;
             }
@@ -663,113 +323,40 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
-        public async Task<PaginatedList<GetRoundDTO>> GetPaginatedRoundAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? contestIdSearch, string? roundNameSearch, string? contestNameSearch, DateTime? startDate, DateTime? endDate)
+        public async Task<PaginatedList<GetRoundDTO>> GetPaginatedRoundAsync(
+            int pageNumber,
+            int pageSize,
+            Guid? idSearch,
+            Guid? contestIdSearch,
+            string? roundNameSearch,
+            string? contestNameSearch,
+            DateTime? startDate,
+            DateTime? endDate)
         {
             try
             {
-                // Validate pageNumber and pageSize
-                if (pageNumber < 1 || pageSize < 1)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Page number and page size must be greater than or equal to 1.");
-                }
+                // Validate pagination parameters
+                ValidatePaginationParameters(pageNumber, pageSize);
 
                 // Get Round Repository
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
-                // Get all rounds with related entities
-                IQueryable<Round> query = roundRepo.Entities
-                    .Where(r => !r.DeletedAt.HasValue)
-                    .Include(r => r.Contest)
-                    .Include(r => r.Problem)
-                    .Include(r => r.McqTest)
-                    .Include(r => r.MainRound);
+                // Build base query
+                IQueryable<Round> query = BuildBaseRoundQuery(roundRepo);
 
-                // Apply filters if provided
-                if (idSearch.HasValue)
-                {
-                    query = query.Where(r => r.RoundId == idSearch.Value);
-                }
+                // Apply search filters
+                query = ApplyRoundSearchFilters(query, idSearch, contestIdSearch, roundNameSearch, contestNameSearch, startDate, endDate);
 
-                if (contestIdSearch.HasValue)
-                {
-                    query = query.Where(r => r.ContestId == contestIdSearch.Value);
-                }
-
-                if (!string.IsNullOrWhiteSpace(roundNameSearch))
-                {
-                    query = query.Where(r => r.Name.Contains(roundNameSearch));
-                }
-
-                if (!string.IsNullOrWhiteSpace(contestNameSearch))
-                {
-                    query = query.Where(r => r.Contest.Name.Contains(contestNameSearch));
-                }
-
-                if (startDate.HasValue)
-                {
-                    query = query.Where(r => r.Start >= startDate.Value);
-                }
-
-                if (endDate.HasValue)
-                {
-                    query = query.Where(r => r.End <= endDate.Value);
-                }
-
-                // Change to paginated list to facilitate mapping process
+                // Get paginated results
                 PaginatedList<Round> resultQuery = await roundRepo.GetPagingAsync(query, pageNumber, pageSize);
 
-                // Load time limit configs for these rounds
-                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-                List<Guid> roundIds = resultQuery.Items.Select(r => r.RoundId).ToList();
+                // Load time limit configurations
+                Dictionary<string, Config> timeLimitLookup = await LoadTimeLimitConfigurationsAsync(resultQuery.Items);
 
-                List<string> tlKeys = roundIds
-                    .Select(ConfigKeys.RoundTimeLimitSeconds)
-                    .ToList();
+                // Map to DTOs
+                IReadOnlyCollection<GetRoundDTO> result = MapRoundsToDTO(resultQuery.Items, timeLimitLookup);
 
-                List<Config> tlConfigs = await configRepo.Entities
-                    .Where(c => tlKeys.Contains(c.Key) && c.Scope == "contest" && c.DeletedAt == null)
-                    .ToListAsync();
-
-                var tlLookup = tlConfigs.ToLookup(c => c.Key);
-
-                // Map entities to DTOs
-                IReadOnlyCollection<GetRoundDTO> result = resultQuery.Items.Select(item =>
-                {
-                    GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(item);
-
-                    roundDTO.ContestName = item.Contest?.Name ?? "N/A";
-                    roundDTO.RoundName = item.Name;
-                    roundDTO.Start = item.Start;
-                    roundDTO.End = item.End;
-                    roundDTO.IsRetakeRound = item.IsRetakeRound;
-                    roundDTO.MainRoundId = item.MainRoundId;
-
-                    // Map time limit from config
-                    string tlKey = ConfigKeys.RoundTimeLimitSeconds(item.RoundId);
-                    Config? tlConfig = tlLookup[tlKey].FirstOrDefault();
-                    if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
-                    {
-                        roundDTO.TimeLimitSeconds = secs;
-                    }
-
-                    // Map problem information if exists
-                    if (item.Problem != null && item.Problem.DeletedAt == null)
-                    {
-                        roundDTO.ProblemType = item.Problem.Type;
-                        roundDTO.Problem = _mapper.Map<GetProblemDTO>(item.Problem);
-                        roundDTO.Problem.TemplateUrl = item.Problem.TemplateUrl;
-                    }
-                    // Map MCQ test information if exists
-                    else if (item.McqTest != null)
-                    {
-                        roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
-                        roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(item.McqTest);
-                    }
-
-                    return roundDTO;
-                }).ToList();
-
-                // Create new paginated list with DTOs
+                // Return paginated result
                 return new PaginatedList<GetRoundDTO>(
                     result,
                     resultQuery.TotalCount,
@@ -793,213 +380,47 @@ namespace BusinessLogic.Services.Contests
         public async Task UpdateRoundAsync(Guid id, UpdateRoundDTO roundDTO)
         {
             bool committed = false;
+
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
                 // Validate input
-                if (id == Guid.Empty)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round ID cannot be empty.");
-                }
+                ValidateUpdateRoundInput(id, roundDTO);
 
-                if (roundDTO == null)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round data cannot be null.");
-                }
-
-                // Validate name
-                if (string.IsNullOrWhiteSpace(roundDTO.Name))
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Round name is required.");
-                }
-
-                // Validate date range
-                if (roundDTO.Start > roundDTO.End)
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
-                }
-
-                // Get Round Repository
+                // Get repositories
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
-                // Find round by id
-                Round? round = await roundRepo
-                    .Entities
-                    .Where(r => r.RoundId == id)
-                    .Include(r => r.McqTest)
-                    .Include(r => r.Problem)
-                    .FirstOrDefaultAsync();
+                // Find and validate round
+                Round round = await GetExistingRoundOrThrowAsync(roundRepo, id);
 
-                // Check if round exists
-                if (round == null)
+                // Prevent updates while round is opened
+                if (round.Status == ROUND_STATUS_OPENED)
                 {
-                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Cannot update round while it is in 'Opened' status.");
                 }
 
-                // Prevent updates while round is in "Opened" status
-                if (round.Status == RoundStatusEnum.Opened.ToString())
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Cannot update round while it is in 'Opened' status.");
-                }
-
-
-                // Validate against contest dates and other rounds (excluding current round)
+                // Validate against contest dates and other rounds
                 await ValidateRoundInputAsync(round.ContestId, roundDTO, round.RoundId);
 
-                // Update round properties
-                _mapper.Map(roundDTO, round);
-
-                // Store times in database
-                round.Start = roundDTO.Start;
-                round.End = roundDTO.End;
-
-                // Handle problem type specific logic
-                switch (roundDTO.ProblemType)
-                {
-                    case ProblemTypeEnum.McqTest:
-                        // Update MCQ test config
-                        await _mcqTestService.UpdateMcqTestAsync(round.McqTest!.TestId, roundDTO.McqTestConfig!);
-
-                        break;
-                    case ProblemTypeEnum.AutoEvaluation:
-                        // Update Auto Evaluation Test config
-                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
-
-                        // Handle template upload and old-file deletion
-                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
-                        {
-                            string? oldUrl = round.Problem.TemplateUrl;
-
-                            // upload new template
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
-
-                            // set new url on problem
-                            round.Problem.TemplateUrl = uploadedUrl;
-                            await _unitOfWork.GetRepository<Problem>().UpdateAsync(round.Problem);
-
-                            // attempt to delete old file if exists and is different
-                            if (!string.IsNullOrWhiteSpace(oldUrl) && !string.Equals(oldUrl, uploadedUrl, StringComparison.OrdinalIgnoreCase))
-                            {
-                                try
-                                {
-                                    string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(oldUrl);
-                                    if (!string.IsNullOrWhiteSpace(publicId))
-                                    {
-                                        await _cloudinaryService.DeleteFileAsync(publicId);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    // log for debugging
-                                    Console.WriteLine($"Failed to delete old template file: {ex.Message}");
-                                }
-                            }
-                        }
-
-                        break;
-                    case ProblemTypeEnum.Manual:
-                        // Update Manual Test config
-                        await _problemService.UpdateProblemAsync(round.Problem!.ProblemId, roundDTO.ProblemConfig!);
-
-                        // optional template upload
-                        if (roundDTO.ProblemConfig != null && roundDTO.ProblemConfig.TemplateFile != null)
-                        {
-                            string? oldUrl = round.Problem.TemplateUrl;
-
-                            string uploadedUrl = await _cloudinaryService.UploadFileAsync(roundDTO.ProblemConfig.TemplateFile, CODE_TEMPLATE_FOLDER);
-
-                            round.Problem.TemplateUrl = uploadedUrl;
-                            await _unitOfWork.GetRepository<Problem>().UpdateAsync(round.Problem);
-
-                            if (!string.IsNullOrWhiteSpace(oldUrl) && !string.Equals(oldUrl, uploadedUrl, StringComparison.OrdinalIgnoreCase))
-                            {
-                                try
-                                {
-                                    string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(oldUrl);
-                                    if (!string.IsNullOrWhiteSpace(publicId))
-                                    {
-                                        await _cloudinaryService.DeleteFileAsync(publicId);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Console.WriteLine($"Failed to delete old template file: {ex.Message}");
-                                }
-                            }
-                        }
-
-                        break;
-                    default:
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
-                }
+                // Update round entity
+                await UpdateRoundEntityAsync(round, roundDTO, configRepo);
 
                 // Update the round
                 await roundRepo.UpdateAsync(round);
-
-                // Update time limit config
-                if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
-                {
-                    await UpsertConfigAsync(
-                        configRepo,
-                        ConfigKeys.RoundTimeLimitSeconds(round.RoundId),
-                        roundDTO.TimeLimitSeconds.Value.ToString()
-                    );
-                }
-
-                // Update rank cutoff config
-                if (roundDTO.RankCutoff.HasValue)
-                {
-                    if (roundDTO.RankCutoff.Value < 0)
-                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
-                            "RankCutoff must be >= 0 (0 = disabled).");
-
-                    await UpsertConfigAsync(
-                        configRepo,
-                        ConfigKeys.RoundRankCutoff(round.RoundId),
-                        roundDTO.RankCutoff.Value.ToString()
-                    );
-                }
-
-                // Save changes
                 await _unitOfWork.SaveAsync();
 
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
                 committed = true;
 
-                // Activity log
-                var actorId = GetCurrentUserGuidOrThrow();
-
-                await SafeWriteActivityAsync(actorId,
-                    ActivityActions.RoundUpdate,
-                    TargetTypes.Round,
-                    round.RoundId.ToString());
-
-                // Notification to participants
-                await SafeNotifyContestParticipantsAsync(round.ContestId,
-                    NotificationTypes.RoundUpdated,
-                    new
-                    {
-                        contestId = round.ContestId,
-                        roundId = round.RoundId,
-                        name = round.Name,
-                        targetType = TargetTypes.Round,
-                        targetId = round.RoundId.ToString(),
-                        message = $"Round '{round.Name}' has updated."
-                    });
-
-                // Schedule background job to handle state transitions
-                SafeEnqueue(() =>
-                    BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(round.RoundId)),
-                    "ScheduleRoundStateTransitionsAsync");
-
+                // Post-update operations
+                await PerformPostUpdateRoundOperationsAsync(round);
             }
             catch (Exception ex)
             {
-                // If something fails, roll back the transaction
                 if (!committed) _unitOfWork.RollBack();
 
                 if (ex is ErrorException)
@@ -1883,6 +1304,879 @@ namespace BusinessLogic.Services.Contests
                 .Take(cutoff)
                 .Select(r => r.TeamId)
                 .ToList();
+        }
+
+        /// <summary>
+        /// Validates create round input parameters
+        /// </summary>
+        private void ValidateCreateRoundInput(CreateRoundDTO roundDTO)
+        {
+            if (roundDTO == null)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST, "Round data cannot be null.");
+            }
+
+            if (string.IsNullOrWhiteSpace(roundDTO.Name))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST, "Round name is required.");
+            }
+
+            // Validate problem type specific configurations
+            ValidateProblemTypeConfiguration(roundDTO);
+        }
+
+        /// <summary>
+        /// Validates problem type specific configuration
+        /// </summary>
+        private void ValidateProblemTypeConfiguration(CreateRoundDTO roundDTO)
+        {
+            switch (roundDTO.ProblemType)
+            {
+                case ProblemTypeEnum.Manual:
+                case ProblemTypeEnum.AutoEvaluation:
+                    if (roundDTO.ProblemConfig == null)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Problem configuration is required for the selected problem type.");
+                    }
+
+                    // Validate penalty range
+                    if (roundDTO.ProblemConfig.PenaltyRate.HasValue &&
+                        (roundDTO.ProblemConfig.PenaltyRate.Value < 0 || roundDTO.ProblemConfig.PenaltyRate.Value > 1))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Penalty rate must be between 0 and 1");
+                    }
+                    break;
+
+                case ProblemTypeEnum.McqTest:
+                    if (roundDTO.McqTestConfig == null)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "MCQ test configuration is required for the selected problem type.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(roundDTO.McqTestConfig.Name))
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "MCQ test name is required.");
+                    }
+                    break;
+
+                default:
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Invalid problem type.");
+            }
+        }
+
+        /// <summary>
+        /// Creates round entity from DTO
+        /// </summary>
+        private Round CreateRoundEntity(Guid contestId, CreateRoundDTO roundDTO)
+        {
+            Round round = _mapper.Map<Round>(roundDTO);
+
+            // Store times in database
+            round.Start = roundDTO.Start;
+            round.End = roundDTO.End;
+            round.ContestId = contestId;
+
+            // Set retake round properties
+            round.IsRetakeRound = roundDTO.IsRetakeRound;
+            round.MainRoundId = roundDTO.MainRoundId;
+
+            // Set initial status based on current time
+            DateTime now = DateTime.UtcNow;
+            if (now < round.Start)
+                round.Status = ROUND_STATUS_INCOMING;
+            else if (now >= round.End)
+                round.Status = ROUND_STATUS_CLOSED;
+            else
+                round.Status = ROUND_STATUS_OPENED;
+
+            return round;
+        }
+
+        /// <summary>
+        /// Configures round settings (time limit and rank cutoff)
+        /// </summary>
+        private async Task ConfigureRoundSettingsAsync(Guid roundId, CreateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
+        {
+            // Store time limit in config
+            if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
+            {
+                await UpsertConfigAsync(
+                    configRepo,
+                    ConfigKeys.RoundTimeLimitSeconds(roundId),
+                    roundDTO.TimeLimitSeconds.Value.ToString()
+                );
+            }
+
+            // Store rank cutoff in config
+            if (roundDTO.RankCutoff.HasValue)
+            {
+                if (roundDTO.RankCutoff.Value < 0)
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "RankCutoff must be >= 0 (0 = disabled).");
+
+                await UpsertConfigAsync(
+                    configRepo,
+                    ConfigKeys.RoundRankCutoff(roundId),
+                    roundDTO.RankCutoff.Value.ToString()
+                );
+            }
+        }
+
+        /// <summary>
+        /// Creates round content (MCQ test or Problem) based on type
+        /// </summary>
+        private async Task CreateRoundContentAsync(Guid roundId, CreateRoundDTO roundDTO)
+        {
+            switch (roundDTO.ProblemType)
+            {
+                case ProblemTypeEnum.McqTest:
+                    await CreateMcqTestForRoundAsync(roundId, roundDTO.McqTestConfig!);
+                    break;
+
+                case ProblemTypeEnum.AutoEvaluation:
+                    await CreateAutoEvaluationProblemAsync(roundId, roundDTO.ProblemConfig!);
+                    break;
+
+                case ProblemTypeEnum.Manual:
+                    await CreateManualProblemAsync(roundId, roundDTO.ProblemConfig!);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Creates MCQ test for round
+        /// </summary>
+        private async Task CreateMcqTestForRoundAsync(Guid roundId, CreateMcqTestDTO config)
+        {
+            await _mcqTestService.CreateMcqTestAsync(roundId, config);
+        }
+
+        /// <summary>
+        /// Creates auto-evaluation problem for round
+        /// </summary>
+        private async Task CreateAutoEvaluationProblemAsync(Guid roundId, CreateProblemDTO config)
+        {
+            await _problemService.CreateProblemAsync(roundId, config);
+
+            // Upload template file if provided
+            if (config.TemplateFile != null)
+            {
+                await UploadProblemTemplateAsync(roundId, config.TemplateFile);
+            }
+        }
+
+        /// <summary>
+        /// Creates manual problem for round
+        /// </summary>
+        private async Task CreateManualProblemAsync(Guid roundId, CreateProblemDTO config)
+        {
+            await _problemService.CreateProblemAsync(roundId, config);
+
+            // Optional template for manual problems
+            if (config.TemplateFile != null)
+            {
+                await UploadProblemTemplateAsync(roundId, config.TemplateFile);
+            }
+        }
+
+        /// <summary>
+        /// Uploads problem template file and updates problem entity
+        /// </summary>
+        private async Task UploadProblemTemplateAsync(Guid roundId, IFormFile templateFile)
+        {
+            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+
+            // Upload new template
+            string uploadedUrl = await _cloudinaryService.UploadFileAsync(templateFile, CODE_TEMPLATE_FOLDER);
+
+            // Load the created problem and set TemplateUrl
+            Problem? createdProblem = await problemRepo.Entities
+                .Where(p => p.RoundId == roundId && p.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (createdProblem != null)
+            {
+                createdProblem.TemplateUrl = uploadedUrl;
+                await problemRepo.UpdateAsync(createdProblem);
+            }
+        }
+
+        /// <summary>
+        /// Performs post-creation operations (logging and scheduling)
+        /// </summary>
+        private async Task PerformPostCreateRoundOperationsAsync(Round createdRound)
+        {
+            // Activity log
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundCreate,
+                TargetTypes.Round,
+                createdRound.RoundId.ToString());
+
+            // Schedule state transitions
+            SafeEnqueue(() =>
+                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(createdRound.RoundId)),
+                "ScheduleRoundStateTransitionsAsync");
+        }
+
+        /// <summary>
+        /// Validates update round input parameters
+        /// </summary>
+        private void ValidateUpdateRoundInput(Guid id, UpdateRoundDTO roundDTO)
+        {
+            if (id == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST, "Round ID cannot be empty.");
+            }
+
+            if (roundDTO == null)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST, "Round data cannot be null.");
+            }
+
+            if (string.IsNullOrWhiteSpace(roundDTO.Name))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST, "Round name is required.");
+            }
+
+            if (roundDTO.Start > roundDTO.End)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST, "Start date cannot be later than end date.");
+            }
+        }
+
+        /// <summary>
+        /// Gets existing round or throws if not found
+        /// </summary>
+        private async Task<Round> GetExistingRoundOrThrowAsync(IGenericRepository<Round> roundRepo, Guid id)
+        {
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == id)
+                .Include(r => r.McqTest)
+                .Include(r => r.Problem)
+                .FirstOrDefaultAsync();
+
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND, "Round not found.");
+            }
+
+            return round;
+        }
+
+        /// <summary>
+        /// Updates round entity with DTO values
+        /// </summary>
+        private async Task UpdateRoundEntityAsync(Round round, UpdateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
+        {
+            // Update basic properties
+            _mapper.Map(roundDTO, round);
+
+            // Store times in database
+            round.Start = roundDTO.Start;
+            round.End = roundDTO.End;
+
+            // Update problem type specific content
+            await UpdateRoundContentAsync(round, roundDTO);
+
+            // Update configurations
+            await UpdateRoundConfigurationsAsync(round.RoundId, roundDTO, configRepo);
+        }
+
+        /// <summary>
+        /// Updates round content based on problem type
+        /// </summary>
+        private async Task UpdateRoundContentAsync(Round round, UpdateRoundDTO roundDTO)
+        {
+            switch (roundDTO.ProblemType)
+            {
+                case ProblemTypeEnum.McqTest:
+                    await _mcqTestService.UpdateMcqTestAsync(round.McqTest!.TestId, roundDTO.McqTestConfig!);
+                    break;
+
+                case ProblemTypeEnum.AutoEvaluation:
+                case ProblemTypeEnum.Manual:
+                    await UpdateProblemWithTemplateAsync(round.Problem!, roundDTO.ProblemConfig!);
+                    break;
+
+                default:
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST, "Invalid problem type.");
+            }
+        }
+
+        /// <summary>
+        /// Updates problem and handles template file upload
+        /// </summary>
+        private async Task UpdateProblemWithTemplateAsync(Problem problem, UpdateProblemDTO config)
+        {
+            // Update problem configuration
+            await _problemService.UpdateProblemAsync(problem.ProblemId, config);
+
+            // Handle template upload and old file deletion
+            if (config.TemplateFile != null)
+            {
+                string? oldUrl = problem.TemplateUrl;
+
+                // Upload new template
+                string uploadedUrl = await _cloudinaryService.UploadFileAsync(config.TemplateFile, CODE_TEMPLATE_FOLDER);
+
+                // Set new url on problem
+                problem.TemplateUrl = uploadedUrl;
+                await _unitOfWork.GetRepository<Problem>().UpdateAsync(problem);
+
+                // Delete old file if exists and is different
+                await DeleteOldTemplateFileAsync(oldUrl, uploadedUrl);
+            }
+        }
+
+        /// <summary>
+        /// Deletes old template file from Cloudinary
+        /// </summary>
+        private async Task DeleteOldTemplateFileAsync(string? oldUrl, string newUrl)
+        {
+            if (string.IsNullOrWhiteSpace(oldUrl) ||
+                string.Equals(oldUrl, newUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                string? publicId = CloudinaryHelpers.ExtractCloudinaryPublicId(oldUrl);
+                if (!string.IsNullOrWhiteSpace(publicId))
+                {
+                    await _cloudinaryService.DeleteFileAsync(publicId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete old template file: {OldUrl}", oldUrl);
+            }
+        }
+
+        /// <summary>
+        /// Updates round configurations (time limit and rank cutoff)
+        /// </summary>
+        private async Task UpdateRoundConfigurationsAsync(Guid roundId, UpdateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
+        {
+            // Update time limit config
+            if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
+            {
+                await UpsertConfigAsync(
+                    configRepo,
+                    ConfigKeys.RoundTimeLimitSeconds(roundId),
+                    roundDTO.TimeLimitSeconds.Value.ToString()
+                );
+            }
+
+            // Update rank cutoff config
+            if (roundDTO.RankCutoff.HasValue)
+            {
+                if (roundDTO.RankCutoff.Value < 0)
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "RankCutoff must be >= 0 (0 = disabled).");
+
+                await UpsertConfigAsync(
+                    configRepo,
+                    ConfigKeys.RoundRankCutoff(roundId),
+                    roundDTO.RankCutoff.Value.ToString()
+                );
+            }
+        }
+
+        /// <summary>
+        /// Performs post-update operations (logging, notifications, scheduling)
+        /// </summary>
+        private async Task PerformPostUpdateRoundOperationsAsync(Round round)
+        {
+            // Activity log
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundUpdate,
+                TargetTypes.Round,
+                round.RoundId.ToString());
+
+            // Notification to participants
+            await SafeNotifyContestParticipantsAsync(round.ContestId,
+                NotificationTypes.RoundUpdated,
+                new
+                {
+                    contestId = round.ContestId,
+                    roundId = round.RoundId,
+                    name = round.Name,
+                    targetType = TargetTypes.Round,
+                    targetId = round.RoundId.ToString(),
+                    message = $"Round '{round.Name}' has updated."
+                });
+
+            // Schedule state transitions
+            SafeEnqueue(() =>
+                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(round.RoundId)),
+                "ScheduleRoundStateTransitionsAsync");
+        }
+
+        /// <summary>
+        /// Validates round ID parameter
+        /// </summary>
+        private void ValidateRoundId(Guid id)
+        {
+            if (id == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Round ID cannot be empty.");
+            }
+        }
+
+        /// <summary>
+        /// Fetches round with all necessary includes
+        /// </summary>
+        private async Task<Round> FetchRoundWithIncludesAsync(Guid id)
+        {
+            IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == id && !r.DeletedAt.HasValue)
+                .Include(r => r.Contest)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .Include(r => r.MainRound)
+                .FirstOrDefaultAsync();
+
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Round not found.");
+            }
+
+            return round;
+        }
+
+        /// <summary>
+        /// Loads round configurations (time limit and rank cutoff)
+        /// </summary>
+        private async Task<(int? TimeLimitSeconds, int RankCutoff)> LoadRoundConfigurationsAsync(Guid roundId)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            // Load time limit
+            string tlKey = ConfigKeys.RoundTimeLimitSeconds(roundId);
+            Config? tlConfig = await configRepo.Entities
+                .Where(c => c.Key == tlKey && c.Scope == SCOPE_CONTEST && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            int? timeLimitSeconds = null;
+            if (tlConfig != null && int.TryParse(tlConfig.Value, out int secs))
+            {
+                timeLimitSeconds = secs;
+            }
+
+            // Load rank cutoff
+            string rcKey = ConfigKeys.RoundRankCutoff(roundId);
+            Config? rcConfig = await configRepo.Entities
+                .Where(c => c.Key == rcKey && c.Scope == SCOPE_CONTEST && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            int rankCutoff = 0;
+            if (rcConfig != null && int.TryParse(rcConfig.Value, out int cutoff))
+            {
+                rankCutoff = cutoff;
+            }
+
+            return (timeLimitSeconds, rankCutoff);
+        }
+
+        /// <summary>
+        /// Maps round entity to DTO
+        /// </summary>
+        private GetRoundDTO MapRoundToDTO(Round round, int? timeLimitSeconds, int rankCutoff)
+        {
+            GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
+
+            // Map configurations
+            roundDTO.TimeLimitSeconds = timeLimitSeconds;
+            roundDTO.RankCutoff = rankCutoff;
+
+            // Map problem or MCQ test
+            MapRoundContent(roundDTO, round);
+
+            return roundDTO;
+        }
+
+        /// <summary>
+        /// Maps problem or MCQ test content to DTO
+        /// </summary>
+        private void MapRoundContent(GetRoundDTO roundDTO, Round round)
+        {
+            if (round.Problem != null && round.Problem.DeletedAt == null)
+            {
+                roundDTO.ProblemType = round.Problem.Type;
+                roundDTO.Problem = _mapper.Map<GetProblemDTO>(round.Problem);
+                roundDTO.Problem.TemplateUrl = round.Problem.TemplateUrl;
+            }
+            else if (round.McqTest != null && round.McqTest.DeletedAt == null)
+            {
+                roundDTO.ProblemType = ProblemTypeEnum.McqTest.ToString();
+                roundDTO.McqTest = _mapper.Map<GetMcqTestDTO>(round.McqTest);
+            }
+        }
+
+        /// <summary>
+        /// Applies student-specific validations
+        /// </summary>
+        private async Task ApplyStudentValidationsAsync(Round round, string? openCode)
+        {
+            string? userRole = _httpContextAccessor.HttpContext?.User.FindFirst(ClaimTypes.Role)?.Value;
+
+            if (string.IsNullOrWhiteSpace(userRole) || userRole != RoleConstants.Student)
+            {
+                return;
+            }
+
+            // Get student ID
+            Guid studentId = await GetCurrentStudentIdAsync();
+            Guid studentUserId = await GetCurrentStudentUserIdAsync(studentId);
+
+            // Validate retake round access
+            if (round.IsRetakeRound && round.MainRoundId.HasValue)
+            {
+                await ValidateRetakeRoundAccessAsync(studentUserId, round.MainRoundId.Value);
+            }
+
+            // Check if student has finished round
+            await ValidateStudentNotFinishedAsync(round.RoundId, studentId);
+
+            // Enforce rank cutoff
+            await EnforceRoundRankCutoffForStudentAsync(round, studentId);
+
+            // Validate open code
+            await ValidateAndMarkOpenCodeAsync(round.RoundId, studentId, openCode);
+        }
+
+        /// <summary>
+        /// Gets current student ID from JWT token
+        /// </summary>
+        private async Task<Guid> GetCurrentStudentIdAsync()
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                throw new ErrorException(StatusCodes.Status401Unauthorized,
+                    ResponseCodeConstants.UNAUTHORIZED,
+                    "User ID not found.");
+            }
+
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Student? student = await studentRepo.Entities
+                .Where(s => s.UserId.ToString() == userId && !s.DeletedAt.HasValue)
+                .FirstOrDefaultAsync();
+
+            if (student == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Student not found.");
+            }
+
+            return student.StudentId;
+        }
+
+        /// <summary>
+        /// Gets current student user ID
+        /// </summary>
+        private async Task<Guid> GetCurrentStudentUserIdAsync(Guid studentId)
+        {
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Student? student = await studentRepo.Entities
+                .Where(s => s.StudentId == studentId && !s.DeletedAt.HasValue)
+                .FirstOrDefaultAsync();
+
+            return student?.UserId ?? Guid.Empty;
+        }
+
+        /// <summary>
+        /// Validates student has approved retake appeal
+        /// </summary>
+        private async Task ValidateRetakeRoundAccessAsync(Guid studentUserId, Guid mainRoundId)
+        {
+            bool hasApprovedRetake = await HasApprovedRetakeAppealAsync(studentUserId, mainRoundId);
+
+            if (!hasApprovedRetake)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "You do not have permission to access this retake round. An approved appeal for the main round is required.");
+            }
+        }
+
+        /// <summary>
+        /// Validates student has not finished the round
+        /// </summary>
+        private async Task ValidateStudentNotFinishedAsync(Guid roundId, Guid studentId)
+        {
+            bool hasFinishedRound = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
+
+            if (hasFinishedRound)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "You have already finished this round and cannot access its content anymore.");
+            }
+        }
+
+        /// <summary>
+        /// Validates and marks open code as inputted
+        /// </summary>
+        private async Task ValidateAndMarkOpenCodeAsync(Guid roundId, Guid studentId, string? openCode)
+        {
+            bool hasInputtedCode = await _configService.HasStudentInputtedOpenCodeAsync(roundId, studentId);
+
+            if (!hasInputtedCode)
+            {
+                // Validate open code
+                await ValidateOpenCode(roundId, openCode);
+
+                // Mark that student has inputted the code
+                await _configService.MarkStudentOpenCodeInputtedAsync(roundId, studentId);
+            }
+        }
+
+        /// <summary>
+        /// Validates pagination parameters
+        /// </summary>
+        private void ValidatePaginationParameters(int pageNumber, int pageSize)
+        {
+            if (pageNumber < 1 || pageSize < 1)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Page number and page size must be greater than or equal to 1.");
+            }
+        }
+
+        /// <summary>
+        /// Builds base round query with necessary includes
+        /// </summary>
+        private IQueryable<Round> BuildBaseRoundQuery(IGenericRepository<Round> roundRepo)
+        {
+            return roundRepo.Entities
+                .Where(r => !r.DeletedAt.HasValue)
+                .Include(r => r.Contest)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .Include(r => r.MainRound);
+        }
+
+        /// <summary>
+        /// Applies search filters to round query
+        /// </summary>
+        private IQueryable<Round> ApplyRoundSearchFilters(
+            IQueryable<Round> query,
+            Guid? idSearch,
+            Guid? contestIdSearch,
+            string? roundNameSearch,
+            string? contestNameSearch,
+            DateTime? startDate,
+            DateTime? endDate)
+        {
+            if (idSearch.HasValue)
+            {
+                query = query.Where(r => r.RoundId == idSearch.Value);
+            }
+
+            if (contestIdSearch.HasValue)
+            {
+                query = query.Where(r => r.ContestId == contestIdSearch.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(roundNameSearch))
+            {
+                query = query.Where(r => r.Name.Contains(roundNameSearch));
+            }
+
+            if (!string.IsNullOrWhiteSpace(contestNameSearch))
+            {
+                query = query.Where(r => r.Contest.Name.Contains(contestNameSearch));
+            }
+
+            if (startDate.HasValue)
+            {
+                query = query.Where(r => r.Start >= startDate.Value);
+            }
+
+            if (endDate.HasValue)
+            {
+                query = query.Where(r => r.End <= endDate.Value);
+            }
+
+            return query;
+        }
+
+        /// <summary>
+        /// Loads time limit configurations for rounds
+        /// </summary>
+        private async Task<Dictionary<string, Config>> LoadTimeLimitConfigurationsAsync(IReadOnlyCollection<Round> rounds)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
+            List<string> tlKeys = roundIds.Select(ConfigKeys.RoundTimeLimitSeconds).ToList();
+
+            List<Config> tlConfigs = await configRepo.Entities
+                .Where(c => tlKeys.Contains(c.Key) && c.Scope == SCOPE_CONTEST && c.DeletedAt == null)
+                .ToListAsync();
+
+            return tlConfigs.ToDictionary(c => c.Key);
+        }
+
+        /// <summary>
+        /// Maps round entities to DTOs
+        /// </summary>
+        private IReadOnlyCollection<GetRoundDTO> MapRoundsToDTO(
+            IReadOnlyCollection<Round> rounds,
+            Dictionary<string, Config> timeLimitLookup)
+        {
+            return rounds.Select(item =>
+            {
+                GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(item);
+
+                roundDTO.ContestName = item.Contest?.Name ?? "N/A";
+                roundDTO.RoundName = item.Name;
+                roundDTO.Start = item.Start;
+                roundDTO.End = item.End;
+                roundDTO.IsRetakeRound = item.IsRetakeRound;
+                roundDTO.MainRoundId = item.MainRoundId;
+
+                // Map time limit from config
+                string tlKey = ConfigKeys.RoundTimeLimitSeconds(item.RoundId);
+                if (timeLimitLookup.TryGetValue(tlKey, out Config? tlConfig) &&
+                    int.TryParse(tlConfig.Value, out int secs))
+                {
+                    roundDTO.TimeLimitSeconds = secs;
+                }
+
+                // Map problem or MCQ test
+                MapRoundContent(roundDTO, item);
+
+                return roundDTO;
+            }).ToList();
+        }
+
+        /// <summary>
+        /// Gets round for deletion with related entities
+        /// </summary>
+        private async Task<Round> GetRoundForDeletionAsync(IGenericRepository<Round> roundRepo, Guid id)
+        {
+            Round? round = await roundRepo.Entities
+                .Where(r => r.RoundId == id)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync();
+
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND, "Round not found.");
+            }
+
+            return round;
+        }
+
+        /// <summary>
+        /// Deletes round content (problem or MCQ test)
+        /// </summary>
+        private async Task DeleteRoundContentAsync(Round round)
+        {
+            // Delete related Problem
+            if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
+            {
+                await _problemService.DeleteProblemAsync(round.Problem.ProblemId);
+            }
+
+            // Delete related McqTest
+            if (round.McqTest != null && !round.McqTest.DeletedAt.HasValue)
+            {
+                await _mcqTestService.DeleteMcqTestAsync(round.McqTest.TestId);
+            }
+        }
+
+        /// <summary>
+        /// Deletes round configurations (time limit, rank cutoff, distribution status)
+        /// </summary>
+        private async Task DeleteRoundConfigurationsAsync(Guid roundId)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            // Delete time limit config
+            await DeleteConfigAsync(configRepo, ConfigKeys.RoundTimeLimitSeconds(roundId));
+
+            // Delete rank cutoff config
+            await DeleteConfigAsync(configRepo, ConfigKeys.RoundRankCutoff(roundId));
+
+            // Delete distribution status config
+            await _configService.ResetDistributionStatusAsync(roundId);
+        }
+
+        /// <summary>
+        /// Deletes a configuration entry
+        /// </summary>
+        private async Task DeleteConfigAsync(IGenericRepository<Config> configRepo, string key)
+        {
+            Config? config = await configRepo.Entities
+                .FirstOrDefaultAsync(c => c.Key == key && c.Scope == SCOPE_CONTEST);
+
+            if (config != null)
+            {
+                config.DeletedAt = DateTime.UtcNow;
+                await configRepo.UpdateAsync(config);
+            }
+        }
+
+        /// <summary>
+        /// Performs post-deletion operations (logging and notifications)
+        /// </summary>
+        private async Task PerformPostDeleteRoundOperationsAsync(Guid roundId, Guid contestId, string roundName)
+        {
+            var actorId = GetCurrentUserGuidOrThrow();
+
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundDelete,
+                TargetTypes.Round,
+                roundId.ToString());
+
+            await SafeNotifyContestParticipantsAsync(contestId,
+                NotificationTypes.RoundDeleted,
+                new
+                {
+                    contestId = contestId,
+                    roundId = roundId,
+                    name = roundName,
+                    targetType = TargetTypes.Round,
+                    targetId = roundId.ToString(),
+                    message = $"Round '{roundName}' has deleted."
+                });
         }
 
     }
