@@ -10,6 +10,8 @@ namespace Repository.DTOs.ProblemDTOs
 
         public string? Type { get; set; }
 
+        public string? MockTestUrl { get; set; }
+
         public DateTime CreatedAt { get; set; }
     }
 }
