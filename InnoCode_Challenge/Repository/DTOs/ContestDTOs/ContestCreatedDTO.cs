@@ -16,6 +16,9 @@
         public int TeamMembersMax { get; set; }
         public int TeamMembersMin { get; set; }
         public int? TeamLimitMax { get; set; }
+        public int AppealSubmitDays { get; set; }
+        public int AppealReviewDays { get; set; }
+        public int JudgeRescoreDays { get; set; }
         public string? RewardsText { get; set; }
     }
 }

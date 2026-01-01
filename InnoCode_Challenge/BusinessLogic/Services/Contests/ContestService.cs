@@ -51,6 +51,9 @@ namespace BusinessLogic.Services.Contests
         private const string ROUND_TYPE_AUTO_EVALUATION = "Auto Evaluation";
         private const string UNKNOWN_ORGANIZER = "Unknown Organizer";
         private const string UNKNOWN_ROUND = "Unknown Round";
+        private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
+        private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
+        private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
 
         public ContestService(
             IMapper mapper,
@@ -343,6 +346,7 @@ namespace BusinessLogic.Services.Contests
 
                 // Configure contest settings
                 var configValues = await ConfigureNewContestAsync(entity.ContestId, dto, configRepo);
+                var policyValues = await ConfigureContestPoliciesAsync(entity.ContestId, dto.AppealSubmitDays, dto.AppealReviewDays, dto.JudgeRescoreDays, configRepo);
 
                 // Save configurations
                 await _unitOfWork.SaveAsync();
@@ -352,7 +356,7 @@ namespace BusinessLogic.Services.Contests
                 await PerformPostCreateOperationsAsync(entity);
 
                 // Map and return result
-                return MapToContestCreatedDTO(entity, dto, imageUrl, configValues);
+                return MapToContestCreatedDTO(entity, dto, imageUrl, configValues, policyValues);
             }
             catch (Exception ex)
             {
@@ -403,6 +407,8 @@ namespace BusinessLogic.Services.Contests
 
             // Extract round IDs
             List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
+
+            await ValidateContestEndAgainstDeadlinesAsync(contest, rounds, configRepo, result);
 
             // Validate time limits
             await ValidateRoundTimeLimitsAsync(configRepo, rounds, roundIds, result);
@@ -490,6 +496,33 @@ namespace BusinessLogic.Services.Contests
             {
                 string roundNames = string.Join(", ", roundsWithoutTimeLimit.Select(r => $"'{r.Name}'"));
                 result.Missing.Add($"Round(s) {roundNames} missing time limit configuration.");
+            }
+        }
+
+        private async Task ValidateContestEndAgainstDeadlinesAsync(
+            Contest contest,
+            List<Round> rounds,
+            IGenericRepository<Config> configRepo,
+            PublishReadinessDTO result)
+        {
+            if (!contest.End.HasValue)
+                return;
+
+            DateTime lastRoundEnd = rounds.Max(r => r.End);
+
+            int submitDays = await GetContestPolicyDaysAsync(
+                contest.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                contest.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+            int rescoreDays = await GetContestPolicyDaysAsync(
+                contest.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+            DateTime requiredEnd = lastRoundEnd.AddDays(submitDays + reviewDays + rescoreDays);
+
+            if (contest.End.Value < requiredEnd)
+            {
+                result.Missing.Add(
+                    $"Contest end is too early to cover deadlines. Suggested end >= {requiredEnd:yyyy-MM-dd HH:mm:ss} UTC.");
             }
         }
 
@@ -1139,6 +1172,18 @@ namespace BusinessLogic.Services.Contests
             string? value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
                                            .Select(c => c.Value).FirstOrDefaultAsync();
             return int.TryParse(value, out int n) ? n : @default;
+        }
+
+        private static async Task<int> GetContestPolicyDaysAsync(
+            Guid contestId,
+            string policyKey,
+            int defaultDays,
+            IGenericRepository<Config> repo)
+        {
+            string key = ConfigKeys.ContestPolicy(contestId, policyKey);
+            string? value = await repo.Entities.Where(c => c.Key == key && c.DeletedAt == null)
+                                               .Select(c => c.Value).FirstOrDefaultAsync();
+            return int.TryParse(value, out int n) && n >= 0 ? n : defaultDays;
         }
 
         private static async Task<int?> GetGlobalNullableIntAsync(IGenericRepository<Config> repo, string key)
@@ -2460,6 +2505,28 @@ namespace BusinessLogic.Services.Contests
             {
                 contestDTO.RewardsText = rewardsConfig.Value;
             }
+
+            contestDTO.AppealSubmitDays = GetPolicyDaysFromLookup(
+                configLookup, contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS);
+            contestDTO.AppealReviewDays = GetPolicyDaysFromLookup(
+                configLookup, contestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS);
+            contestDTO.JudgeRescoreDays = GetPolicyDaysFromLookup(
+                configLookup, contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS);
+        }
+
+        private int GetPolicyDaysFromLookup(
+            ILookup<string, Config> configLookup,
+            Guid contestId,
+            string policyKey,
+            int defaultDays)
+        {
+            string key = ConfigKeys.ContestPolicy(contestId, policyKey);
+            Config? config = configLookup[key].FirstOrDefault();
+            if (config != null && int.TryParse(config.Value, out int parsed) && parsed >= 0)
+            {
+                return parsed;
+            }
+            return defaultDays;
         }
 
         /// <summary>
@@ -2480,6 +2547,19 @@ namespace BusinessLogic.Services.Contests
             ValidateContestYear(year);
             ValidateContestDates(start, end, regStart, regEnd);
             ValidateTeamConfiguration(teamMembersMin, teamMembersMax, teamLimitMax);
+        }
+
+        private void ValidatePolicyDays(params int?[] days)
+        {
+            foreach (int? day in days)
+            {
+                if (day.HasValue && day.Value < 0)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Policy day values must be non-negative.");
+                }
+            }
         }
 
         /// <summary>
@@ -2813,6 +2893,11 @@ namespace BusinessLogic.Services.Contests
                 contestDTO.TeamMembersMin,
                 contestDTO.TeamMembersMax,
                 contestDTO.TeamLimitMax);
+
+            ValidatePolicyDays(
+                contestDTO.AppealSubmitDays,
+                contestDTO.AppealReviewDays,
+                contestDTO.JudgeRescoreDays);
         }
 
         /// <summary>
@@ -2951,6 +3036,18 @@ namespace BusinessLogic.Services.Contests
             // Set rewards text
             if (!string.IsNullOrWhiteSpace(contestDTO.RewardsText))
                 await UpsertConfigAsync(configRepo, ConfigKeys.ContestRewards(contestId), contestDTO.RewardsText!.Trim());
+
+            // Appeal / judge policy (keep existing if not provided)
+            int submitDays = contestDTO.AppealSubmitDays
+                             ?? await GetContestPolicyDaysAsync(contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = contestDTO.AppealReviewDays
+                             ?? await GetContestPolicyDaysAsync(contestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+            int rescoreDays = contestDTO.JudgeRescoreDays
+                             ?? await GetContestPolicyDaysAsync(contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.AppealSubmitDays), submitDays.ToString());
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.AppealReviewDays), reviewDays.ToString());
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.JudgeRescoreDays), rescoreDays.ToString());
         }
 
         /// <summary>
@@ -3027,6 +3124,11 @@ namespace BusinessLogic.Services.Contests
                 dto.TeamMembersMin,
                 dto.TeamMembersMax,
                 dto.TeamLimitMax);
+
+            ValidatePolicyDays(
+                dto.AppealSubmitDays,
+                dto.AppealReviewDays,
+                dto.JudgeRescoreDays);
         }
 
         /// <summary>
@@ -3134,6 +3236,24 @@ namespace BusinessLogic.Services.Contests
             return (teamMembersMin, teamMembersMax, teamLimitMax);
         }
 
+        private async Task<(int AppealSubmitDays, int AppealReviewDays, int JudgeRescoreDays)> ConfigureContestPoliciesAsync(
+            Guid contestId,
+            int? appealSubmitDays,
+            int? appealReviewDays,
+            int? judgeRescoreDays,
+            IGenericRepository<Config> configRepo)
+        {
+            int submitDays = appealSubmitDays ?? DEFAULT_APPEAL_SUBMIT_DAYS;
+            int reviewDays = appealReviewDays ?? DEFAULT_APPEAL_REVIEW_DAYS;
+            int rescoreDays = judgeRescoreDays ?? DEFAULT_JUDGE_RESCORE_DAYS;
+
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.AppealSubmitDays), submitDays.ToString());
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.AppealReviewDays), reviewDays.ToString());
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestPolicy(contestId, ContestPolicyKeys.JudgeRescoreDays), rescoreDays.ToString());
+
+            return (submitDays, reviewDays, rescoreDays);
+        }
+
         /// <summary>
         /// Performs post-create operations
         /// </summary>
@@ -3156,7 +3276,8 @@ namespace BusinessLogic.Services.Contests
             Contest entity,
             CreateContestAdvancedDTO dto,
             string imageUrl,
-            (int TeamMembersMin, int TeamMembersMax, int? TeamLimitMax) configValues)
+            (int TeamMembersMin, int TeamMembersMax, int? TeamLimitMax) configValues,
+            (int AppealSubmitDays, int AppealReviewDays, int JudgeRescoreDays) policyValues)
         {
             ContestCreatedDTO created = _mapper.Map<ContestCreatedDTO>(entity);
             created.TeamMembersMin = configValues.TeamMembersMin;
@@ -3169,6 +3290,9 @@ namespace BusinessLogic.Services.Contests
             created.End = entity.End;
             created.CreatedAt = entity.CreatedAt;
             created.imageUrl = imageUrl;
+            created.AppealSubmitDays = policyValues.AppealSubmitDays;
+            created.AppealReviewDays = policyValues.AppealReviewDays;
+            created.JudgeRescoreDays = policyValues.JudgeRescoreDays;
 
             return created;
         }
