@@ -600,6 +600,19 @@ namespace BusinessLogic.Services.Contests
                         "Main round not found for retake.");
                 }
 
+                // Ensure no other rounds are scheduled between main round end and retake start
+                bool hasInterveningRound = existingRounds
+                    .Any(r => r.RoundId != mainRound.RoundId
+                              && r.RoundId != (currentRound?.RoundId ?? Guid.Empty)
+                              && r.Start < roundDTO.Start
+                              && r.Start >= mainRound.End);
+
+                if (hasInterveningRound)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                        "Retake round must be the immediate next round after its main round (no rounds in between).");
+                }
+
                 bool mainIsManual = IsManualRound(mainRound);
                 int submitDays = await GetContestPolicyDaysAsync(
                     contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
