@@ -1050,7 +1050,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("name");
             entity.Property(e => e.RankCutoff)
                 .HasDefaultValue(0)
-                .HasColumnName("rankCutoff");
+                .HasColumnName("rank_cutoff");
             entity.Property(e => e.Start)
                 .HasPrecision(0)
                 .HasColumnName("start");
