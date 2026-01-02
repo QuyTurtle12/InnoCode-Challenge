@@ -94,6 +94,13 @@ namespace BusinessLogic.Services.Appeals
                         "Round not found.");
                 }
 
+                if (round.IsRetakeRound)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeals are not allowed for retake rounds.");
+                }
+
                 DateTime now = DateTime.UtcNow;
                 DateTime submitDeadline = await GetAppealSubmitDeadlineUtcAsync(round, configRepo);
                 if (now > submitDeadline)
@@ -354,6 +361,13 @@ namespace BusinessLogic.Services.Appeals
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         "Appeal not found.");
+                }
+
+                if (appeal.Target.IsRetakeRound)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeals are not allowed for retake rounds.");
                 }
 
                 // Get round information

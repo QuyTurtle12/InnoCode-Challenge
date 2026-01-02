@@ -201,7 +201,8 @@ namespace Api.IntegrationTests.Appeals
                 { new StringContent(roundId.ToString()), "RoundId" },
                 { new StringContent(teamId.ToString()), "TeamId" },
                 { new StringContent(studentId.ToString()), "StudentId" },
-                { new StringContent(reason), "Reason" }
+                { new StringContent(reason), "Reason" },
+                { new StringContent(AppealResolutionEnum.Rescore.ToString()), "AppealResolution" }
             };
 
             return content;

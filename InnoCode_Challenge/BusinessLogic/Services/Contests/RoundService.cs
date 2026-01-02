@@ -736,6 +736,11 @@ namespace BusinessLogic.Services.Contests
                 // Distribute submissions equally using round-robin algorithm
                 int judgeIndex = 0;
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                int judgeDays = await GetContestPolicyDaysAsync(
+                    round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+                DateTime judgeDeadline = round.End.AddDays(judgeDays);
 
                 // Assign submissions to judges
                 foreach (Submission submission in pendingSubmissions)
@@ -745,6 +750,27 @@ namespace BusinessLogic.Services.Contests
                     submission.JudgedBy = assignedJudge.UserId.ToString();
 
                     submissionRepo.Update(submission);
+
+                    // Set judge deadline for this submission
+                    string key = ConfigKeys.JudgeSubmissionDeadline(assignedJudge.UserId, submission.SubmissionId);
+                    Config? existing = await configRepo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+                    if (existing == null)
+                    {
+                        await configRepo.InsertAsync(new Config
+                        {
+                            Key = key,
+                            Value = judgeDeadline.ToString("o"),
+                            Scope = SCOPE_CONTEST,
+                            UpdatedAt = DateTime.UtcNow
+                        });
+                    }
+                    else
+                    {
+                        existing.Value = judgeDeadline.ToString("o");
+                        existing.Scope = SCOPE_CONTEST;
+                        existing.UpdatedAt = DateTime.UtcNow;
+                        await configRepo.UpdateAsync(existing);
+                    }
 
                     // Move to next judge
                     judgeIndex = (judgeIndex + 1) % activeJudges.Count;
