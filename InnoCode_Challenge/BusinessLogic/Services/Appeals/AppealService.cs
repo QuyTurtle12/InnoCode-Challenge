@@ -3,6 +3,7 @@ using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
+using BusinessLogic.Helpers;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -278,6 +279,9 @@ namespace BusinessLogic.Services.Appeals
                 }
 
                 _unitOfWork.CommitTransaction();
+
+                // Attempt to finalize the round if all work is done
+                await RoundFinalizer.TryFinalizeAsync(_unitOfWork, round.RoundId);
 
                 if (Guid.TryParse(currentUserId, out var requesterUserId))
                 {
@@ -619,6 +623,9 @@ namespace BusinessLogic.Services.Appeals
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+
+                // Attempt to finalize the round if all work is done
+                await RoundFinalizer.TryFinalizeAsync(_unitOfWork, appeal.TargetId);
 
                 string? reviewerId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (Guid.TryParse(reviewerId, out var reviewerUserId))
