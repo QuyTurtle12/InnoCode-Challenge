@@ -2472,7 +2472,51 @@ namespace BusinessLogic.Services.Contests
 
         public async Task TryFinalizeRoundAsync(Guid roundId)
         {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+            if (round == null) return;
+
+            DateTime finalizeNotBefore = await GetFinalizeNotBeforeAsync(roundId);
+
+            if (DateTime.UtcNow < finalizeNotBefore)
+                return;
+
             await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
+        }
+
+        public async Task<DateTime> GetFinalizeNotBeforeAsync(Guid roundId)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? round = await roundRepo.Entities
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+            if (round == null)
+                return DateTime.UtcNow;
+
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+
+            bool isManual = IsManualRound(round);
+
+            if (round.IsRetakeRound)
+            {
+                return isManual ? round.End.AddDays(judgeDays) : round.End;
+            }
+
+            return isManual
+                ? round.End.AddDays(judgeDays * 2 + submitDays + reviewDays)
+                : round.End.AddDays(submitDays + reviewDays);
         }
 
         private static async Task UpsertDeadlineAsync(IGenericRepository<Config> configRepo, string key, DateTime value, string scope)

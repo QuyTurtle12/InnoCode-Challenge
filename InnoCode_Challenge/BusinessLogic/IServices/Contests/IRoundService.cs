@@ -20,6 +20,7 @@ namespace BusinessLogic.IServices.Contests
         Task<string> GetOpenCode(Guid roundId);
         Task<GetRoundDTO> StartRoundNowAsync(Guid roundId);
         Task<GetRoundDTO> EndRoundNowAsync(Guid roundId);
+        Task<DateTime> GetFinalizeNotBeforeAsync(Guid roundId);
         Task FastForwardAppealSubmitDeadlineAsync(Guid roundId);
         Task FastForwardAppealReviewDeadlineAsync(Guid roundId);
         Task FastForwardJudgeDeadlineAsync(Guid roundId);

@@ -457,9 +457,6 @@ namespace BusinessLogic.Services.Submissions
 
                 _unitOfWork.CommitTransaction();
 
-                // Attempt to finalize round if all work is done
-                await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
-
                 return result;
             }
             catch (Exception ex)
@@ -671,8 +668,6 @@ namespace BusinessLogic.Services.Submissions
                 await CheckPlagiarismForArchiveAsync(submission, file);
 
                 _unitOfWork.CommitTransaction();
-
-                await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
 
                 return submission.SubmissionId;
             }
@@ -980,8 +975,6 @@ namespace BusinessLogic.Services.Submissions
                 await UpdateLeaderboardAfterRubricEvaluationAsync(submission);
 
                 _unitOfWork.CommitTransaction();
-
-                await RoundFinalizer.TryFinalizeAsync(_unitOfWork, submission.Problem.RoundId);
 
                 return new RubricEvaluationResultDTO
                 {

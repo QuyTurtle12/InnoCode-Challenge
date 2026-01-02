@@ -115,13 +115,14 @@ namespace Api.IntegrationTests.Appeals
             };
 
             var roundId = Guid.NewGuid();
+            var roundEnd = now.AddMinutes(-5);
             var round = new Round
             {
                 RoundId = roundId,
                 ContestId = contestId,
                 Name = "Round 1",
-                Start = now.AddHours(-1),
-                End = now.AddHours(1),
+                Start = now.AddHours(-2),
+                End = roundEnd,
                 Status = RoundStatusEnum.Opened.ToString(),
                 IsRetakeRound = false
             };
@@ -164,6 +165,24 @@ namespace Api.IntegrationTests.Appeals
             db.Problems.Add(problem);
             db.Teams.Add(team);
             db.TeamMembers.Add(teamMember);
+            db.SaveChanges();
+
+            // Keep appeal windows open for testing
+            db.Configs.AddRange(
+                new Config
+                {
+                    Key = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId),
+                    Value = now.AddMinutes(30).ToString("o"),
+                    Scope = "contest",
+                    UpdatedAt = now
+                },
+                new Config
+                {
+                    Key = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId),
+                    Value = now.AddMinutes(60).ToString("o"),
+                    Scope = "contest",
+                    UpdatedAt = now
+                });
             db.SaveChanges();
 
             return new AppealSeed(
