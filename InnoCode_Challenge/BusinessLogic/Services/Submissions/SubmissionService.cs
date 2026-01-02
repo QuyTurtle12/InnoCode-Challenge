@@ -97,7 +97,8 @@ namespace BusinessLogic.Services.Submissions
             IConfigService configService,
             IMockTestExecutor mockTestExecutor,
             INotificationService notificationService,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            ILogger<SubmissionService> logger)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -109,6 +110,7 @@ namespace BusinessLogic.Services.Submissions
             _mockTestExecutor = mockTestExecutor;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _logger = logger;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)

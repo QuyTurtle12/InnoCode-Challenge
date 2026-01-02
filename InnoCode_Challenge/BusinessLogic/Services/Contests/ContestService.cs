@@ -1426,7 +1426,7 @@ namespace BusinessLogic.Services.Contests
                 .ToListAsync();
 
             var mentorIds = await teamRepo.Entities
-                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != null)
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != Guid.Empty)
                 .Select(t => t.Mentor.UserId)
                 .ToListAsync();
 
