@@ -2821,11 +2821,66 @@ namespace BusinessLogic.Services.Submissions
             Round? prevRound = await FindPreviousMainRoundAsync(currentRound);
             if (prevRound == null) return;
 
+            // If retake exists, enforce only after retake finalized; otherwise after main finalized
+            Round? retakeRound = await FindRetakeRoundAsync(prevRound);
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            if (retakeRound != null)
+            {
+                bool retakeFinalized = await IsRoundFinalizedAsync(retakeRound.RoundId, submissionRepo, appealRepo);
+                if (!retakeFinalized) return;
+                prevRound = retakeRound;
+            }
+            else
+            {
+                bool prevFinalized = await IsRoundFinalizedAsync(prevRound.RoundId, submissionRepo, appealRepo);
+                if (!prevFinalized) return;
+            }
+
             List<Guid> topTeamIds = await GetTopTeamsByRoundAsync(currentRound.ContestId, prevRound.RoundId, cutoff);
 
             if (!topTeamIds.Contains(teamId))
                 throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
                     $"Your team is not in Top-{cutoff} of the previous round.");
+        }
+
+        private async Task<Round?> FindRetakeRoundAsync(Round mainRound)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            return await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.IsRetakeRound
+                            && r.MainRoundId == mainRound.RoundId
+                            && r.DeletedAt == null)
+                .OrderBy(r => r.Start)
+                .FirstOrDefaultAsync();
+        }
+
+        private static async Task<bool> IsRoundFinalizedAsync(
+            Guid roundId,
+            IGenericRepository<Submission> submissionRepo,
+            IGenericRepository<Appeal> appealRepo)
+        {
+            bool hasPendingSubs = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s =>
+                    s.DeletedAt == null
+                    && s.Problem != null
+                    && s.Problem.RoundId == roundId
+                    && s.Status == SubmissionStatusEnum.Pending.ToString());
+
+            if (hasPendingSubs) return false;
+
+            bool hasOpenAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a =>
+                    a.DeletedAt == null
+                    && a.TargetId == roundId
+                    && (a.State != AppealStateEnum.Closed.ToString()
+                        || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            return !hasOpenAppeals;
         }
 
         public async Task<GetSubmissionDTO> GetAutoTestResultsBySubmissionIdAsync(Guid submissionId)

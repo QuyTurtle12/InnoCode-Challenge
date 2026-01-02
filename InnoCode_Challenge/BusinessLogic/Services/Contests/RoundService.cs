@@ -1316,6 +1316,45 @@ namespace BusinessLogic.Services.Contests
                 .FirstOrDefaultAsync();
         }
 
+        private async Task<Round?> FindRetakeRoundAsync(Guid mainRoundId)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            return await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.MainRoundId == mainRoundId
+                            && r.IsRetakeRound
+                            && r.DeletedAt == null)
+                .OrderBy(r => r.Start)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync();
+        }
+
+        private async Task<bool> IsRoundFinalizedAsync(Guid roundId)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            bool hasPendingSubs = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s => s.DeletedAt == null
+                               && s.Problem != null
+                               && s.Problem.RoundId == roundId
+                               && s.Status == SUBMISSION_STATUS_PENDING);
+
+            if (hasPendingSubs) return false;
+
+            bool hasOpenAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a => a.DeletedAt == null
+                               && a.TargetId == roundId
+                               && (a.State != APPEAL_STATE_CLOSED
+                                   || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            return !hasOpenAppeals;
+        }
+
         private async Task EnforceRoundRankCutoffForStudentAsync(Round currentRound, Guid studentId)
         {
             if (currentRound.IsRetakeRound) return; // retake handled by appeal logic
@@ -1325,6 +1364,20 @@ namespace BusinessLogic.Services.Contests
 
             Round? prevRound = await FindPreviousMainRoundAsync(currentRound);
             if (prevRound == null) return; // first main round, next
+
+            // If retake exists for prevRound, enforce only after retake finalized; otherwise after main finalized
+            Round? retakeRound = await FindRetakeRoundAsync(prevRound.RoundId);
+            if (retakeRound != null)
+            {
+                bool retakeFinalized = await IsRoundFinalizedAsync(retakeRound.RoundId);
+                if (!retakeFinalized) return; // wait until retake done
+                prevRound = retakeRound;
+            }
+            else
+            {
+                bool prevFinalized = await IsRoundFinalizedAsync(prevRound.RoundId);
+                if (!prevFinalized) return; // wait until main round done
+            }
 
             // Find student's team in this contest
             var teamRepo = _unitOfWork.GetRepository<Team>();
