@@ -2177,6 +2177,9 @@ namespace BusinessLogic.Services.Submissions
                 entry.SnapshotAt = DateTime.UtcNow;
                 await leaderboardRepo.UpdateAsync(entry);
             }
+
+            // Persist elimination and score reset so downstream reads see the change
+            await _unitOfWork.SaveAsync();
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
