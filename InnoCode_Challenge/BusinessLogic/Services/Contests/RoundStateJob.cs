@@ -67,7 +67,7 @@ namespace BusinessLogic.Services.Contests
                     try
                     {
 
-                        var notif = scope.ServiceProvider.GetRequiredService<INotificationService>(); // [NEW]
+                        var notif = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
                         async Task<List<Guid>> GetParticipantIdsAsync()
                         {

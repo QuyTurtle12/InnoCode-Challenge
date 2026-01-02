@@ -966,7 +966,7 @@ namespace BusinessLogic.Services.Submissions
                 string judgeEmail = await GetCurrentJudgeEmailAsync();
 
                 // Update submission with results
-                await UpdateSubmissionWithRubricScoreAsync(submission, totalScore, judgeEmail);
+                await UpdateSubmissionWithRubricScoreAsync(submission, totalScore);
 
                 // Update leaderboard
                 await UpdateLeaderboardAfterRubricEvaluationAsync(submission);
@@ -1059,12 +1059,12 @@ namespace BusinessLogic.Services.Submissions
                     })
                     .ToList();
 
-                //// Get judge email
-                //IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
-                //string? judgeEmail = await userRepo.Entities
-                //    .Where(u => u.UserId == Guid.Parse(submission.JudgedBy!))
-                //    .Select(u => u.Email)
-                //    .FirstOrDefaultAsync() ?? submission.JudgedBy;
+                // Get judge email
+                IGenericRepository<User> userRepo = _unitOfWork.GetRepository<User>();
+                string? judgeEmail = await userRepo.Entities
+                    .Where(u => u.UserId == Guid.Parse(submission.JudgedBy!))
+                    .Select(u => u.Email)
+                    .FirstOrDefaultAsync() ?? submission.JudgedBy;
 
                 RubricEvaluationResultDTO result = new RubricEvaluationResultDTO
                 {
@@ -1072,8 +1072,7 @@ namespace BusinessLogic.Services.Submissions
                     StudentName = submission.SubmittedByStudent?.User.Fullname ?? "Unknown",
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
-                    //JudgedBy = judgeEmail,
-                    JudgedBy = "unknown judge",
+                    JudgedBy = judgeEmail,
                     TotalScore = submission.Score,
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
@@ -1330,12 +1329,12 @@ namespace BusinessLogic.Services.Submissions
 
                 // Map to DTO
                 GetSubmissionDTO dto = _mapper.Map<GetSubmissionDTO>(submission);
-                dto.TeamName = submission!.Team?.Name ?? string.Empty;
-                dto.SubmittedByStudentName = submission.SubmittedByStudent?.User.Fullname ?? string.Empty;
+                dto.TeamName = submission?.Team?.Name ?? string.Empty;
+                dto.SubmittedByStudentName = submission?.SubmittedByStudent?.User.Fullname ?? string.Empty;
                 dto.submissionAttemptNumber = attemptNumber;
 
                 // Map test case details to DTOs
-                if (submission.SubmissionDetails != null)
+                if (submission?.SubmissionDetails != null)
                 {
                     dto.Details = submission.SubmissionDetails
                         .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
@@ -1347,7 +1346,7 @@ namespace BusinessLogic.Services.Submissions
                 }
 
                 // Map Artifacts to DTOs
-                if (submission.SubmissionArtifacts != null)
+                if (submission?.SubmissionArtifacts != null)
                 {
                     dto.Artifacts = submission.SubmissionArtifacts
                         .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
@@ -3767,14 +3766,12 @@ namespace BusinessLogic.Services.Submissions
         /// </summary>
         private async Task UpdateSubmissionWithRubricScoreAsync(
             Submission submission,
-            double totalScore,
-            string judgeEmail)
+            double totalScore)
         {
             IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
             submission.Score = Math.Round(totalScore, 2);
             submission.Status = SUBMISSION_STATUS_FINISHED;
-            submission.JudgedBy = judgeEmail;
 
             await submissionRepo.UpdateAsync(submission);
             await _unitOfWork.SaveAsync();
