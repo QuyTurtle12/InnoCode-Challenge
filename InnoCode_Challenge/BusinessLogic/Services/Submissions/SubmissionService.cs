@@ -50,6 +50,7 @@ namespace BusinessLogic.Services.Submissions
         private const string CODE_ARTIFACT_TYPE = "code";
         private const string AUTO_TEST_SUBMISSION_FOLDER = "code-submissions";
         private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
+        private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
         private const string SCOPE_CONTEST = "contest";
 
         // Submission status enum values
@@ -948,6 +949,8 @@ namespace BusinessLogic.Services.Submissions
 
                 // Get and validate submission
                 Submission submission = await GetSubmissionForRubricEvaluationAsync(submissionId);
+                string judgeUserId = GetCurrentUserIdOrThrow();
+                await EnsureJudgeDeadlineAsync(submission, judgeUserId);
 
                 // Get rubric criteria
                 List<TestCase> rubricCriteria = await GetRubricCriteriaAsync(submission.ProblemId);
@@ -3707,6 +3710,56 @@ namespace BusinessLogic.Services.Submissions
             User? user = await userRepo.GetByIdAsync(Guid.Parse(userId));
 
             return user?.Email ?? "Unknown Judge";
+        }
+
+        private async Task EnsureJudgeDeadlineAsync(Submission submission, string judgeUserId)
+        {
+            if (!Guid.TryParse(judgeUserId, out var judgeId))
+                return;
+
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+            string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, submission.SubmissionId);
+
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            DateTime? deadline = null;
+            if (DateTime.TryParse(value, out DateTime parsed))
+                deadline = parsed;
+
+            if (!deadline.HasValue)
+            {
+                int rescoreDays = await GetContestPolicyDaysAsync(
+                    submission.Problem.Round.ContestId,
+                    ContestPolicyKeys.JudgeRescoreDays,
+                    DEFAULT_JUDGE_RESCORE_DAYS,
+                    configRepo);
+                deadline = submission.Problem.Round.End.AddDays(rescoreDays);
+            }
+
+            if (DateTime.UtcNow > deadline.Value)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    "JUDGE_DEADLINE_PASSED",
+                    "Judge scoring deadline has passed.");
+            }
+        }
+
+        private static async Task<int> GetContestPolicyDaysAsync(
+            Guid contestId,
+            string policyKey,
+            int defaultDays,
+            IGenericRepository<Config> configRepo)
+        {
+            string key = ConfigKeys.ContestPolicy(contestId, policyKey);
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return int.TryParse(value, out int days) && days >= 0 ? days : defaultDays;
         }
 
         /// <summary>

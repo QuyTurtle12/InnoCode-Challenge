@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
@@ -28,6 +28,9 @@ namespace BusinessLogic.Services.Appeals
         private readonly IActivityLogWriter _logWriter;
 
         private const string APPEAL_EVIDENCE_FOLDER = "appeal_evidences";
+        private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
+        private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
+        private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
 
         // Constructor
         public AppealService(
@@ -73,6 +76,7 @@ namespace BusinessLogic.Services.Appeals
                 IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
                 IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
                 IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
                 IGenericRepository<AppealEvidence> evidenceRepo = _unitOfWork.GetRepository<AppealEvidence>();
 
                 // Validate round exists
@@ -88,6 +92,15 @@ namespace BusinessLogic.Services.Appeals
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         "Round not found.");
+                }
+
+                DateTime now = DateTime.UtcNow;
+                DateTime submitDeadline = await GetAppealSubmitDeadlineUtcAsync(round, configRepo);
+                if (now > submitDeadline)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        "APPEAL_SUBMIT_DEADLINE_PASSED",
+                        "Appeal submission deadline has passed.");
                 }
 
                 string contestStatus = round.Contest.Status ?? string.Empty;
@@ -306,6 +319,7 @@ namespace BusinessLogic.Services.Appeals
             {
                 // Get repositories
                 IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
                 // Get appeal
                 Appeal? appeal = await appealRepo.Entities
@@ -506,6 +520,7 @@ namespace BusinessLogic.Services.Appeals
                 }
 
                 IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
                 // Get appeal with related entities
                 Appeal? appeal = await appealRepo.Entities
@@ -525,6 +540,14 @@ namespace BusinessLogic.Services.Appeals
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         "Appeal not found.");
+                }
+
+                DateTime reviewDeadline = await GetAppealReviewDeadlineUtcAsync(appeal.Target, configRepo);
+                if (DateTime.UtcNow > reviewDeadline)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        "APPEAL_REVIEW_DEADLINE_PASSED",
+                        "Appeal review deadline has passed.");
                 }
 
                 // Check if already reviewed
@@ -794,6 +817,7 @@ namespace BusinessLogic.Services.Appeals
         {
             // Get the student's submission for this round
             IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
             Submission? submission = await submissionRepo.Entities
                 .Where(s => s.TeamId == appeal.TeamId
@@ -832,6 +856,8 @@ namespace BusinessLogic.Services.Appeals
                 submission.Score = 0;
 
                 await submissionRepo.UpdateAsync(submission);
+
+                await UpsertJudgeRescoreDeadlineAsync(appeal.Target.ContestId, newJudgeId, submission.SubmissionId, configRepo);
             }
         }
 
@@ -866,6 +892,118 @@ namespace BusinessLogic.Services.Appeals
             string extension = Path.GetExtension(file.FileName).ToLowerInvariant();
 
             return allowedExtensions.Contains(extension);
+        }
+
+        private async Task<DateTime> GetAppealSubmitDeadlineUtcAsync(Round round, IGenericRepository<Config> configRepo)
+        {
+            DateTime? deadline = await TryGetRoundDeadlineUtcAsync(
+                round.RoundId,
+                ConfigKeys.RoundAppealSubmitDeadlineUtc(round.RoundId),
+                configRepo);
+
+            if (deadline.HasValue)
+                return deadline.Value;
+
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            return round.End.AddDays(submitDays);
+        }
+
+        private async Task<DateTime> GetAppealReviewDeadlineUtcAsync(Round round, IGenericRepository<Config> configRepo)
+        {
+            DateTime? deadline = await TryGetRoundDeadlineUtcAsync(
+                round.RoundId,
+                ConfigKeys.RoundAppealReviewDeadlineUtc(round.RoundId),
+                configRepo);
+
+            if (deadline.HasValue)
+                return deadline.Value;
+
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+
+            return round.End.AddDays(submitDays + reviewDays);
+        }
+
+        private static async Task<DateTime?> TryGetRoundDeadlineUtcAsync(
+            Guid roundId,
+            string key,
+            IGenericRepository<Config> configRepo)
+        {
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (value == null)
+                return null;
+
+            if (DateTime.TryParse(
+                    value,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind,
+                    out DateTime deadline))
+            {
+                return deadline;
+            }
+
+            return null;
+        }
+
+        private static async Task<int> GetContestPolicyDaysAsync(
+            Guid contestId,
+            string policyKey,
+            int defaultDays,
+            IGenericRepository<Config> configRepo)
+        {
+            string key = ConfigKeys.ContestPolicy(contestId, policyKey);
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return int.TryParse(value, out int days) && days >= 0 ? days : defaultDays;
+        }
+
+        private async Task UpsertJudgeRescoreDeadlineAsync(
+            Guid contestId,
+            string judgeUserId,
+            Guid submissionId,
+            IGenericRepository<Config> configRepo)
+        {
+            if (!Guid.TryParse(judgeUserId, out var judgeId))
+                return;
+
+            int rescoreDays = await GetContestPolicyDaysAsync(
+                contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+            DateTime deadline = DateTime.UtcNow.AddDays(rescoreDays);
+            string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, submissionId);
+
+            Config? existing = await configRepo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+            if (existing == null)
+            {
+                await configRepo.InsertAsync(new Config
+                {
+                    Key = key,
+                    Value = deadline.ToString("o"),
+                    Scope = "submission",
+                    UpdatedAt = DateTime.UtcNow,
+                    DeletedAt = null
+                });
+            }
+            else
+            {
+                existing.Value = deadline.ToString("o");
+                existing.Scope = "submission";
+                existing.UpdatedAt = DateTime.UtcNow;
+                existing.DeletedAt = null;
+                configRepo.Update(existing);
+            }
+
+            await _unitOfWork.SaveAsync();
         }
     }
 }

@@ -20,8 +20,11 @@
         public static string ContestReport(Guid contestId) => $"contest:{contestId}:report";
         public static string ContestMentorReport(Guid contestId, Guid mentorId) => $"contest:{contestId}:mentor_report:{mentorId}";
         public static string JudgeSubmission(Guid judgeUserId, Guid submissionId) => $"judge:{judgeUserId}:submission:{submissionId}";
+        public static string JudgeSubmissionDeadline(Guid judgeUserId, Guid submissionId) => $"judge:{judgeUserId}:submission:{submissionId}:deadline_utc";
         public static string RoundSubmissionsDistributed(Guid roundId) => $"round:{roundId}:submissions_distributed";
         public static string RoundTimeLimitSeconds(Guid roundId) => $"contest:round:{roundId}:time_limit_seconds";
+        public static string RoundAppealSubmitDeadlineUtc(Guid roundId) => $"round:{roundId}:appeal_submit_deadline_utc";
+        public static string RoundAppealReviewDeadlineUtc(Guid roundId) => $"round:{roundId}:appeal_review_deadline_utc";
         public static string McqTestImportTemplate() => $"template:McqImportTemplate:mcq_test";
         public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
         public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";

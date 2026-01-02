@@ -18,6 +18,16 @@ namespace Repository.DTOs.ContestDTOs
         [Range(1, 10000)]
         public int? TeamLimitMax { get; set; }
 
+        // Appeal / judge policy (days)
+        [Range(0, 365)]
+        public int? AppealSubmitDays { get; set; }
+
+        [Range(0, 365)]
+        public int? AppealReviewDays { get; set; }
+
+        [Range(0, 365)]
+        public int? JudgeRescoreDays { get; set; }
+
         // Rewards information
         [MaxLength(4000)]
         public string? RewardsText { get; set; }

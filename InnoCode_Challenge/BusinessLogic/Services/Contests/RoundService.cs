@@ -43,6 +43,8 @@ namespace BusinessLogic.Services.Contests
         private const string JUDGE_STATUS_ACTIVE = "active";
         private const int OPEN_CODE_MIN = 1000;
         private const int OPEN_CODE_MAX = 10000;
+        private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
+        private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
 
         // Round status enum values
         private static readonly string ROUND_STATUS_INCOMING = RoundStatusEnum.Incoming.ToString();
@@ -113,7 +115,7 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
 
                 // Configure round settings (time limit, rank cutoff)
-                await ConfigureRoundSettingsAsync(round.RoundId, roundDTO, configRepo);
+                await ConfigureRoundSettingsAsync(round.RoundId, contestId, round.End, roundDTO, configRepo);
 
                 // Create problem or MCQ test based on type
                 await CreateRoundContentAsync(round.RoundId, roundDTO);
@@ -1407,7 +1409,12 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Configures round settings (time limit and rank cutoff)
         /// </summary>
-        private async Task ConfigureRoundSettingsAsync(Guid roundId, CreateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
+        private async Task ConfigureRoundSettingsAsync(
+            Guid roundId,
+            Guid contestId,
+            DateTime roundEndUtc,
+            CreateRoundDTO roundDTO,
+            IGenericRepository<Config> configRepo)
         {
             // Store time limit in config
             if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
@@ -1433,6 +1440,8 @@ namespace BusinessLogic.Services.Contests
                     roundDTO.RankCutoff.Value.ToString()
                 );
             }
+
+            await UpsertRoundDeadlineConfigsAsync(roundId, contestId, roundEndUtc, configRepo);
         }
 
         /// <summary>
@@ -1598,7 +1607,7 @@ namespace BusinessLogic.Services.Contests
             await UpdateRoundContentAsync(round, roundDTO);
 
             // Update configurations
-            await UpdateRoundConfigurationsAsync(round.RoundId, roundDTO, configRepo);
+            await UpdateRoundConfigurationsAsync(round.RoundId, round.ContestId, round.End, roundDTO, configRepo);
         }
 
         /// <summary>
@@ -1676,7 +1685,12 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Updates round configurations (time limit and rank cutoff)
         /// </summary>
-        private async Task UpdateRoundConfigurationsAsync(Guid roundId, UpdateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
+        private async Task UpdateRoundConfigurationsAsync(
+            Guid roundId,
+            Guid contestId,
+            DateTime roundEndUtc,
+            UpdateRoundDTO roundDTO,
+            IGenericRepository<Config> configRepo)
         {
             // Update time limit config
             if (roundDTO.TimeLimitSeconds.HasValue && roundDTO.TimeLimitSeconds.Value > 0)
@@ -1702,6 +1716,48 @@ namespace BusinessLogic.Services.Contests
                     roundDTO.RankCutoff.Value.ToString()
                 );
             }
+
+            await UpsertRoundDeadlineConfigsAsync(roundId, contestId, roundEndUtc, configRepo);
+        }
+
+        private async Task UpsertRoundDeadlineConfigsAsync(
+            Guid roundId,
+            Guid contestId,
+            DateTime roundEndUtc,
+            IGenericRepository<Config> configRepo)
+        {
+            int submitDays = await GetContestPolicyDaysAsync(
+                contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                contestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+
+            DateTime submitDeadline = roundEndUtc.AddDays(submitDays);
+            DateTime reviewDeadline = submitDeadline.AddDays(reviewDays);
+
+            await UpsertConfigAsync(
+                configRepo,
+                ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId),
+                submitDeadline.ToString("o"));
+
+            await UpsertConfigAsync(
+                configRepo,
+                ConfigKeys.RoundAppealReviewDeadlineUtc(roundId),
+                reviewDeadline.ToString("o"));
+        }
+
+        private static async Task<int> GetContestPolicyDaysAsync(
+            Guid contestId,
+            string policyKey,
+            int defaultDays,
+            IGenericRepository<Config> configRepo)
+        {
+            string key = ConfigKeys.ContestPolicy(contestId, policyKey);
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return int.TryParse(value, out int days) && days >= 0 ? days : defaultDays;
         }
 
         /// <summary>
