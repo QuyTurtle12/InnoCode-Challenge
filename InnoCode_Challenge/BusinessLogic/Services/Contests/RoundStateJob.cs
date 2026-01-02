@@ -9,6 +9,8 @@ using Microsoft.Extensions.Logging;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.Enums;
+using Utility.ExceptionCustom;
+using Microsoft.AspNetCore.Http;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -56,6 +58,12 @@ namespace BusinessLogic.Services.Contests
 
                 if (newStatus != null && newStatus != round.Status)
                 {
+                    // Guard: when opening a round, ensure previous main round is finalized
+                    if (newStatus == RoundStatusEnum.Opened.ToString())
+                    {
+                        await EnsurePreviousRoundFinalizedAsync(round, unitOfWork);
+                    }
+
                     string oldStatus = round.Status ?? "null";
                     round.Status = newStatus;
                     await roundRepo.UpdateAsync(round);
@@ -241,6 +249,46 @@ namespace BusinessLogic.Services.Contests
             }
 
             return null;
+        }
+
+        private async Task EnsurePreviousRoundFinalizedAsync(Round round, IUOW unitOfWork)
+        {
+            IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
+            IGenericRepository<Submission> submissionRepo = unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Appeal> appealRepo = unitOfWork.GetRepository<Appeal>();
+
+            Round? prevRound = await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.ContestId == round.ContestId
+                            && !r.IsRetakeRound
+                            && r.RoundId != round.RoundId
+                            && r.End <= round.Start
+                            && r.DeletedAt == null)
+                .OrderByDescending(r => r.End)
+                .FirstOrDefaultAsync();
+
+            if (prevRound == null) return;
+
+            bool hasUnfinishedSubmissions = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s =>
+                    s.DeletedAt == null
+                    && s.Problem != null
+                    && s.Problem.RoundId == prevRound.RoundId
+                    && s.Status == SubmissionStatusEnum.Pending.ToString());
+
+            bool hasPendingAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a =>
+                    a.DeletedAt == null
+                    && a.TargetId == prevRound.RoundId
+                    && (a.State != AppealStateEnum.Closed.ToString() || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            if (hasUnfinishedSubmissions || hasPendingAppeals)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                    $"Cannot open round '{round.Name}' because previous round '{prevRound.Name}' is not finalized.");
+            }
         }
 
         private async Task ScheduleNextStateTransitionAsync(Round round)
