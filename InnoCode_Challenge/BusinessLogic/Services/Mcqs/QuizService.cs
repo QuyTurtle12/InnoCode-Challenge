@@ -201,6 +201,9 @@ namespace BusinessLogic.Services.Mcqs
                     .Select(tm => tm.TeamId)
                     .FirstOrDefaultAsync();
 
+                // Mark as finished for the round
+                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+
                 // Update team score in leaderboard if team exists
                 if (teamId.HasValue && contestId != Guid.Empty)
                 {
@@ -238,15 +241,12 @@ namespace BusinessLogic.Services.Mcqs
                     AnswerResults = answerResults
                 };
 
-                // Mark as finished for the round
-                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
-
-                // Commit transaction
-                _unitOfWork.CommitTransaction();
-
                 // Remove any stored current answers snapshot
                 string snapshotKey = ConfigKeys.RoundStudent(roundId, studentId);
                 _memoryCache.Remove(snapshotKey);
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
 
                 return result;
             }

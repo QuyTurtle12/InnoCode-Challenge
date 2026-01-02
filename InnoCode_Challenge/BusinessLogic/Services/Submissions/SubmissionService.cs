@@ -878,11 +878,11 @@ namespace BusinessLogic.Services.Submissions
                 // Get contest ID for leaderboard update
                 Guid contestId = submission.Problem.Round.ContestId;
 
-                // Update team score in leaderboard
-                await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
-
                 // Mark round as finished for this student
                 await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+
+                // Update team score in leaderboard
+                await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
@@ -1972,8 +1972,9 @@ namespace BusinessLogic.Services.Submissions
             {
                 _unitOfWork.BeginTransaction();
 
-                var submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
+                // Get the submission
                 Submission? submission = await submissionRepo.Entities
                     .Where(s => s.SubmissionId == submissionId && s.DeletedAt == null)
                     .Include(s => s.Problem)
@@ -1981,6 +1982,7 @@ namespace BusinessLogic.Services.Submissions
                         .ThenInclude(r => r.Contest)
                     .FirstOrDefaultAsync();
 
+                // Existence check
                 if (submission == null)
                 {
                     throw new ErrorException(StatusCodes.Status404NotFound,
@@ -1988,6 +1990,7 @@ namespace BusinessLogic.Services.Submissions
                         $"Submission {submissionId} not found");
                 }
 
+                // Permission check
                 if (!IsAdmin())
                 {
                     string organizerUserId = GetCurrentUserIdString();
@@ -2001,6 +2004,7 @@ namespace BusinessLogic.Services.Submissions
                     }
                 }
 
+                // Status check
                 if (!string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
@@ -2014,6 +2018,7 @@ namespace BusinessLogic.Services.Submissions
 
                 submission.JudgedBy = staffUserId;
 
+                // Update status
                 if (cleared)
                 {
                     submission.Status = SubmissionStatusEnum.Finished.ToString();
@@ -2027,6 +2032,7 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
                 await _unitOfWork.SaveAsync();
 
+                // Log activity
                 if (Guid.TryParse(staffUserId, out var staffUserGuid))
                 {
                     await _logWriter.TryWriteAsync(
@@ -2036,15 +2042,19 @@ namespace BusinessLogic.Services.Submissions
                         submission.SubmissionId.ToString());
                 }
 
+                // Notify student
                 await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
 
                 Guid roundId = submission.Problem.RoundId;
                 Guid studentId = submission.SubmittedByStudentId;
                 Guid contestId = submission.Problem.Round.ContestId;
 
+                // Mark finished submission for the student in the round
                 await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+
                 if (cleared)
                 {
+                    // Update leaderboard if cleared
                     await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }
 
