@@ -1,6 +1,7 @@
 using DataAccess.Entities;
 using Microsoft.EntityFrameworkCore;
 using Repository.IRepositories;
+using Utility.Constant;
 using Utility.Enums;
 
 namespace BusinessLogic.Helpers
@@ -36,6 +37,8 @@ namespace BusinessLogic.Helpers
             round.Status = finalized;
             await roundRepo.UpdateAsync(round);
             await unitOfWork.SaveAsync();
+
+            await ApplyRankCutoffAsync(unitOfWork, round);
         }
 
         private static async Task<bool> IsRoundWorkDoneAsync(IUOW unitOfWork, Guid roundId)
@@ -59,6 +62,68 @@ namespace BusinessLogic.Helpers
                                    || a.Decision == AppealDecisionEnum.Pending.ToString()));
 
             return !hasOpenAppeals;
+        }
+
+        private static async Task ApplyRankCutoffAsync(IUOW unitOfWork, Round round)
+        {
+            var roundRepo = unitOfWork.GetRepository<Round>();
+
+            // Determine which round's cutoff we should use
+            Guid cutoffRoundId = round.RoundId;
+            if (round.IsRetakeRound && round.MainRoundId.HasValue)
+            {
+                cutoffRoundId = round.MainRoundId.Value;
+            }
+
+            // If this is a main round with a retake that is not finalized yet -> skip cutoff now
+            if (!round.IsRetakeRound)
+            {
+                Round? retake = await roundRepo.Entities
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.MainRoundId == round.RoundId
+                                              && r.IsRetakeRound
+                                              && r.DeletedAt == null);
+                if (retake != null && !string.Equals(retake.Status, RoundStatusEnum.Finalized.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return; // wait for retake finalize
+                }
+            }
+
+            var configRepo = unitOfWork.GetRepository<Config>();
+            string rcKey = ConfigKeys.RoundRankCutoff(cutoffRoundId);
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == rcKey && c.Scope == "contest" && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (string.IsNullOrWhiteSpace(value) || !int.TryParse(value, out int cutoff) || cutoff <= 0)
+                return; // disabled
+
+            var leaderboardRepo = unitOfWork.GetRepository<LeaderboardEntry>();
+            var teamRepo = unitOfWork.GetRepository<Team>();
+
+            var entries = await leaderboardRepo.Entities
+                .Where(e => e.ContestId == round.ContestId)
+                .OrderByDescending(e => e.Score)
+                .ThenBy(e => e.SnapshotAt)
+                .ToListAsync();
+
+            if (!entries.Any()) return;
+
+            var toEliminate = entries.Skip(cutoff).Select(e => e.TeamId).ToList();
+            if (!toEliminate.Any()) return;
+
+            var teams = await teamRepo.Entities
+                .Where(t => toEliminate.Contains(t.TeamId) && t.DeletedAt == null)
+                .ToListAsync();
+
+            foreach (var team in teams)
+            {
+                team.Status = TeamStatusConstants.Eliminated;
+                await teamRepo.UpdateAsync(team);
+            }
+
+            await unitOfWork.SaveAsync();
         }
     }
 }
