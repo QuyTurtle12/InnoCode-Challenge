@@ -2060,6 +2060,11 @@ namespace BusinessLogic.Services.Submissions
                     // Update leaderboard if cleared
                     await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }
+                else
+                {
+                    // On confirmed plagiarism: eliminate team from contest and zero out scoreboard
+                    await EliminateTeamForPlagiarismAsync(contestId, submission.TeamId);
+                }
 
                 _unitOfWork.CommitTransaction();
             }
@@ -2145,6 +2150,31 @@ namespace BusinessLogic.Services.Submissions
 
             await _unitOfWork.SaveAsync();
             return (matchedId.HasValue, matchedId);
+        }
+
+        private async Task EliminateTeamForPlagiarismAsync(Guid contestId, Guid teamId)
+        {
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            var leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+            Team? team = await teamRepo.Entities
+                .FirstOrDefaultAsync(t => t.TeamId == teamId && t.ContestId == contestId && t.DeletedAt == null);
+
+            if (team != null && !string.Equals(team.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase))
+            {
+                team.Status = TeamStatusConstants.Eliminated;
+                await teamRepo.UpdateAsync(team);
+            }
+
+            LeaderboardEntry? entry = await leaderboardRepo.Entities
+                .FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == teamId);
+
+            if (entry != null)
+            {
+                entry.Score = 0;
+                entry.SnapshotAt = DateTime.UtcNow;
+                await leaderboardRepo.UpdateAsync(entry);
+            }
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
