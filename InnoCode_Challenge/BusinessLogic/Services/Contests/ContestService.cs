@@ -656,7 +656,7 @@ namespace BusinessLogic.Services.Contests
             if (mcqTestsWithoutQuestions.Any())
             {
                 string testInfo = string.Join(", ", mcqTestsWithoutQuestions.Select(t =>
-                    $"'{t.Name ?? "Unnamed"}' in round '{t.Round.Name}'"));
+                    $"'{t.Round.Name}'"));
                 result.Missing.Add($"MCQ test(s) {testInfo} have no questions.");
             }
         }

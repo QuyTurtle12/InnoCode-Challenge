@@ -61,7 +61,7 @@ namespace BusinessLogic.Services.Mcqs
             }
         }
 
-        public async Task<PaginatedList<GetMcqAttemptDTO>> GetPaginatedMcqAttemptAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? testIdSearch, Guid? roundIdSearch, Guid? studentIdSearch, string? testName, string? roundName, string? studentName)
+        public async Task<PaginatedList<GetMcqAttemptDTO>> GetPaginatedMcqAttemptAsync(int pageNumber, int pageSize, Guid? idSearch, Guid? testIdSearch, Guid? roundIdSearch, Guid? studentIdSearch, string? roundName, string? studentName)
         {
             try
             {
@@ -103,11 +103,6 @@ namespace BusinessLogic.Services.Mcqs
                     query = query.Where(a => a.StudentId == studentIdSearch.Value);
                 }
                 
-                if (!string.IsNullOrWhiteSpace(testName))
-                {
-                    query = query.Where(a => a.Test.Name!.Contains(testName));
-                }
-                
                 if (!string.IsNullOrWhiteSpace(roundName))
                 {
                     query = query.Where(a => a.Round.Name.Contains(roundName));
@@ -127,8 +122,6 @@ namespace BusinessLogic.Services.Mcqs
                 IReadOnlyCollection<GetMcqAttemptDTO> result = resultQuery.Items.Select(item =>
                 {
                     GetMcqAttemptDTO mcqAttemptDTO = _mapper.Map<GetMcqAttemptDTO>(item);
-
-                    mcqAttemptDTO.TestName = item.Test.Name ?? string.Empty;
                     mcqAttemptDTO.RoundName = item.Round.Name;
                     mcqAttemptDTO.StudentName = item.Student.User.Fullname;
 

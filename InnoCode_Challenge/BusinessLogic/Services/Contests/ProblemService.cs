@@ -53,6 +53,9 @@ namespace BusinessLogic.Services.Contests
                 // Assign the roundId
                 problem.RoundId = roundId;
 
+                // Set auto problem type
+                problem.TestType = problemDTO.TestType?.ToString() ?? null;
+
                 // Set creation timestamp
                 problem.CreatedAt = DateTime.UtcNow;
 
@@ -947,11 +950,14 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Verify the problem is of type AutoEvaluation
-                if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString() ||
+                    problem.TestType != TestTypeEnum.MockTest.ToString())
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
-                        $"Mock tests can only be uploaded for AutoEvaluation problems. Current type: {problem.Type}");
+                        $"Mock tests can only be uploaded for AutoEvaluation problems with Mock Test test type." +
+                        $" Current problem type: {problem.Type}," +
+                        $" Current test type: {problem.TestType}");
                 }
 
                 // Delete old mock test file from Cloudinary if exists

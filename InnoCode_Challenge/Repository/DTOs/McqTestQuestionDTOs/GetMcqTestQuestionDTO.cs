@@ -4,8 +4,6 @@
     {
         public Guid TestId { get; set; }
 
-        public string TestName { get; set; } = string.Empty;
-
         public Guid QuestionId { get; set; }
 
         public string QuestionText { get; set; } = string.Empty;

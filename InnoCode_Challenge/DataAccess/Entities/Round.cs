@@ -23,6 +23,8 @@ public partial class Round
 
     public Guid? MainRoundId { get; set; }
 
+    public int? RankCutoff { get; set; }
+
     public virtual ICollection<Appeal> Appeals { get; set; } = new List<Appeal>();
 
     public virtual Contest Contest { get; set; } = null!;

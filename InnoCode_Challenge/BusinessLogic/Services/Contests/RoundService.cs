@@ -1551,19 +1551,7 @@ namespace BusinessLogic.Services.Contests
                     break;
 
                 case ProblemTypeEnum.McqTest:
-                    if (roundDTO.McqTestConfig == null)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            "MCQ test configuration is required for the selected problem type.");
-                    }
 
-                    if (string.IsNullOrWhiteSpace(roundDTO.McqTestConfig.Name))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            "MCQ test name is required.");
-                    }
                     break;
 
                 default:
@@ -1673,6 +1661,14 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private async Task CreateAutoEvaluationProblemAsync(Guid roundId, CreateProblemDTO config)
         {
+            // Validate test type
+            if (config.TestType == null)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Test type is required for auto-evaluation problems.");
+            }
+
             await _problemService.CreateProblemAsync(roundId, config);
 
             // Upload template file if provided
@@ -1689,7 +1685,7 @@ namespace BusinessLogic.Services.Contests
         {
             await _problemService.CreateProblemAsync(roundId, config);
 
-            // Optional template for manual problems
+            // Upload template file if provided
             if (config.TemplateFile != null)
             {
                 await UploadProblemTemplateAsync(roundId, config.TemplateFile);

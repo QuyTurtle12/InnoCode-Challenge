@@ -124,11 +124,13 @@ namespace BusinessLogic.Services.Contests
                         "Problem not found for this round.");
                 }
 
-                if (round.Problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                // Validate problem type
+                if (round.Problem.Type != ProblemTypeEnum.AutoEvaluation.ToString() ||
+                    round.Problem.TestType != TestTypeEnum.InputOutput.ToString())
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest,
                         ResponseCodeConstants.BADREQUEST,
-                        "Test cases can only be created for AutoEvaluation problems.");
+                        "Test cases can only be created for AutoEvaluation problems with I/O test type.");
                 }
 
                 // Prepare TestCase entity
@@ -501,7 +503,8 @@ namespace BusinessLogic.Services.Contests
 
                     // Validate round exists
                     Round? round = await roundRepo.Entities
-                        .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+                        .Where(r => r.RoundId == roundId && !r.DeletedAt.HasValue)
+                        .FirstOrDefaultAsync();
 
                     if (round == null)
                     {
@@ -527,19 +530,20 @@ namespace BusinessLogic.Services.Contests
                         );
                     }
 
-                    // Verify this is an auto-evaluation problem
-                    if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString())
+                    // Verify this is an auto-evaluation problem and input-output test type
+                    if (problem.Type != ProblemTypeEnum.AutoEvaluation.ToString() || 
+                        problem.TestType != TestTypeEnum.InputOutput.ToString())
                     {
                         throw new ErrorException(
                             StatusCodes.Status400BadRequest,
                             ResponseCodeConstants.BADREQUEST,
-                            "Test cases can only be imported for auto-evaluation problem types."
+                            "Test cases can only be imported for auto-evaluation problem types with I/O test type."
                         );
                     }
 
                     result.ProblemId = problem.ProblemId;
 
-                    // Remove existing test cases =====
+                    // Remove existing test cases
                     List<TestCase> existingTestCases = await testCaseRepo.Entities
                         .Where(tc => tc.ProblemId == problem.ProblemId
                             && tc.Type == TestCaseTypeEnum.TestCase.ToString()

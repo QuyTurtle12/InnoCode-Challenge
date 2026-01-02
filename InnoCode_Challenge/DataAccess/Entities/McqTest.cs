@@ -9,10 +9,6 @@ public partial class McqTest
 
     public Guid RoundId { get; set; }
 
-    public string? Name { get; set; }
-
-    public string? Config { get; set; }
-
     public DateTime? DeletedAt { get; set; }
 
     public virtual ICollection<McqAttemptItem> McqAttemptItems { get; set; } = new List<McqAttemptItem>();

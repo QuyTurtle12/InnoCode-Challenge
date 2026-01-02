@@ -403,9 +403,9 @@ namespace BusinessLogic.Services.Submissions
         }
 
         public async Task<JudgeSubmissionResultDTO> EvaluateSubmissionAsync(
-    Guid roundId,
-    CreateSubmissionDTO submissionDTO,
-    TestCaseEvaluationTypeEnum evaluationType)
+            Guid roundId,
+            CreateSubmissionDTO submissionDTO,
+            TestCaseEvaluationTypeEnum evaluationType)
         {
             try
             {

@@ -131,7 +131,7 @@ namespace BusinessLogic.Services.Mcqs
             try
             {
                 // Map DTO to entity
-                McqTest mcqTest = _mapper.Map<McqTest>(mcqTestDTO);
+                McqTest mcqTest = new McqTest();
 
                 // Assign roundId
                 mcqTest.RoundId = roundId;

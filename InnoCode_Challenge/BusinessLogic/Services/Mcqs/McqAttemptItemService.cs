@@ -85,10 +85,7 @@ namespace BusinessLogic.Services.Mcqs
                 if (questionIdSearch.HasValue)
                     query = query.Where(item => item.QuestionId == questionIdSearch.Value);
 
-                // String filters with case-insensitive contains
-                if (!string.IsNullOrWhiteSpace(testName))
-                    query = query.Where(item => item.Test.Name != null && item.Test.Name.ToLower().Contains(testName.ToLower()));
-
+                // Filter by question text if provided
                 if (!string.IsNullOrWhiteSpace(questionText))
                     query = query.Where(item => item.Question.Text != null && item.Question.Text.ToLower().Contains(questionText.ToLower()));
 
@@ -101,7 +98,6 @@ namespace BusinessLogic.Services.Mcqs
                     GetMcqAttemptItemDTO mcqAttemptItemDTO = _mapper.Map<GetMcqAttemptItemDTO>(item);
 
                     mcqAttemptItemDTO.QuestionText = item.Question.Text;
-                    mcqAttemptItemDTO.TestName = item.Test?.Name ?? string.Empty;
                     mcqAttemptItemDTO.OptionText = item.SelectedOption?.Text ?? string.Empty;
 
                     return mcqAttemptItemDTO;

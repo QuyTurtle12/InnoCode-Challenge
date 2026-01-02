@@ -218,9 +218,6 @@ namespace BusinessLogic.Services.Mcqs
                     }
                 }
 
-                // Get test name
-                string testName = mcqTest.Name ?? "Unknown Test";
-
                 // Get user full name
                 string? userFullName = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
                     ?? "Unknown User";
@@ -230,7 +227,6 @@ namespace BusinessLogic.Services.Mcqs
                 {
                     AttemptId = attempt.AttemptId,
                     TestId = mcqTest.TestId,
-                    TestName = testName,
                     StudentId = studentId,
                     StudentName = userFullName,
                     SubmittedAt = DateTime.UtcNow,
@@ -365,9 +361,6 @@ namespace BusinessLogic.Services.Mcqs
                     }
                 }
 
-                // Get test name
-                string testName = mcqTest.Name ?? "Unknown Test";
-
                 // Get user full name
                 string? userFullName = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
                     ?? "Unknown User";
@@ -377,7 +370,6 @@ namespace BusinessLogic.Services.Mcqs
                 {
                     AttemptId = attempt.AttemptId,
                     TestId = mcqTest.TestId,
-                    TestName = testName,
                     StudentId = studentId,
                     StudentName = userFullName,
                     SubmittedAt = DateTime.UtcNow,
@@ -488,8 +480,7 @@ namespace BusinessLogic.Services.Mcqs
                     CorrectAnswers = correctAnswers,
                     TotalPossibleScore = totalPossibleWeight,
                     Score = attempt.Score ?? 0,
-                    AnswerResults = answerResults,
-                    TestName = test.Name ?? "Unknown Test"
+                    AnswerResults = answerResults
                 };
 
                 return result;
@@ -602,7 +593,6 @@ namespace BusinessLogic.Services.Mcqs
                     {
                         AttemptId = item.AttemptId,
                         TestId = item.TestId,
-                        TestName = item.Test?.Name ?? "Unknown Test",
                         StudentId = item.StudentId,
                         StudentName = item.Student?.User?.Fullname ?? "Unknown Student",
                         StartTime = item.Start,

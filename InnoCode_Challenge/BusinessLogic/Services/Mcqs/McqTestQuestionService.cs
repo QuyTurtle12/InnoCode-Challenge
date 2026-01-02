@@ -111,8 +111,6 @@ namespace BusinessLogic.Services.Mcqs
                 // Map entities to DTOs
                 IReadOnlyCollection<GetMcqTestQuestionDTO> result = resultQuery.Items.Select(item => {
                     GetMcqTestQuestionDTO mcqTestQuestionDTO = _mapper.Map<GetMcqTestQuestionDTO>(item);
-
-                    mcqTestQuestionDTO.TestName = item.Test?.Name ?? string.Empty;
                     mcqTestQuestionDTO.QuestionText = item.Question?.Text ?? string.Empty;
                     return mcqTestQuestionDTO;
                 }).ToList();

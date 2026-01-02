@@ -6,8 +6,6 @@
 
         public Guid TestId { get; set; }
 
-        public string TestName { get; set; } = string.Empty;
-
         public Guid RoundId { get; set; }
 
         public string RoundName { get; set; } = string.Empty;

@@ -171,7 +171,7 @@ public partial class ContestDbContext : DbContext
                 .HasColumnName("appeal_id");
             entity.Property(e => e.AppealResolution)
                 .HasMaxLength(20)
-                .HasComment("Resolution type for approved appeal: Retake (student retakes exam) or Rescore (submission is re-evaluated by different judge)")
+                .HasComment("")
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("appeal_resolution");
             entity.Property(e => e.CreatedAt)
@@ -698,14 +698,7 @@ public partial class ContestDbContext : DbContext
             entity.Property(e => e.TestId)
                 .HasDefaultValueSql("(newid())")
                 .HasColumnName("test_id");
-            entity.Property(e => e.Config)
-                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
-                .HasColumnName("config");
             entity.Property(e => e.DeletedAt).HasPrecision(0);
-            entity.Property(e => e.Name)
-                .HasMaxLength(120)
-                .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
-                .HasColumnName("name");
             entity.Property(e => e.RoundId).HasColumnName("round_id");
 
             entity.HasOne(d => d.Round).WithOne(p => p.McqTest)
@@ -911,6 +904,10 @@ public partial class ContestDbContext : DbContext
                 .HasMaxLength(255)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("template_url");
+            entity.Property(e => e.TestType)
+                .HasMaxLength(255)
+                .IsUnicode(false)
+                .HasColumnName("test_type");
             entity.Property(e => e.Type)
                 .HasMaxLength(20)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
@@ -1042,15 +1039,18 @@ public partial class ContestDbContext : DbContext
                 .HasPrecision(0)
                 .HasColumnName("end");
             entity.Property(e => e.IsRetakeRound)
-                .HasComment("Indicates whether this round is a retake round for students with approved appeals")
+                .HasComment("")
                 .HasColumnName("is_retake_round");
             entity.Property(e => e.MainRoundId)
-                .HasComment("Reference to the main round that this retake round is for (NULL if not a retake round)")
+                .HasComment("")
                 .HasColumnName("main_round_id");
             entity.Property(e => e.Name)
                 .HasMaxLength(100)
                 .UseCollation("Latin1_General_100_CI_AS_SC_UTF8")
                 .HasColumnName("name");
+            entity.Property(e => e.RankCutoff)
+                .HasDefaultValue(0)
+                .HasColumnName("rankCutoff");
             entity.Property(e => e.Start)
                 .HasPrecision(0)
                 .HasColumnName("start");

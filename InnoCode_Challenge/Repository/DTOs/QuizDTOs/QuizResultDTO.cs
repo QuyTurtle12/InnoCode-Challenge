@@ -4,7 +4,6 @@
     {
         public Guid AttemptId { get; set; }
         public Guid TestId { get; set; }
-        public string TestName { get; set; } = string.Empty;
         public Guid StudentId { get; set; }
         public string StudentName { get; set; } = string.Empty;
         public DateTime SubmittedAt { get; set; }
@@ -28,7 +27,6 @@
     {
         public Guid AttemptId { get; set; }
         public Guid TestId { get; set; }
-        public string TestName { get; set; } = string.Empty;
         public Guid StudentId { get; set; }
         public string StudentName { get; set; } = string.Empty;
         public DateTime StartTime { get; set; }
