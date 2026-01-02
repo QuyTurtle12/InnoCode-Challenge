@@ -1,7 +1,10 @@
 ﻿using BusinessLogic.IServices.Contests;
+using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Repository.DTOs.MockTestDTOs;
+using Repository.IRepositories;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Utility.Constant;
@@ -9,19 +12,23 @@ using Utility.ExceptionCustom;
 
 namespace BusinessLogic.Services.Contests
 {
-    public class MockTestExecutor : IMockTestExecutor
+    public class MockTestService : IMockTestService
     {
         private readonly HttpClient _httpClient;
-        private readonly ILogger<MockTestExecutor> _logger;
+        private readonly ILogger<MockTestService> _logger;
+        private readonly IUOW _unitOfWork;
+
         private const string PISTON_URL = "https://emkc.org/api/v2/piston/execute";
         private const string PYTHON_VERSION = "3.10.0";
 
-        public MockTestExecutor(
+        public MockTestService(
             HttpClient httpClient,
-            ILogger<MockTestExecutor> logger)
+            ILogger<MockTestService> logger,
+            IUOW unitOfWork)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _unitOfWork = unitOfWork;
         }
 
         public async Task<MockTestResultDTO> ExecuteMockTestAsync(

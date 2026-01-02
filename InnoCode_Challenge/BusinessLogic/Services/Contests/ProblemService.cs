@@ -1004,5 +1004,52 @@ namespace BusinessLogic.Services.Contests
                     $"Error uploading mock test: {ex.Message}");
             }
         }
+
+        public async Task<string> GetMockTestFileUrlAsync(Guid roundId)
+        {
+            try
+            {
+                // Get repository for Problem entities
+                IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+
+                // Query the problem associated with this round
+                Problem? problem = await problemRepo.Entities
+                    .Where(p => p.RoundId == roundId && p.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                // Validate problem existence
+                if (problem == null)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Problem not found for round ID {roundId}");
+                }
+
+                // Validate MockTestUrl existence
+                if (string.IsNullOrWhiteSpace(problem.MockTestUrl))
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"Mock test URL not configured for round ID {roundId}");
+                }
+
+                return problem.MockTestUrl;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                _logger.LogError(ex, "Error downloading mock test file for round {RoundId}", roundId);
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error downloading mock test file: {ex.Message}");
+            }
+        }
     }
 }

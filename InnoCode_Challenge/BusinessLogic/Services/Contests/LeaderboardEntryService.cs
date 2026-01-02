@@ -691,9 +691,6 @@ namespace BusinessLogic.Services.Contests
                 List<LeaderboardEntry> allEntries = await leaderboardRepo.Entities
                     .Include(e => e.Team)
                     .Where(e => e.ContestId == contestId)
-                    .OrderByDescending(e => e.Score)
-                    .ThenBy(e => e.SnapshotAt)
-                    .ThenBy(e => e.TeamId)
                     .ToListAsync();
 
                 // Validate that entries exist
@@ -703,6 +700,30 @@ namespace BusinessLogic.Services.Contests
                         ResponseCodeConstants.NOT_FOUND,
                         $"No leaderboard entries found for contest ID: {contestId}");
                 }
+
+                // Calculate earliest completion time for each team
+                Dictionary<Guid, DateTime?> teamEarliestCompletionTime = new Dictionary<Guid, DateTime?>();
+
+                foreach (var entry in allEntries)
+                {
+                    DateTime? earliestTime = await GetTeamEarliestCompletionTimeAsync(
+                        contestId,
+                        entry.TeamId,
+                        teamMemberRepo,
+                        roundRepo,
+                        configRepo,
+                        mcqAttemptRepo,
+                        submissionRepo);
+
+                    teamEarliestCompletionTime[entry.TeamId] = earliestTime;
+                }
+
+                // Order by Score desc, EarliestCompletionTime asc, TeamId asc
+                allEntries = allEntries
+                    .OrderByDescending(e => e.Score)
+                    .ThenBy(e => teamEarliestCompletionTime[e.TeamId] ?? DateTime.MaxValue)
+                    .ThenBy(e => e.TeamId)
+                    .ToList();
 
                 // Determine user's team if they're a student or mentor
                 Guid? userTeamId = null;
@@ -855,7 +876,7 @@ namespace BusinessLogic.Services.Contests
                 int currentRank = 1;
                 List<TeamInfo> teamInfoList = new List<TeamInfo>();
 
-                // Assign unique ranks and populate team details with members
+                // Assign ranks and populate team details with members
                 foreach (LeaderboardEntry e in allEntries)
                 {
                     e.Rank = currentRank;
@@ -894,7 +915,7 @@ namespace BusinessLogic.Services.Contests
                                 string roundType = string.Empty;
                                 DateTime? completedAt = null;
 
-                                // Check config using lookup
+                                // Check config round finished using lookup
                                 string configKey = ConfigKeys.RoundStudent(round.RoundId, teamMember.StudentId);
                                 if (!configLookup.TryGetValue(configKey, out Config? config))
                                 {
@@ -956,6 +977,57 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error recalculating ranks: {ex.Message}");
             }
+        }
+
+        private async Task<DateTime?> GetTeamEarliestCompletionTimeAsync(
+            Guid contestId,
+            Guid teamId,
+            IGenericRepository<TeamMember> teamMemberRepo,
+            IGenericRepository<Round> roundRepo,
+            IGenericRepository<Config> configRepo,
+            IGenericRepository<McqAttempt> mcqAttemptRepo,
+            IGenericRepository<Submission> submissionRepo)
+        {
+            // Get team members
+            List<TeamMember> teamMembers = await teamMemberRepo.Entities
+                .Where(tm => tm.TeamId == teamId)
+                .ToListAsync();
+
+            if (!teamMembers.Any())
+                return null;
+
+            // Get all rounds for contest
+            List<Round> rounds = await roundRepo.Entities
+                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
+                .OrderBy(r => r.Start)
+                .ToListAsync();
+
+            DateTime? latestCompletionTime = null;
+
+            // Find the latest completion time across all members and rounds
+            foreach (TeamMember member in teamMembers)
+            {
+                foreach (Round round in rounds)
+                {
+                    // Check if student finished this round using config
+                    string configKey = ConfigKeys.RoundStudent(round.RoundId, member.StudentId);
+                    Config? config = await configRepo.GetByIdAsync(configKey);
+
+                    if (config == null || config.DeletedAt != null)
+                        continue;
+
+                    // Use the config UpdatedAt as the completion time
+                    DateTime completionTime = config.UpdatedAt ?? DateTime.MaxValue;
+
+                    // Track latest time to determine team's earliest completion
+                    if (!latestCompletionTime.HasValue || completionTime > latestCompletionTime.Value)
+                    {
+                        latestCompletionTime = completionTime;
+                    }
+                }
+            }
+
+            return latestCompletionTime;
         }
 
         private async Task ValidateTeamNotEliminatedAsync(Guid contestId, Guid teamId)

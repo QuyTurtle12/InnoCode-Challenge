@@ -2674,10 +2674,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private IQueryable<Contest> ApplyDraftFilterForRole(IQueryable<Contest> query, string? userRole)
         {
-            // For non-organizers/admins/staff, don't show draft contests
-            if (userRole != RoleConstants.ContestOrganizer &&
-                userRole != RoleConstants.Admin &&
-                userRole != RoleConstants.Staff)
+            // For non-organizers, don't show draft contests
+            if (userRole != RoleConstants.ContestOrganizer)
             {
                 query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }

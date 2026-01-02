@@ -37,7 +37,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly ICloudinaryService _cloudinaryService;
         private readonly ILeaderboardEntryService _leaderboardService;
         private readonly IConfigService _configService;
-        private readonly IMockTestExecutor _mockTestExecutor;
+        private readonly IMockTestService _mockTestExecutor;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
         private readonly ILogger<SubmissionService> _logger;
@@ -95,7 +95,7 @@ namespace BusinessLogic.Services.Submissions
             ICloudinaryService cloudinaryService,
             ILeaderboardEntryService leaderboardService,
             IConfigService configService,
-            IMockTestExecutor mockTestExecutor,
+            IMockTestService mockTestExecutor,
             INotificationService notificationService,
             IActivityLogWriter logWriter,
             ILogger<SubmissionService> logger)

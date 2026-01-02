@@ -21,5 +21,6 @@ namespace BusinessLogic.IServices.Contests
         Task<RubricCsvImportResultDTO> ImportRubricFromCsvAsync(IFormFile csvFile, Guid roundId);
 
         Task<string> UploadMockTestAsync(Guid roundId, IFormFile mockTestFile);
+        Task<string> GetMockTestFileUrlAsync(Guid roundId);
     }
 }

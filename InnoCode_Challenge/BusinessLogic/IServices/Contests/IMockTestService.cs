@@ -2,7 +2,7 @@
 
 namespace BusinessLogic.IServices.Contests
 {
-    public interface IMockTestExecutor
+    public interface IMockTestService
     {
         Task<MockTestResultDTO> ExecuteMockTestAsync(
             string studentCode,

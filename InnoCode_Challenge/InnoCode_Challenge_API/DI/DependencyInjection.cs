@@ -350,7 +350,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IRoleRegistrationService, RoleRegistrationService>();
             services.AddScoped<ISchoolCreationRequestService, SchoolCreationRequestService>();
             services.AddScoped<IMentorManagementService, MentorManagementService>();
-            services.AddScoped<IMockTestExecutor, MockTestExecutor>();
+            services.AddScoped<IMockTestService, MockTestService>();
         }
     }
 }

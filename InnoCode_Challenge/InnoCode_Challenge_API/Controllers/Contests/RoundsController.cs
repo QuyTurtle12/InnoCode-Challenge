@@ -327,6 +327,26 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         }
 
         /// <summary>
+        /// Download mock test file for a round (Organizer only)
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <returns></returns>
+        [HttpGet("{roundId}/mock-test/download")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> DownloadMockTest(
+            [FromRoute] Guid roundId)
+        {
+            string mockTestUrl = await _problemService.GetMockTestFileUrlAsync(roundId);
+
+            return Ok(new BaseResponseModel<string>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: mockTestUrl,
+                message: "Mock test URL retrieved successfully."
+            ));
+        }
+
+        /// <summary>
         /// Get auto test result for the logged-in student in a specific round
         /// </summary>
         /// <param name="roundId">Round ID</param>
