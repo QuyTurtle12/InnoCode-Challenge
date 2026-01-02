@@ -4,6 +4,7 @@ using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
 using BusinessLogic.IServices.NotificationsAndLogs;
+using BusinessLogic.Helpers;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.AspNetCore.Http;
@@ -2428,6 +2429,72 @@ namespace BusinessLogic.Services.Contests
             {
                 config.DeletedAt = DateTime.UtcNow;
                 await configRepo.UpdateAsync(config);
+            }
+        }
+
+        public async Task FastForwardAppealSubmitDeadlineAsync(Guid roundId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            string key = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
+            await UpsertDeadlineAsync(configRepo, key, DateTime.UtcNow.AddSeconds(-1), scope: SCOPE_CONTEST);
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task FastForwardAppealReviewDeadlineAsync(Guid roundId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            string key = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
+            await UpsertDeadlineAsync(configRepo, key, DateTime.UtcNow.AddSeconds(-1), scope: SCOPE_CONTEST);
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task FastForwardJudgeDeadlineAsync(Guid roundId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            List<Submission> subs = await submissionRepo.Entities
+                .Where(s => s.Problem != null && s.Problem.RoundId == roundId && s.DeletedAt == null)
+                .ToListAsync();
+
+            DateTime past = DateTime.UtcNow.AddSeconds(-1);
+            foreach (var sub in subs)
+            {
+                if (Guid.TryParse(sub.JudgedBy, out var judgeId))
+                {
+                    string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                    await UpsertDeadlineAsync(configRepo, key, past, scope: SCOPE_CONTEST);
+                }
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task TryFinalizeRoundAsync(Guid roundId)
+        {
+            await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
+        }
+
+        private static async Task UpsertDeadlineAsync(IGenericRepository<Config> configRepo, string key, DateTime value, string scope)
+        {
+            Config? existing = await configRepo.Entities.FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+            string iso = value.ToString("o");
+            if (existing == null)
+            {
+                await configRepo.InsertAsync(new Config
+                {
+                    Key = key,
+                    Value = iso,
+                    Scope = scope,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existing.Value = iso;
+                existing.Scope = scope;
+                existing.UpdatedAt = DateTime.UtcNow;
+                await configRepo.UpdateAsync(existing);
             }
         }
 

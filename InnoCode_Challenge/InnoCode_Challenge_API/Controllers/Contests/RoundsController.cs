@@ -488,5 +488,51 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
+        // ---- Time travel endpoints for fast testing/demo (Organizer only) ----
+
+        [HttpPost("{roundId}/time-travel/appeal-submit-end")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> FastForwardAppealSubmit(Guid roundId)
+        {
+            await _roundService.FastForwardAppealSubmitDeadlineAsync(roundId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Appeal submit deadline forced to now."));
+        }
+
+        [HttpPost("{roundId}/time-travel/appeal-review-end")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> FastForwardAppealReview(Guid roundId)
+        {
+            await _roundService.FastForwardAppealReviewDeadlineAsync(roundId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Appeal review deadline forced to now."));
+        }
+
+        [HttpPost("{roundId}/time-travel/judge-deadline-end")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> FastForwardJudgeDeadline(Guid roundId)
+        {
+            await _roundService.FastForwardJudgeDeadlineAsync(roundId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Judge deadline forced to now for all submissions in round."));
+        }
+
+        [HttpPost("{roundId}/time-travel/finalize")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> ForceFinalize(Guid roundId)
+        {
+            await _roundService.TryFinalizeRoundAsync(roundId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Finalize attempt executed."));
+        }
+
     }
 }
