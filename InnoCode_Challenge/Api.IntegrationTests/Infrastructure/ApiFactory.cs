@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore.Storage;
 using System.Net.Http;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Api.IntegrationTests.Infrastructure;
 
@@ -61,7 +62,8 @@ public class ApiFactory : WebApplicationFactory<Program>
 
             // IMPORTANT: use same DbName + shared _dbRoot
             services.AddDbContext<ContestDbContext>(opt =>
-                opt.UseInMemoryDatabase(DbName, _dbRoot));
+                opt.UseInMemoryDatabase(DbName, _dbRoot)
+                   .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
 
             // Seed
             var sp = services.BuildServiceProvider();

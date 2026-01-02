@@ -306,13 +306,31 @@ namespace BusinessLogic.Services.Contests
                 schedulePoints.Add((round.End, "Round End (Closed)"));
             }
 
+            // Schedule auto-finalize based on policy
+            try
+            {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IRoundService roundService = scope.ServiceProvider.GetRequiredService<IRoundService>();
+                DateTime finalizeAt = await roundService.GetFinalizeNotBeforeAsync(round.RoundId);
+                if (finalizeAt > now)
+                {
+                    schedulePoints.Add((finalizeAt, "Round Finalize"));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to schedule finalize time for round {RoundId}", round.RoundId);
+            }
+
             foreach (var (time, description) in schedulePoints.OrderBy(x => x.Time))
             {
                 var delay = time - now;
                 if (delay.TotalSeconds > 0)
                 {
                     BackgroundJob.Schedule<RoundStateJob>(
-                        job => job.UpdateSpecificRoundAsync(round.RoundId),
+                        description == "Round Finalize"
+                            ? job => job.FinalizeRoundAsync(round.RoundId)
+                            : job => job.UpdateSpecificRoundAsync(round.RoundId),
                         delay);
 
                     _logger.LogInformation(
@@ -442,6 +460,23 @@ namespace BusinessLogic.Services.Contests
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to regenerate open code for round {RoundId}", roundId);
+                throw;
+            }
+        }
+
+        [DisableConcurrentExecution(timeoutInSeconds: 120)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 30, 60 })]
+        public async Task FinalizeRoundAsync(Guid roundId)
+        {
+            try
+            {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IRoundService roundService = scope.ServiceProvider.GetRequiredService<IRoundService>();
+                await roundService.TryFinalizeRoundAsync(roundId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "FinalizeRoundAsync failed for round {RoundId}", roundId);
                 throw;
             }
         }

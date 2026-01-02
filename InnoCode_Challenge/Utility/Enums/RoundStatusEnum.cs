@@ -4,6 +4,7 @@
     {
         Opened,
         Closed,
-        Incoming
+        Incoming,
+        Finalized
     }
 }

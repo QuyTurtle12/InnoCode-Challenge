@@ -3,6 +3,7 @@ using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
+using BusinessLogic.Helpers;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -92,6 +93,13 @@ namespace BusinessLogic.Services.Appeals
                     throw new ErrorException(StatusCodes.Status404NotFound,
                         ResponseCodeConstants.NOT_FOUND,
                         "Round not found.");
+                }
+
+                if (round.IsRetakeRound)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeals are not allowed for retake rounds.");
                 }
 
                 DateTime now = DateTime.UtcNow;
@@ -356,6 +364,13 @@ namespace BusinessLogic.Services.Appeals
                         "Appeal not found.");
                 }
 
+                if (appeal.Target.IsRetakeRound)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "Appeals are not allowed for retake rounds.");
+                }
+
                 // Get round information
                 Guid roundId = appeal.TargetId;
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
@@ -559,11 +574,12 @@ namespace BusinessLogic.Services.Appeals
                 }
 
                 DateTime reviewDeadline = await GetAppealReviewDeadlineUtcAsync(appeal.Target, configRepo);
-                if (DateTime.UtcNow > reviewDeadline)
+                DateTime reviewWindowStart = appeal.Target.End;
+                if (DateTime.UtcNow < reviewWindowStart || DateTime.UtcNow > reviewDeadline)
                 {
                     throw new ErrorException(StatusCodes.Status403Forbidden,
                         "APPEAL_REVIEW_DEADLINE_PASSED",
-                        "Appeal review deadline has passed.");
+                        "Appeal review window is closed.");
                 }
 
                 // Check if already reviewed
@@ -992,10 +1008,25 @@ namespace BusinessLogic.Services.Appeals
             if (!Guid.TryParse(judgeUserId, out var judgeId))
                 return;
 
-            int rescoreDays = await GetContestPolicyDaysAsync(
-                contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+            // Load submission + round to compute extended rescore window
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            Submission? submission = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                    .ThenInclude(p => p.Round)
+                .FirstOrDefaultAsync(s => s.SubmissionId == submissionId && s.DeletedAt == null);
 
-            DateTime deadline = DateTime.UtcNow.AddDays(rescoreDays);
+            if (submission?.Problem?.Round == null) return;
+            var round = submission.Problem.Round;
+
+            int judgeDays = await GetContestPolicyDaysAsync(
+                contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+            int submitDays = await GetContestPolicyDaysAsync(
+                contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                contestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+
+            // Extended window: round end + (judge*2 + submit + review) for appeals rescore
+            DateTime deadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays);
             string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, submissionId);
 
             Config? existing = await configRepo.Entities.FirstOrDefaultAsync(c => c.Key == key);
@@ -1005,7 +1036,7 @@ namespace BusinessLogic.Services.Appeals
                 {
                     Key = key,
                     Value = deadline.ToString("o"),
-                    Scope = "submission",
+                    Scope = "contest",
                     UpdatedAt = DateTime.UtcNow,
                     DeletedAt = null
                 });
@@ -1013,7 +1044,7 @@ namespace BusinessLogic.Services.Appeals
             else
             {
                 existing.Value = deadline.ToString("o");
-                existing.Scope = "submission";
+                existing.Scope = "contest";
                 existing.UpdatedAt = DateTime.UtcNow;
                 existing.DeletedAt = null;
                 configRepo.Update(existing);

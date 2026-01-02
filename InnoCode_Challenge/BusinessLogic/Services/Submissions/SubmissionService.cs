@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices;
+using BusinessLogic.Helpers;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
@@ -2176,6 +2177,9 @@ namespace BusinessLogic.Services.Submissions
                 entry.SnapshotAt = DateTime.UtcNow;
                 await leaderboardRepo.UpdateAsync(entry);
             }
+
+            // Persist elimination and score reset so downstream reads see the change
+            await _unitOfWork.SaveAsync();
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
