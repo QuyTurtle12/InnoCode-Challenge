@@ -157,6 +157,22 @@ namespace BusinessLogic.Services.Appeals
                         "Student is not a member of the specified team.");
                 }
 
+                // Validate Retake resolution has a corresponding retake round
+                if (dto.AppealResolution == AppealResolutionEnum.Retake)
+                {
+                    bool hasRetakeRound = await roundRepo.Entities
+                        .AnyAsync(r => r.MainRoundId == dto.RoundId
+                                      && r.IsRetakeRound
+                                      && r.DeletedAt == null);
+
+                    if (!hasRetakeRound)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest,
+                            ResponseCodeConstants.BADREQUEST,
+                            "Cannot create appeal with Retake resolution. This round does not have a retake round configured.");
+                    }
+                }
+
                 // Determine target type based on round content
                 string targetType;
                 if (round.McqTest != null)
