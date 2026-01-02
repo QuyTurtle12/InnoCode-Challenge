@@ -45,6 +45,7 @@ namespace BusinessLogic.Services.Contests
         private const int OPEN_CODE_MAX = 10000;
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
         private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
+        private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
 
         // Round status enum values
         private static readonly string ROUND_STATUS_INCOMING = RoundStatusEnum.Incoming.ToString();
@@ -440,6 +441,7 @@ namespace BusinessLogic.Services.Contests
         {
             // Get Contest Repository
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
             // Fetch the contest
             Contest? contest = await contestRepo.GetByIdAsync(contestId);
@@ -489,10 +491,21 @@ namespace BusinessLogic.Services.Contests
 
             // Get Round Repository
             IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+            Round? currentRound = null;
+
+            if (excludeRoundId.HasValue)
+            {
+                currentRound = await roundRepo.Entities
+                    .Include(r => r.Problem)
+                    .Include(r => r.McqTest)
+                    .FirstOrDefaultAsync(r => r.RoundId == excludeRoundId.Value);
+            }
 
             // Get all rounds for this contest (excluding the current round if updating)
             IQueryable<Round> existingRoundsQuery = roundRepo.Entities
-                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue);
+                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest);
 
             if (excludeRoundId.HasValue)
             {
@@ -509,6 +522,129 @@ namespace BusinessLogic.Services.Contests
                 {
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
                         $"Round dates conflict with existing round '{existingRound.Name}' ({DateTimeHelpers.ToIso8601String(existingRound.Start)} - {DateTimeHelpers.ToIso8601String(existingRound.End)}).");
+                }
+            }
+
+            // Enforce buffer and finalization with the most recent previous round
+            Round? previousRound = existingRounds
+                .Where(r => r.End <= roundDTO.Start)
+                .OrderByDescending(r => r.End)
+                .FirstOrDefault();
+
+            if (previousRound != null)
+            {
+                int submitDays = await GetContestPolicyDaysAsync(
+                    contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+                int reviewDays = await GetContestPolicyDaysAsync(
+                    contestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+                int judgeDays = await GetContestPolicyDaysAsync(
+                    contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+                bool prevIsManual = IsManualRound(previousRound);
+
+                int bufferDays;
+                if (previousRound.IsRetakeRound)
+                {
+                    bufferDays = prevIsManual ? judgeDays : 0;
+                }
+                else
+                {
+                    bufferDays = prevIsManual
+                        ? (judgeDays * 2 + submitDays + reviewDays)
+                        : (submitDays + reviewDays);
+                }
+
+                DateTime minStart = previousRound.End.AddDays(bufferDays);
+
+                if (roundDTO.Start < minStart)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                        $"Round start must be after previous round buffer. Earliest allowed: {DateTimeHelpers.ToIso8601String(minStart)}.");
+                }
+            }
+
+            // Additional validation for retake round timing vs main round
+            Guid? mainRoundId = null;
+            bool isRetake = false;
+            ProblemTypeEnum? desiredType = null;
+
+            if (roundDTO is CreateRoundDTO createDto && createDto.IsRetakeRound)
+            {
+                isRetake = true;
+                mainRoundId = createDto.MainRoundId;
+                desiredType = createDto.ProblemType;
+            }
+            else if (currentRound != null && currentRound.IsRetakeRound)
+            {
+                isRetake = true;
+                mainRoundId = currentRound.MainRoundId;
+                desiredType = roundDTO is UpdateRoundDTO upd ? upd.ProblemType : desiredType;
+            }
+
+            if (isRetake)
+            {
+                if (!mainRoundId.HasValue || mainRoundId == Guid.Empty)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                        "Retake round must reference a valid main round.");
+                }
+
+                Round? mainRound = await roundRepo.Entities
+                    .Include(r => r.Problem)
+                    .Include(r => r.McqTest)
+                    .FirstOrDefaultAsync(r => r.RoundId == mainRoundId && r.DeletedAt == null);
+
+                if (mainRound == null)
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND,
+                        "Main round not found for retake.");
+                }
+
+                // Ensure no other rounds are scheduled between main round end and retake start
+                bool hasInterveningRound = existingRounds
+                    .Any(r => r.RoundId != mainRound.RoundId
+                              && r.RoundId != (currentRound?.RoundId ?? Guid.Empty)
+                              && r.Start < roundDTO.Start
+                              && r.Start >= mainRound.End);
+
+                if (hasInterveningRound)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                        "Retake round must be the immediate next round after its main round (no rounds in between).");
+                }
+
+                bool mainIsManual = IsManualRound(mainRound);
+                int submitDays = await GetContestPolicyDaysAsync(
+                    contestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+                int reviewDays = await GetContestPolicyDaysAsync(
+                    contestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+                int judgeDays = await GetContestPolicyDaysAsync(
+                    contestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+                int bufferFromMain = mainIsManual
+                    ? (judgeDays * 2 + submitDays + reviewDays)
+                    : (submitDays + reviewDays);
+
+                DateTime minRetakeStart = mainRound.End.AddDays(bufferFromMain);
+                if (roundDTO.Start < minRetakeStart)
+                {
+                    throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                        $"Retake round must start after main round buffer. Earliest allowed: {DateTimeHelpers.ToIso8601String(minRetakeStart)}.");
+                }
+
+                // Ensure type alignment is consistent with main
+                if (desiredType.HasValue)
+                {
+                    if (mainIsManual && desiredType != ProblemTypeEnum.Manual)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                            "Retake of a manual round must also be manual.");
+                    }
+                    if (!mainIsManual && desiredType == ProblemTypeEnum.Manual)
+                    {
+                        throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                            "Retake of a non-manual round cannot be manual.");
+                    }
                 }
             }
         }
@@ -639,6 +775,12 @@ namespace BusinessLogic.Services.Contests
                     $"Error distributing submissions: {ex.Message}"
                 );
             }
+        }
+
+        private static bool IsManualRound(Round round)
+        {
+            return round.Problem != null
+                && string.Equals(round.Problem.Type, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
         }
 
         public async Task<int?> GetRoundTimeLimitSecondsAsync(Guid roundId)
@@ -1098,7 +1240,7 @@ namespace BusinessLogic.Services.Contests
 
             var mentorIds = await teamRepo.Entities
                 .AsNoTracking()
-                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != null)
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != Guid.Empty)
                 .Select(t => t.Mentor.UserId)
                 .ToListAsync();
 
@@ -1174,6 +1316,45 @@ namespace BusinessLogic.Services.Contests
                 .FirstOrDefaultAsync();
         }
 
+        private async Task<Round?> FindRetakeRoundAsync(Guid mainRoundId)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            return await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.MainRoundId == mainRoundId
+                            && r.IsRetakeRound
+                            && r.DeletedAt == null)
+                .OrderBy(r => r.Start)
+                .Include(r => r.Problem)
+                .Include(r => r.McqTest)
+                .FirstOrDefaultAsync();
+        }
+
+        private async Task<bool> IsRoundFinalizedAsync(Guid roundId)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+            IGenericRepository<Appeal> appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            bool hasPendingSubs = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s => s.DeletedAt == null
+                               && s.Problem != null
+                               && s.Problem.RoundId == roundId
+                               && s.Status == SUBMISSION_STATUS_PENDING);
+
+            if (hasPendingSubs) return false;
+
+            bool hasOpenAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a => a.DeletedAt == null
+                               && a.TargetId == roundId
+                               && (a.State != APPEAL_STATE_CLOSED
+                                   || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            return !hasOpenAppeals;
+        }
+
         private async Task EnforceRoundRankCutoffForStudentAsync(Round currentRound, Guid studentId)
         {
             if (currentRound.IsRetakeRound) return; // retake handled by appeal logic
@@ -1183,6 +1364,20 @@ namespace BusinessLogic.Services.Contests
 
             Round? prevRound = await FindPreviousMainRoundAsync(currentRound);
             if (prevRound == null) return; // first main round, next
+
+            // If retake exists for prevRound, enforce only after retake finalized; otherwise after main finalized
+            Round? retakeRound = await FindRetakeRoundAsync(prevRound.RoundId);
+            if (retakeRound != null)
+            {
+                bool retakeFinalized = await IsRoundFinalizedAsync(retakeRound.RoundId);
+                if (!retakeFinalized) return; // wait until retake done
+                prevRound = retakeRound;
+            }
+            else
+            {
+                bool prevFinalized = await IsRoundFinalizedAsync(prevRound.RoundId);
+                if (!prevFinalized) return; // wait until main round done
+            }
 
             // Find student's team in this contest
             var teamRepo = _unitOfWork.GetRepository<Team>();

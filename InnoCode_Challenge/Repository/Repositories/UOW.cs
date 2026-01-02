@@ -1,7 +1,6 @@
 ﻿using DataAccess.Entities;
 using Microsoft.EntityFrameworkCore;
 using Repository.IRepositories;
-using Microsoft.EntityFrameworkCore;             
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Repository.Repositories

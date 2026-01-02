@@ -508,7 +508,7 @@ namespace BusinessLogic.Services.Contests
             if (!contest.End.HasValue)
                 return;
 
-            DateTime lastRoundEnd = rounds.Max(r => r.End);
+            Round lastRound = rounds.OrderBy(r => r.End).Last();
 
             int submitDays = await GetContestPolicyDaysAsync(
                 contest.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
@@ -517,7 +517,12 @@ namespace BusinessLogic.Services.Contests
             int rescoreDays = await GetContestPolicyDaysAsync(
                 contest.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
 
-            DateTime requiredEnd = lastRoundEnd.AddDays(submitDays + reviewDays + rescoreDays);
+            bool lastIsManual = lastRound.Problem != null
+                && string.Equals(lastRound.Problem.Type, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
+
+            int bufferDays = submitDays + reviewDays + (lastIsManual ? rescoreDays * 2 : 0);
+
+            DateTime requiredEnd = lastRound.End.AddDays(bufferDays);
 
             if (contest.End.Value < requiredEnd)
             {
@@ -1421,7 +1426,7 @@ namespace BusinessLogic.Services.Contests
                 .ToListAsync();
 
             var mentorIds = await teamRepo.Entities
-                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != null)
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null && t.MentorId != Guid.Empty)
                 .Select(t => t.Mentor.UserId)
                 .ToListAsync();
 

@@ -97,7 +97,8 @@ namespace BusinessLogic.Services.Submissions
             IConfigService configService,
             IMockTestExecutor mockTestExecutor,
             INotificationService notificationService,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            ILogger<SubmissionService> logger)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -109,6 +110,7 @@ namespace BusinessLogic.Services.Submissions
             _mockTestExecutor = mockTestExecutor;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _logger = logger;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
@@ -2059,6 +2061,11 @@ namespace BusinessLogic.Services.Submissions
                     // Update leaderboard if cleared
                     await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
                 }
+                else
+                {
+                    // On confirmed plagiarism: eliminate team from contest and zero out scoreboard
+                    await EliminateTeamForPlagiarismAsync(contestId, submission.TeamId);
+                }
 
                 _unitOfWork.CommitTransaction();
             }
@@ -2144,6 +2151,31 @@ namespace BusinessLogic.Services.Submissions
 
             await _unitOfWork.SaveAsync();
             return (matchedId.HasValue, matchedId);
+        }
+
+        private async Task EliminateTeamForPlagiarismAsync(Guid contestId, Guid teamId)
+        {
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            var leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+
+            Team? team = await teamRepo.Entities
+                .FirstOrDefaultAsync(t => t.TeamId == teamId && t.ContestId == contestId && t.DeletedAt == null);
+
+            if (team != null && !string.Equals(team.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase))
+            {
+                team.Status = TeamStatusConstants.Eliminated;
+                await teamRepo.UpdateAsync(team);
+            }
+
+            LeaderboardEntry? entry = await leaderboardRepo.Entities
+                .FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == teamId);
+
+            if (entry != null)
+            {
+                entry.Score = 0;
+                entry.SnapshotAt = DateTime.UtcNow;
+                await leaderboardRepo.UpdateAsync(entry);
+            }
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
@@ -2820,11 +2852,66 @@ namespace BusinessLogic.Services.Submissions
             Round? prevRound = await FindPreviousMainRoundAsync(currentRound);
             if (prevRound == null) return;
 
+            // If retake exists, enforce only after retake finalized; otherwise after main finalized
+            Round? retakeRound = await FindRetakeRoundAsync(prevRound);
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            if (retakeRound != null)
+            {
+                bool retakeFinalized = await IsRoundFinalizedAsync(retakeRound.RoundId, submissionRepo, appealRepo);
+                if (!retakeFinalized) return;
+                prevRound = retakeRound;
+            }
+            else
+            {
+                bool prevFinalized = await IsRoundFinalizedAsync(prevRound.RoundId, submissionRepo, appealRepo);
+                if (!prevFinalized) return;
+            }
+
             List<Guid> topTeamIds = await GetTopTeamsByRoundAsync(currentRound.ContestId, prevRound.RoundId, cutoff);
 
             if (!topTeamIds.Contains(teamId))
                 throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
                     $"Your team is not in Top-{cutoff} of the previous round.");
+        }
+
+        private async Task<Round?> FindRetakeRoundAsync(Round mainRound)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            return await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.IsRetakeRound
+                            && r.MainRoundId == mainRound.RoundId
+                            && r.DeletedAt == null)
+                .OrderBy(r => r.Start)
+                .FirstOrDefaultAsync();
+        }
+
+        private static async Task<bool> IsRoundFinalizedAsync(
+            Guid roundId,
+            IGenericRepository<Submission> submissionRepo,
+            IGenericRepository<Appeal> appealRepo)
+        {
+            bool hasPendingSubs = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s =>
+                    s.DeletedAt == null
+                    && s.Problem != null
+                    && s.Problem.RoundId == roundId
+                    && s.Status == SubmissionStatusEnum.Pending.ToString());
+
+            if (hasPendingSubs) return false;
+
+            bool hasOpenAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a =>
+                    a.DeletedAt == null
+                    && a.TargetId == roundId
+                    && (a.State != AppealStateEnum.Closed.ToString()
+                        || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            return !hasOpenAppeals;
         }
 
         public async Task<GetSubmissionDTO> GetAutoTestResultsBySubmissionIdAsync(Guid submissionId)
