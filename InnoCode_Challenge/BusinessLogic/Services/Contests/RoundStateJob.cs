@@ -1,6 +1,7 @@
 ﻿using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.NotificationsAndLogs;
+using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -311,10 +312,46 @@ namespace BusinessLogic.Services.Contests
             {
                 using IServiceScope scope = _serviceProvider.CreateScope();
                 IRoundService roundService = scope.ServiceProvider.GetRequiredService<IRoundService>();
+                IUOW uow = scope.ServiceProvider.GetRequiredService<IUOW>();
+
                 DateTime finalizeAt = await roundService.GetFinalizeNotBeforeAsync(round.RoundId);
-                if (finalizeAt > now)
+                DateTime finalizeAfter = finalizeAt.AddSeconds(5); // ensure auto-actions run first
+
+                if (finalizeAfter > now)
                 {
-                    schedulePoints.Add((finalizeAt, "Round Finalize"));
+                    schedulePoints.Add((finalizeAfter, "Round Finalize"));
+                }
+
+                // Appeal review reminder (T-8h)
+                DateTime reviewDeadline = await GetAppealReviewDeadlineAsync(round, uow);
+                DateTime reviewReminder = reviewDeadline.AddHours(-8);
+                if (reviewReminder > now)
+                {
+                    schedulePoints.Add((reviewReminder, "Appeal Review Reminder"));
+                }
+
+                // Auto-deny appeals exactly at review deadline
+                if (reviewDeadline > now)
+                {
+                    schedulePoints.Add((reviewDeadline, "Appeal Auto Deny"));
+                }
+
+                // Judge reminder (T-8h before default judge deadline for manual rounds)
+                DateTime? judgeDeadline = await GetDefaultJudgeDeadlineAsync(round, uow);
+                if (judgeDeadline.HasValue)
+                {
+                    DateTime judgeReminder = judgeDeadline.Value.AddHours(-8);
+                    if (judgeReminder > now)
+                    {
+                        schedulePoints.Add((judgeReminder, "Judge Reminder"));
+                    }
+
+                    // Auto score pending submissions at the latest allowed time
+                    DateTime judgeAutoScoreAt = finalizeAt > judgeDeadline ? finalizeAt : judgeDeadline.Value;
+                    if (judgeAutoScoreAt > now)
+                    {
+                        schedulePoints.Add((judgeAutoScoreAt, "Auto Score Pending"));
+                    }
                 }
             }
             catch (Exception ex)
@@ -328,9 +365,15 @@ namespace BusinessLogic.Services.Contests
                 if (delay.TotalSeconds > 0)
                 {
                     BackgroundJob.Schedule<RoundStateJob>(
-                        description == "Round Finalize"
-                            ? job => job.FinalizeRoundAsync(round.RoundId)
-                            : job => job.UpdateSpecificRoundAsync(round.RoundId),
+                        description switch
+                        {
+                            "Round Finalize" => job => job.FinalizeRoundAsync(round.RoundId),
+                            "Appeal Review Reminder" => job => job.RemindAppealReviewAsync(round.RoundId),
+                            "Appeal Auto Deny" => job => job.AutoDenyAppealsAsync(round.RoundId),
+                            "Judge Reminder" => job => job.RemindJudgePendingAsync(round.RoundId),
+                            "Auto Score Pending" => job => job.AutoScorePendingSubmissionsAsync(round.RoundId),
+                            _ => job => job.UpdateSpecificRoundAsync(round.RoundId)
+                        },
                         delay);
 
                     _logger.LogInformation(
@@ -432,6 +475,398 @@ namespace BusinessLogic.Services.Contests
                 _logger.LogError(ex, "FinalizeRoundAsync failed for round {RoundId}", roundId);
                 throw;
             }
+        }
+
+        [DisableConcurrentExecution(timeoutInSeconds: 120)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 30, 60 })]
+        public async Task AutoDenyAppealsAsync(Guid roundId)
+        {
+            try
+            {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IUOW uow = scope.ServiceProvider.GetRequiredService<IUOW>();
+                INotificationService notif = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                IActivityLogWriter logWriter = scope.ServiceProvider.GetRequiredService<IActivityLogWriter>();
+
+                var roundRepo = uow.GetRepository<Round>();
+                var appealRepo = uow.GetRepository<Appeal>();
+                var mentorRepo = uow.GetRepository<Mentor>();
+
+                Round? round = await roundRepo.Entities
+                    .Include(r => r.Contest)
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+                if (round == null) return;
+
+                DateTime reviewDeadline = await GetAppealReviewDeadlineAsync(round, uow);
+                if (DateTime.UtcNow < reviewDeadline) return;
+
+                var pendingAppeals = await appealRepo.Entities
+                    .Include(a => a.Team)
+                    .Where(a => a.DeletedAt == null
+                                && a.TargetId == roundId
+                                && (a.State != AppealStateEnum.Closed.ToString()
+                                    || a.Decision == AppealDecisionEnum.Pending.ToString()))
+                    .ToListAsync();
+
+                if (!pendingAppeals.Any()) return;
+
+                Guid organizerId = Guid.Empty;
+                if (round.Contest?.CreatedBy != null)
+                {
+                    Guid.TryParse(round.Contest.CreatedBy, out organizerId);
+                }
+
+                foreach (var appeal in pendingAppeals)
+                {
+                    appeal.State = AppealStateEnum.Closed.ToString();
+                    appeal.Decision = AppealDecisionEnum.Rejected.ToString();
+                    if (string.IsNullOrWhiteSpace(appeal.DecisionReason))
+                    {
+                        appeal.DecisionReason = "Auto-denied because the appeal review deadline passed.";
+                    }
+
+                    await appealRepo.UpdateAsync(appeal);
+                }
+
+                await uow.SaveAsync();
+
+                foreach (var appeal in pendingAppeals)
+                {
+                    var recipients = new HashSet<Guid>();
+                    if (appeal.OwnerId != Guid.Empty) recipients.Add(appeal.OwnerId);
+
+                    if (appeal.Team?.MentorId != null)
+                    {
+                        Guid? mentorUserId = await mentorRepo.Entities
+                            .Where(m => m.MentorId == appeal.Team.MentorId && m.DeletedAt == null)
+                            .Select(m => (Guid?)m.UserId)
+                            .FirstOrDefaultAsync();
+                        if (mentorUserId.HasValue) recipients.Add(mentorUserId.Value);
+                    }
+
+                    if (organizerId != Guid.Empty) recipients.Add(organizerId);
+
+                    if (recipients.Count > 0)
+                    {
+                        await notif.CreateInAppToUsersAsync(
+                            recipients,
+                            NotificationTypes.AppealUpdated,
+                            new
+                            {
+                                appealId = appeal.AppealId,
+                                teamId = appeal.TeamId,
+                                roundId = appeal.TargetId,
+                                contestId = round.ContestId,
+                                state = appeal.State,
+                                decision = appeal.Decision,
+                                targetType = TargetTypes.Appeal,
+                                targetId = appeal.AppealId.ToString(),
+                                message = "Appeal was auto-denied after the review deadline."
+                            });
+                    }
+
+                    if (organizerId != Guid.Empty)
+                    {
+                        await logWriter.TryWriteAsync(
+                            organizerId,
+                            ActivityActions.AppealResolve,
+                            TargetTypes.Appeal,
+                            appeal.AppealId.ToString());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AutoDenyAppealsAsync failed for round {RoundId}", roundId);
+                throw;
+            }
+        }
+
+        [DisableConcurrentExecution(timeoutInSeconds: 120)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 30, 60 })]
+        public async Task AutoScorePendingSubmissionsAsync(Guid roundId)
+        {
+            try
+            {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IUOW uow = scope.ServiceProvider.GetRequiredService<IUOW>();
+                INotificationService notif = scope.ServiceProvider.GetRequiredService<INotificationService>();
+                ILeaderboardEntryService leaderboardService = scope.ServiceProvider.GetRequiredService<ILeaderboardEntryService>();
+                IActivityLogWriter logWriter = scope.ServiceProvider.GetRequiredService<IActivityLogWriter>();
+
+                var roundRepo = uow.GetRepository<Round>();
+                var submissionRepo = uow.GetRepository<Submission>();
+                var configRepo = uow.GetRepository<Config>();
+                var contestRepo = uow.GetRepository<Contest>();
+
+                Round? round = await roundRepo.Entities
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+                if (round == null || round.Problem?.Type != ProblemTypeEnum.Manual.ToString())
+                    return;
+
+                int judgeDays = await GetPolicyDaysAsync(configRepo, round.ContestId, ContestPolicyKeys.JudgeRescoreDays, 1);
+                DateTime defaultDeadline = round.End.AddDays(judgeDays);
+
+                var pendingSubs = await submissionRepo.Entities
+                    .Include(s => s.Problem)
+                    .Where(s => s.DeletedAt == null
+                                && s.Problem != null
+                                && s.Problem.RoundId == roundId
+                                && s.Status == SubmissionStatusEnum.Pending.ToString())
+                    .ToListAsync();
+
+                if (!pendingSubs.Any()) return;
+
+                Guid organizerId = Guid.Empty;
+                string? organizerStr = await contestRepo.Entities
+                    .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                    .Select(c => c.CreatedBy)
+                    .FirstOrDefaultAsync();
+                Guid.TryParse(organizerStr, out organizerId);
+
+                var overdue = new List<Submission>();
+                foreach (var sub in pendingSubs)
+                {
+                    DateTime deadline = defaultDeadline;
+                    if (!string.IsNullOrWhiteSpace(sub.JudgedBy) && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                    {
+                        string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                        string? val = await configRepo.Entities
+                            .Where(c => c.Key == key && c.DeletedAt == null)
+                            .Select(c => c.Value)
+                            .FirstOrDefaultAsync();
+                        if (DateTime.TryParse(val, out DateTime parsed))
+                        {
+                            deadline = parsed;
+                        }
+                    }
+
+                    if (DateTime.UtcNow <= deadline) continue;
+
+                    sub.Status = SubmissionStatusEnum.Finished.ToString();
+                    sub.Score = 0;
+                    await submissionRepo.UpdateAsync(sub);
+                    overdue.Add(sub);
+                }
+
+                if (!overdue.Any()) return;
+
+                await uow.SaveAsync();
+
+                foreach (var sub in overdue)
+                {
+                    await leaderboardService.UpdateTeamScoreAsync(round.ContestId, sub.TeamId);
+
+                    var recipients = new HashSet<Guid>();
+                    if (!string.IsNullOrWhiteSpace(sub.JudgedBy) && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                    {
+                        recipients.Add(judgeId);
+                    }
+                    if (organizerId != Guid.Empty) recipients.Add(organizerId);
+
+                    if (recipients.Count > 0)
+                    {
+                        await notif.CreateInAppToUsersAsync(
+                            recipients,
+                            NotificationTypes.SubmissionStatusChanged,
+                            new
+                            {
+                                contestId = round.ContestId,
+                                roundId = round.RoundId,
+                                submissionId = sub.SubmissionId,
+                                status = sub.Status,
+                                message = "Submission was auto-scored 0 because the judge deadline passed."
+                            });
+                    }
+
+                    if (organizerId != Guid.Empty)
+                    {
+                        await logWriter.TryWriteAsync(
+                            organizerId,
+                            ActivityActions.SubmissionStatusChange,
+                            TargetTypes.Submission,
+                            sub.SubmissionId.ToString());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AutoScorePendingSubmissionsAsync failed for round {RoundId}", roundId);
+                throw;
+            }
+        }
+
+        [DisableConcurrentExecution(timeoutInSeconds: 120)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 30, 60 })]
+        public async Task RemindAppealReviewAsync(Guid roundId)
+        {
+            try
+            {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IUOW uow = scope.ServiceProvider.GetRequiredService<IUOW>();
+                INotificationService notif = scope.ServiceProvider.GetRequiredService<INotificationService>();
+
+                IGenericRepository<Round> roundRepo = uow.GetRepository<Round>();
+                IGenericRepository<Appeal> appealRepo = uow.GetRepository<Appeal>();
+                IGenericRepository<Contest> contestRepo = uow.GetRepository<Contest>();
+
+                Round? round = await roundRepo.Entities.FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+                if (round == null) return;
+
+                DateTime deadline = await GetAppealReviewDeadlineAsync(round, uow);
+                DateTime now = DateTime.UtcNow;
+                if (now < deadline.AddHours(-8) || now > deadline) return;
+
+                bool hasOpenAppeals = await appealRepo.Entities.AsNoTracking()
+                    .AnyAsync(a => a.DeletedAt == null
+                                   && a.TargetId == roundId
+                                   && (a.State != AppealStateEnum.Closed.ToString()
+                                       || a.Decision == AppealDecisionEnum.Pending.ToString()));
+                if (!hasOpenAppeals) return;
+
+                string? organizerStr = await contestRepo.Entities
+                    .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                    .Select(c => c.CreatedBy)
+                    .FirstOrDefaultAsync();
+
+                Guid organizerId;
+                bool parsedOrganizer = Guid.TryParse(organizerStr, out organizerId);
+
+                if (parsedOrganizer && organizerId != Guid.Empty)
+                {
+                    await notif.CreateInAppToUserAsync(
+                        organizerId,
+                        NotificationTypes.RoundUpdated,
+                        new
+                        {
+                            contestId = round.ContestId,
+                            roundId = round.RoundId,
+                            message = "Appeal review deadline is approaching. There are pending appeals to review."
+                        });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "RemindAppealReviewAsync failed for round {RoundId}", roundId);
+                throw;
+            }
+        }
+
+        [DisableConcurrentExecution(timeoutInSeconds: 120)]
+        [AutomaticRetry(Attempts = 2, DelaysInSeconds = new[] { 30, 60 })]
+        public async Task RemindJudgePendingAsync(Guid roundId)
+        {
+            try
+            {
+                using IServiceScope scope = _serviceProvider.CreateScope();
+                IUOW uow = scope.ServiceProvider.GetRequiredService<IUOW>();
+                INotificationService notif = scope.ServiceProvider.GetRequiredService<INotificationService>();
+
+                var roundRepo = uow.GetRepository<Round>();
+                var submissionRepo = uow.GetRepository<Submission>();
+                var configRepo = uow.GetRepository<Config>();
+
+                Round? round = await roundRepo.Entities
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+                if (round == null || round.Problem?.Type != ProblemTypeEnum.Manual.ToString()) return;
+
+                DateTime defaultDeadline = await GetDefaultJudgeDeadlineAsync(round, uow) ?? DateTime.UtcNow;
+
+                var pendingSubs = await submissionRepo.Entities
+                    .Where(s => s.DeletedAt == null
+                                && s.Problem != null
+                                && s.Problem.RoundId == roundId
+                                && s.Status == SubmissionStatusEnum.Pending.ToString()
+                                && !string.IsNullOrWhiteSpace(s.JudgedBy))
+                    .ToListAsync();
+
+                if (!pendingSubs.Any()) return;
+
+                DateTime now = DateTime.UtcNow;
+                var grouped = pendingSubs.GroupBy(s => s.JudgedBy);
+
+                foreach (var group in grouped)
+                {
+                    if (!Guid.TryParse(group.Key, out Guid judgeId)) continue;
+
+                    // Determine the earliest deadline among this judge's pending submissions
+                    DateTime minDeadline = defaultDeadline;
+                    foreach (var sub in group)
+                    {
+                        string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                        string? val = await configRepo.Entities
+                            .Where(c => c.Key == key && c.DeletedAt == null)
+                            .Select(c => c.Value)
+                            .FirstOrDefaultAsync();
+
+                        if (DateTime.TryParse(val, out DateTime parsed))
+                        {
+                            if (parsed < minDeadline) minDeadline = parsed;
+                        }
+                    }
+
+                    if (now >= minDeadline.AddHours(-8) && now <= minDeadline)
+                    {
+                        await notif.CreateInAppToUserAsync(
+                            judgeId,
+                            NotificationTypes.ManualGradingAssigned,
+                            new
+                            {
+                                contestId = round.ContestId,
+                                roundId = round.RoundId,
+                                message = "Manual grading deadline is approaching. You have pending submissions."
+                            });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "RemindJudgePendingAsync failed for round {RoundId}", roundId);
+                throw;
+            }
+        }
+
+        private async Task<DateTime> GetAppealReviewDeadlineAsync(Round round, IUOW uow)
+        {
+            var configRepo = uow.GetRepository<Config>();
+            string key = ConfigKeys.RoundAppealReviewDeadlineUtc(round.RoundId);
+
+            string? val = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            if (DateTime.TryParse(val, out DateTime parsed))
+                return parsed;
+
+            int submitDays = await GetPolicyDaysAsync(configRepo, round.ContestId, ContestPolicyKeys.AppealSubmitDays, 2);
+            int reviewDays = await GetPolicyDaysAsync(configRepo, round.ContestId, ContestPolicyKeys.AppealReviewDays, 1);
+            return round.End.AddDays(submitDays + reviewDays);
+        }
+
+        private async Task<DateTime?> GetDefaultJudgeDeadlineAsync(Round round, IUOW uow)
+        {
+            if (round.Problem?.Type != ProblemTypeEnum.Manual.ToString())
+                return null;
+
+            var configRepo = uow.GetRepository<Config>();
+            int judgeDays = await GetPolicyDaysAsync(configRepo, round.ContestId, ContestPolicyKeys.JudgeRescoreDays, 1);
+            return round.End.AddDays(judgeDays);
+        }
+
+        private static async Task<int> GetPolicyDaysAsync(IGenericRepository<Config> configRepo, Guid contestId, string key, int defaultValue)
+        {
+            string policyKey = ConfigKeys.ContestPolicy(contestId, key);
+            string? val = await configRepo.Entities
+                .Where(c => c.Key == policyKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return int.TryParse(val, out int days) && days >= 0 ? days : defaultValue;
         }
     }
 }
