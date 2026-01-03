@@ -3878,7 +3878,20 @@ namespace BusinessLogic.Services.Submissions
             try
             {
                 Guid contestId = submission.Problem.Round.ContestId;
-                await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
+
+                // Check if there are any pending submissions in the contest
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                bool hasPendingSubmissions = await submissionRepo.Entities
+                    .AsNoTracking()
+                    .AnyAsync(s => s.DeletedAt == null
+                        && s.Problem.Round.ContestId == contestId
+                        && s.Status == SubmissionStatusEnum.Pending.ToString());
+
+                if (!hasPendingSubmissions)
+                {
+                    // Update the entire contest leaderboard if no pending submissions
+                    await _leaderboardService.UpdateContestLeaderboardAsync(contestId);
+                }
             }
             catch (Exception ex)
             {

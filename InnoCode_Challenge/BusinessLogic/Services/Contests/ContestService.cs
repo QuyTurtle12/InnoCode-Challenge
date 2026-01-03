@@ -1577,7 +1577,7 @@ namespace BusinessLogic.Services.Contests
                     .ToList();
 
                 // Compute member latest scores per round
-                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores =
+                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores =
                     await GetLatestMemberRoundScoresAsync(contestId, teamsSorted);
 
                 // Compute the team average score per round
@@ -1647,7 +1647,7 @@ namespace BusinessLogic.Services.Contests
             return formFile;
         }
 
-        private async Task<Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double>> GetLatestMemberRoundScoresAsync(
+        private async Task<Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)>> GetLatestMemberRoundScoresAsync(
             Guid contestId,
             List<Team> teams)
         {
@@ -1698,18 +1698,19 @@ namespace BusinessLogic.Services.Contests
                 .GroupBy(x => x.StudentId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.TeamId).Distinct().ToList());
 
-            // Initialize result dictionary
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> result =
-                new Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double>();
+            // Initialize result dictionary with score and status
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> result =
+                new Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)>();
 
-            // Populate scores from submissions
+            // Populate scores and statuses from submissions
             foreach (Submission s in latestSubmissions)
             {
                 Guid roundId = s.Problem.RoundId;
-                result[(s.TeamId, roundId, s.SubmittedByStudentId)] = s.Score;
+                string status = s.Status ?? "Unknown";
+                result[(s.TeamId, roundId, s.SubmittedByStudentId)] = (s.Score, status);
             }
 
-            // Populate scores from MCQ attempts
+            // Populate scores and statuses from MCQ attempts
             foreach (McqAttempt a in latestAttempts)
             {
                 // Skip if student not found in team lookup
@@ -1720,11 +1721,12 @@ namespace BusinessLogic.Services.Contests
 
                 // Use 0 if score is null
                 double score = a.Score ?? 0;
+                string status = a.Status ?? "Unknown";
 
-                // Add score for each team the student belongs to
+                // Add score and status for each team the student belongs to
                 foreach (Guid teamId in memberTeamIds)
                 {
-                    result[(teamId, a.RoundId, a.StudentId)] = score;
+                    result[(teamId, a.RoundId, a.StudentId)] = (score, status);
                 }
             }
 
@@ -1734,7 +1736,7 @@ namespace BusinessLogic.Services.Contests
         private static Dictionary<(Guid TeamId, Guid RoundId), double> GetTeamRoundAverageScores(
             List<Round> rounds,
             List<Team> teams,
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores)
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores)
         {
             Dictionary<(Guid TeamId, Guid RoundId), double> result = new Dictionary<(Guid TeamId, Guid RoundId), double>();
 
@@ -1748,18 +1750,25 @@ namespace BusinessLogic.Services.Contests
                 foreach (Round round in rounds)
                 {
                     double sum = 0;
+                    int finishedCount = 0;
 
-                    // Sum up scores for all members in this round (missing scores = 0)
+                    // Sum up scores for all members in this round
                     foreach (Guid studentId in memberStudentIds)
                     {
-                        if (memberScores.TryGetValue((team.TeamId, round.RoundId, studentId), out double score))
+                        if (memberScores.TryGetValue((team.TeamId, round.RoundId, studentId), out (double Score, string Status) scoreData))
                         {
-                            sum += score;
+                            // Only add to sum if status is Finished
+                            if (string.Equals(scoreData.Status, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(scoreData.Status, McqAttemptStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase))
+                            {
+                                sum += scoreData.Score;
+                                finishedCount++;
+                            }
                         }
                     }
 
-                    // Calculate average (avoid division by zero)
-                    double avg = memberCount > 0 ? sum / memberCount : 0;
+                    // Calculate average
+                    double avg = finishedCount > 0 ? sum / memberCount : 0;
                     result[(team.TeamId, round.RoundId)] = avg;
                 }
             }
@@ -1775,7 +1784,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;Rank;TeamName;SchoolName;MentorName;TotalScore").Append(CSV_NEW_LINE);
+            sb.Append("No.;Rank;Team Name;School Name;Mentor Name;Total Score").Append(CSV_NEW_LINE);
 
             // Sort teams by rank
             List<Team> sortedTeams = teamsSorted
@@ -1824,7 +1833,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;RoundName;RoundType;TeamAverageScore").Append(CSV_NEW_LINE);
+            sb.Append("No.;Team Name;Round Name;Round Type;Team Average Score").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then descending by start
             List<Round> roundsSorted = rounds
@@ -1874,13 +1883,13 @@ namespace BusinessLogic.Services.Contests
         private static string BuildMemberRoundScoresCsv(
             List<Round> rounds,
             List<Team> teamsSorted,
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores,
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores,
             Dictionary<Guid, int> teamRank)
         {
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CSV_NEW_LINE);
+            sb.Append("No.;Team Name;Student Name;Round Name;Round Type;Student Score;Submission Status").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
@@ -1889,8 +1898,8 @@ namespace BusinessLogic.Services.Contests
                 .ToList();
 
             // Create a list of all rows
-            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score)> rows =
-                new List<(string, string, string, string, double)>();
+            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score, string Status)> rows =
+                new List<(string, string, string, string, double, string)>();
 
             foreach (Team team in teamsSorted)
             {
@@ -1908,17 +1917,22 @@ namespace BusinessLogic.Services.Contests
                     {
                         // Determine round type and convert to readable format
                         string roundType = round.McqTest != null
-                            ? "MCQ Test"
+                            ? ROUND_TYPE_MCQ_TEST
                             : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                                ? "Auto Evaluation"
+                                ? ROUND_TYPE_AUTO_EVALUATION
                                 : round.Problem?.Type ?? string.Empty);
 
-                        // Get student score for this round
-                        double score = memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out double v)
-                            ? v
-                            : 0;
+                        // Get student score and status for this round
+                        double score = 0;
+                        string status = "Not Submitted";
 
-                        rows.Add((team.Name, studentName, round.Name, roundType, score));
+                        if (memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out (double Score, string Status) scoreData))
+                        {
+                            score = scoreData.Score;
+                            status = scoreData.Status;
+                        }
+
+                        rows.Add((team.Name, studentName, round.Name, roundType, score, status));
                     }
                 }
             }
@@ -1929,7 +1943,7 @@ namespace BusinessLogic.Services.Contests
                 .ThenBy(r => r.TeamName)
                 .ToList();
 
-            // Add rows with No. column
+            // Add rows
             int rowNumber = 1;
             foreach (var row in sortedRows)
             {
@@ -1938,7 +1952,8 @@ namespace BusinessLogic.Services.Contests
                   .Append(CsvField(row.StudentName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
-                  .Append(row.Score.ToString(CultureInfo.InvariantCulture))
+                  .Append(row.Score.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.Status))
                   .Append(CSV_NEW_LINE);
 
                 rowNumber++;
@@ -2101,7 +2116,7 @@ namespace BusinessLogic.Services.Contests
                     .ToListAsync();
 
                 // Compute member scores for mentor's team
-                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores =
+                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores =
                     await GetLatestMemberRoundScoresAsync(contestId, new List<Team> { mentorTeam });
 
                 // Build CSV content
@@ -2155,12 +2170,12 @@ namespace BusinessLogic.Services.Contests
         private static string BuildMentorTeamReportCsv(
             List<Round> rounds,
             Team team,
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores)
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores)
         {
             StringBuilder sb = new StringBuilder();
 
-            // CSV header row
-            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CSV_NEW_LINE);
+            // CSV header row with Status column
+            sb.Append("No.;Team Name;Student Name;Round Name;Round Type;Student Score;Submission Status").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
@@ -2169,8 +2184,8 @@ namespace BusinessLogic.Services.Contests
                 .ToList();
 
             // Create a list of all rows
-            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score)> rows =
-                new List<(string, string, string, string, double)>();
+            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score, string Status)> rows =
+                new List<(string, string, string, string, double, string)>();
 
             // Sort members by student name
             List<TeamMember> membersSorted = team.TeamMembers
@@ -2186,17 +2201,22 @@ namespace BusinessLogic.Services.Contests
                 {
                     // Determine round type and convert to readable format
                     string roundType = round.McqTest != null
-                        ? "MCQ Test"
+                        ? ROUND_TYPE_MCQ_TEST
                         : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                            ? "Auto Evaluation"
+                            ? ROUND_TYPE_AUTO_EVALUATION
                             : round.Problem?.Type ?? string.Empty);
 
-                    // Get student score for this round
-                    double score = memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out double v)
-                        ? v
-                        : 0;
+                    // Get student score and status for this round
+                    double score = 0;
+                    string status = "Not Submitted";
 
-                    rows.Add((team.Name, studentName, round.Name, roundType, score));
+                    if (memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out (double Score, string Status) scoreData))
+                    {
+                        score = scoreData.Score;
+                        status = scoreData.Status;
+                    }
+
+                    rows.Add((team.Name, studentName, round.Name, roundType, score, status));
                 }
             }
 
@@ -2206,7 +2226,7 @@ namespace BusinessLogic.Services.Contests
                 .ThenBy(r => r.StudentName)
                 .ToList();
 
-            // Add rows with No. column
+            // Add rows with No. column and Status column
             int rowNumber = 1;
             foreach (var row in sortedRows)
             {
@@ -2215,7 +2235,8 @@ namespace BusinessLogic.Services.Contests
                   .Append(CsvField(row.StudentName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
-                  .Append(row.Score.ToString(CultureInfo.InvariantCulture))
+                  .Append(row.Score.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.Status))
                   .Append(CSV_NEW_LINE);
 
                 rowNumber++;

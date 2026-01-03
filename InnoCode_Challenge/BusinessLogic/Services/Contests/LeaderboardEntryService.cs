@@ -525,6 +525,7 @@ namespace BusinessLogic.Services.Contests
                         {
                             double roundScore = 0;
                             string roundType = string.Empty;
+                            string roundStatus = string.Empty;
                             DateTime? completedAt = null;
 
                             // Get key
@@ -542,7 +543,7 @@ namespace BusinessLogic.Services.Contests
                                 .Where(ma => ma.RoundId == round.RoundId
                                             && ma.StudentId == teamMember.StudentId
                                             && ma.End.HasValue
-                                            && ma.Status == McqAttemptStatusEnum.Finished.ToString())
+                                            && ma.DeletedAt == null)
                                 .OrderByDescending(ma => ma.End)
                                 .FirstOrDefaultAsync();
 
@@ -550,6 +551,7 @@ namespace BusinessLogic.Services.Contests
                             {
                                 roundScore = mcqAttempt.Score ?? 0;
                                 roundType = ProblemTypeEnum.McqTest.ToString();
+                                roundStatus = mcqAttempt.Status ?? string.Empty;
                                 completedAt = config.UpdatedAt;
                             }
                             else
@@ -560,7 +562,7 @@ namespace BusinessLogic.Services.Contests
                                     .Where(s => s.Problem.RoundId == round.RoundId
                                                && s.SubmittedByStudentId == teamMember.StudentId
                                                && s.TeamId == teamData.TeamId
-                                               && s.Status == SubmissionStatusEnum.Finished.ToString())
+                                               && s.DeletedAt == null)
                                     .OrderByDescending(s => s.CreatedAt)
                                     .FirstOrDefaultAsync();
 
@@ -568,6 +570,7 @@ namespace BusinessLogic.Services.Contests
                                 {
                                     roundScore = submission.Score;
                                     roundType = submission.Problem.Type ?? "Unknown Type";
+                                    roundStatus = submission.Status ?? string.Empty;
                                     completedAt = config.UpdatedAt;
                                 }
                             }
@@ -579,11 +582,16 @@ namespace BusinessLogic.Services.Contests
                                 RoundName = round.Name,
                                 Score = roundScore,
                                 RoundType = roundType,
+                                Status = roundStatus,
                                 CompletedAt = completedAt
                             });
 
-                            // Add to total score
-                            memberInfo.TotalScore += roundScore;
+                            // Only add to total score if status is Finished
+                            if (string.Equals(roundStatus, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(roundStatus, McqAttemptStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase))
+                            {
+                                memberInfo.TotalScore += roundScore;
+                            }
                         }
 
                         // Add member info to team
@@ -836,7 +844,8 @@ namespace BusinessLogic.Services.Contests
                         .Where(ma => roundIds.Contains(ma.RoundId)
                                     && allStudentIds.Contains(ma.StudentId)
                                     && ma.End.HasValue
-                                    && ma.Status == McqAttemptStatusEnum.Finished.ToString())
+                                    && ma.Status == McqAttemptStatusEnum.Finished.ToString()
+                                    && ma.DeletedAt == null)
                         .ToListAsync();
 
                     // Group by (RoundId, StudentId) and take the latest attempt
@@ -861,7 +870,8 @@ namespace BusinessLogic.Services.Contests
                         .Where(s => roundIds.Contains(s.Problem.RoundId)
                                    && allStudentIds.Contains(s.SubmittedByStudentId)
                                    && teamIds.Contains(s.TeamId)
-                                   && s.Status == SubmissionStatusEnum.Finished.ToString())
+                                   && s.Status == SubmissionStatusEnum.Finished.ToString()
+                                   && s.DeletedAt == null)
                         .ToListAsync();
 
                     // Group by (RoundId, StudentId, TeamId) and take the latest submission
@@ -913,6 +923,7 @@ namespace BusinessLogic.Services.Contests
                             {
                                 double roundScore = 0;
                                 string roundType = string.Empty;
+                                string roundStatus = string.Empty;
                                 DateTime? completedAt = null;
 
                                 // Check config round finished using lookup
@@ -928,6 +939,7 @@ namespace BusinessLogic.Services.Contests
                                 {
                                     roundScore = mcqAttempt.Score ?? 0;
                                     roundType = ProblemTypeEnum.McqTest.ToString();
+                                    roundStatus = mcqAttempt.Status ?? string.Empty;
                                     completedAt = config.UpdatedAt;
                                 }
                                 else if (submissionLookup.TryGetValue((round.RoundId, teamMember.StudentId, e.TeamId), out Submission? submission))
@@ -935,6 +947,7 @@ namespace BusinessLogic.Services.Contests
                                     // Check submission using lookup
                                     roundScore = submission.Score;
                                     roundType = submission.Problem.Type ?? "Unknown Type";
+                                    roundStatus = submission.Status ?? string.Empty;
                                     completedAt = config.UpdatedAt;
                                 }
 
@@ -945,11 +958,16 @@ namespace BusinessLogic.Services.Contests
                                     RoundName = round.Name,
                                     Score = roundScore,
                                     RoundType = roundType,
+                                    Status = roundStatus,
                                     CompletedAt = completedAt
                                 });
 
-                                // Add to total score
-                                memberInfo.TotalScore += roundScore;
+                                // Only add to total score if status is Finished
+                                if (string.Equals(roundStatus, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(roundStatus, McqAttemptStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase))
+                                {
+                                    memberInfo.TotalScore += roundScore;
+                                }
                             }
 
                             // Add member to team
@@ -1226,6 +1244,7 @@ namespace BusinessLogic.Services.Contests
                         {
                             double roundScore = 0;
                             string roundType = string.Empty;
+                            string roundStatus = string.Empty;
                             DateTime? completedAt = null;
 
                             // Check finished flag in config
@@ -1241,8 +1260,7 @@ namespace BusinessLogic.Services.Contests
                             McqAttempt? mcqAttempt = await mcqAttemptRepo.Entities
                                 .Where(ma => ma.RoundId == round.RoundId
                                              && ma.StudentId == teamMember.StudentId
-                                             && ma.End.HasValue
-                                             && ma.Status == McqAttemptStatusEnum.Finished.ToString())
+                                             && ma.End.HasValue)
                                 .OrderByDescending(ma => ma.End)
                                 .FirstOrDefaultAsync();
 
@@ -1250,6 +1268,7 @@ namespace BusinessLogic.Services.Contests
                             {
                                 roundScore = mcqAttempt.Score ?? 0;
                                 roundType = ProblemTypeEnum.McqTest.ToString();
+                                roundStatus = mcqAttempt.Status ?? string.Empty;
                                 completedAt = config.UpdatedAt;
                             }
                             else
@@ -1259,8 +1278,7 @@ namespace BusinessLogic.Services.Contests
                                     .Include(s => s.Problem)
                                     .Where(s => s.Problem.RoundId == round.RoundId
                                                 && s.SubmittedByStudentId == teamMember.StudentId
-                                                && s.TeamId == teamData.TeamId
-                                                && s.Status == SubmissionStatusEnum.Finished.ToString())
+                                                && s.TeamId == teamData.TeamId)
                                     .OrderByDescending(s => s.CreatedAt)
                                     .FirstOrDefaultAsync();
 
@@ -1268,6 +1286,7 @@ namespace BusinessLogic.Services.Contests
                                 {
                                     roundScore = submission.Score;
                                     roundType = submission.Problem.Type ?? "Unknown Type";
+                                    roundStatus = submission.Status ?? string.Empty;
                                     completedAt = config.UpdatedAt;
                                 }
                             }
@@ -1278,10 +1297,16 @@ namespace BusinessLogic.Services.Contests
                                 RoundName = round.Name,
                                 Score = roundScore,
                                 RoundType = roundType,
+                                Status = roundStatus,
                                 CompletedAt = completedAt
                             });
 
-                            memberInfo.TotalScore += roundScore;
+                            // Only add to total score if status is Finished
+                            if (string.Equals(roundStatus, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(roundStatus, McqAttemptStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase))
+                            {
+                                memberInfo.TotalScore += roundScore;
+                            }
                         }
 
                         teamData.Members.Add(memberInfo);
@@ -1419,6 +1444,72 @@ namespace BusinessLogic.Services.Contests
 
             // Return average score
             return totalTeamScore / teamSize;
+        }
+
+        public async Task UpdateContestLeaderboardAsync(Guid contestId)
+        {
+            try
+            {
+                // Validate that the leaderboard is not frozen
+                await ValidateLeaderboardNotFrozenAsync(contestId);
+
+                IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+                // Get all leaderboard entries for the contest
+                List<LeaderboardEntry> entries = await leaderboardRepo.Entities
+                    .Where(e => e.ContestId == contestId)
+                    .ToListAsync();
+
+                if (!entries.Any())
+                {
+                    throw new ErrorException(StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        $"No leaderboard entries found for contest {contestId}");
+                }
+
+                // Get all non-eliminated teams in the contest
+                List<Guid> activeTeamIds = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId
+                        && t.DeletedAt == null
+                        && t.Status != TeamStatusConstants.Eliminated)
+                    .Select(t => t.TeamId)
+                    .ToListAsync();
+
+                // Update scores for all active teams
+                foreach (LeaderboardEntry entry in entries)
+                {
+                    // Skip eliminated teams
+                    if (!activeTeamIds.Contains(entry.TeamId))
+                    {
+                        continue;
+                    }
+
+                    // Recalculate average score for the team
+                    double averageScore = await CalculateTeamAverageScoreAsync(contestId, entry.TeamId);
+                    entry.Score = averageScore;
+                    entry.SnapshotAt = DateTime.UtcNow;
+
+                    await leaderboardRepo.UpdateAsync(entry);
+                }
+
+                await _unitOfWork.SaveAsync();
+
+                // Recalculate ranks
+                await RecalculateRanksAsync(contestId);
+            }
+            catch (Exception ex)
+            {
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error updating contest leaderboard: {ex.Message}");
+            }
         }
     }
 }

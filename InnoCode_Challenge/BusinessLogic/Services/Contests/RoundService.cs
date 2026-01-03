@@ -1023,6 +1023,7 @@ namespace BusinessLogic.Services.Contests
 
             return config.Value;
         }
+
         public async Task<GetRoundDTO> StartRoundNowAsync(Guid roundId)
         {
             bool committed = false;
@@ -1053,11 +1054,6 @@ namespace BusinessLogic.Services.Contests
                 if (round.Contest?.End.HasValue == true && now >= round.Contest.End.Value)
                     throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot start round because contest already ended.");
 
-                // Time limit must fit inside remaining duration
-                //int? tl = await GetRoundTimeLimitSecondsAsync(roundId);
-                //if (tl.HasValue && tl.Value > (round.End - now).TotalSeconds)
-                //    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "TimeLimitSeconds exceeds remaining round duration.");
-
                 // Prevent overlap with other rounds
                 var roundRepo = _unitOfWork.GetRepository<Round>();
                 var otherRounds = await roundRepo.Entities
@@ -1067,8 +1063,8 @@ namespace BusinessLogic.Services.Contests
                 foreach (var other in otherRounds)
                 {
                     if (now <= other.End && round.End >= other.Start)
-                            throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
-                            $"New round time conflicts with existing round '{other.Name}' ({DateTimeHelpers.ToIso8601String(other.Start)} - {DateTimeHelpers.ToIso8601String(other.End)}).");
+                        throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
+                        $"New round time conflicts with existing round '{other.Name}' ({DateTimeHelpers.ToIso8601String(other.Start)} - {DateTimeHelpers.ToIso8601String(other.End)}).");
                 }
 
                 round.Start = now;
@@ -1091,35 +1087,53 @@ namespace BusinessLogic.Services.Contests
                 throw;
             }
 
+            // Generate initial open code immediately
+            try
+            {
+                await GenerateOpenCode(persistedRoundId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate initial open code for round {RoundId}", persistedRoundId);
+            }
+
+            // Schedule recurring open code regeneration every 1 minute
+            SafeEnqueue(() =>
+                RecurringJob.AddOrUpdate(
+                    $"regenerate-open-code-{persistedRoundId}",
+                    () => RegenerateOpenCodeAsync(persistedRoundId),
+                    Cron.Minutely),
+                "ScheduleOpenCodeRegeneration");
+
             // Activity log
             var actorId = GetCurrentUserGuidOrThrow();
 
-                await SafeWriteActivityAsync(actorId,
-                    ActivityActions.RoundStartNow,
-                    TargetTypes.Round,
-                    persistedRoundId.ToString());
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundStartNow,
+                TargetTypes.Round,
+                persistedRoundId.ToString());
 
-                // Notification to participants
-                await SafeNotifyContestParticipantsAsync(contestId,
-                    NotificationTypes.RoundStarted,
-                    new
-                    {
-                        contestId = contestId,
-                        roundId = persistedRoundId,
-                        name = roundName,
-                        targetType = TargetTypes.Round,
-                        targetId = persistedRoundId.ToString(),
-                        message = $"Round '{roundName}' has started."
-                    });
+            // Notification to participants
+            await SafeNotifyContestParticipantsAsync(contestId,
+                NotificationTypes.RoundStarted,
+                new
+                {
+                    contestId = contestId,
+                    roundId = persistedRoundId,
+                    name = roundName,
+                    targetType = TargetTypes.Round,
+                    targetId = persistedRoundId.ToString(),
+                    message = $"Round '{roundName}' has started."
+                });
 
-                // Schedule background job to handle state transitions
-                SafeEnqueue(() =>
-                    BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
-                    "ScheduleRoundStateTransitionsAsync");
+            // Schedule background job to handle state transitions
+            SafeEnqueue(() =>
+                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
+                "ScheduleRoundStateTransitionsAsync");
 
-                return await GetRoundByIdAsync( persistedRoundId, null);
-
+            return await GetRoundByIdAsync(persistedRoundId, null);
         }
+
         public async Task<GetRoundDTO> EndRoundNowAsync(Guid roundId)
         {
 
@@ -1154,8 +1168,11 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.CommitTransaction();
                 committed = true;
 
-                // cancel any pending open code regeneration jobs
-                RecurringJob.RemoveIfExists($"regenerate-open-code-{persistedRoundId}");
+                // Define the recurring job ID
+                string recurringJobId = $"regenerate-open-code-{persistedRoundId}";
+
+                // Cancel any pending open code regeneration jobs
+                RecurringJob.RemoveIfExists(recurringJobId);
 
                 // capture for later use
                 contestId = round.ContestId;
@@ -1169,7 +1186,7 @@ namespace BusinessLogic.Services.Contests
                 throw;
             }
 
-            // If manual round, distribute pending submissions immediately (idempotent)
+            // If manual round, distribute pending submissions immediately
             if (isManual)
                 try
                 {
@@ -1207,8 +1224,39 @@ namespace BusinessLogic.Services.Contests
                 "ScheduleRoundStateTransitionsAsync");
 
             return await GetRoundByIdAsync(persistedRoundId, null);
-
         }
+
+        public async Task RegenerateOpenCodeAsync(Guid roundId)
+        {
+            try
+            {
+                // Check if round is still in Opened status
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+                // Define the recurring job ID
+                string recurringJobId = $"regenerate-open-code-{roundId}";
+
+                // If round not found, is closed, or has ended, remove the recurring job
+                if (round == null || round.Status != RoundStatusEnum.Opened.ToString() || DateTime.UtcNow >= round.End)
+                {
+                    RecurringJob.RemoveIfExists(recurringJobId);
+                    _logger.LogInformation("Removed open code regeneration job for round {RoundId} (round ended or closed)", roundId);
+                    return;
+                }
+
+                // Generate new open code
+                string newOpenCode = await GenerateOpenCode(roundId);
+
+                _logger.LogInformation("Successfully regenerated open code for round {RoundId}: {OpenCode}", roundId, newOpenCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to regenerate open code for round {RoundId}", roundId);
+            }
+        }
+
         private string GetCurrentUserIdOrThrow()
         {
             var user = _httpContextAccessor.HttpContext?.User;
