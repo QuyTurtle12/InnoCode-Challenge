@@ -15,6 +15,7 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using System.Globalization;
 using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
@@ -2515,6 +2516,58 @@ namespace BusinessLogic.Services.Contests
                 : round.End.AddDays(submitDays + reviewDays);
         }
 
+        public async Task<RoundTimelineDTO> GetRoundTimelineAsync(Guid roundId)
+        {
+            Round round = await FetchRoundWithIncludesAsync(roundId);
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+            DateTime? appealSubmitDeadline = null;
+            DateTime? appealReviewDeadline = null;
+            if (!round.IsRetakeRound)
+            {
+                string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
+                string? submitVal = await configRepo.Entities
+                    .Where(c => c.Key == submitKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                DateTime submitDeadline = ParseOrDefault(submitVal, round.End.AddDays(submitDays));
+                appealSubmitDeadline = submitDeadline;
+
+                string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
+                string? reviewVal = await configRepo.Entities
+                    .Where(c => c.Key == reviewKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                appealReviewDeadline = ParseOrDefault(reviewVal, submitDeadline.AddDays(reviewDays));
+            }
+
+            DateTime? judgeDeadline = null;
+            DateTime? judgeRescoreDeadline = null;
+            if (IsManualRound(round))
+            {
+                judgeDeadline = round.End.AddDays(judgeDays);
+                judgeRescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays);
+            }
+
+            return new RoundTimelineDTO
+            {
+                RoundId = roundId,
+                Start = round.Start,
+                End = round.End,
+                AppealSubmitDeadline = appealSubmitDeadline,
+                AppealReviewDeadline = appealReviewDeadline,
+                JudgeDeadline = judgeDeadline,
+                JudgeRescoreDeadline = judgeRescoreDeadline
+            };
+        }
+
         private static async Task UpsertDeadlineAsync(IGenericRepository<Config> configRepo, string key, DateTime value, string scope)
         {
             Config? existing = await configRepo.Entities.FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
@@ -2536,6 +2589,17 @@ namespace BusinessLogic.Services.Contests
                 existing.UpdatedAt = DateTime.UtcNow;
                 await configRepo.UpdateAsync(existing);
             }
+        }
+
+        private static DateTime ParseOrDefault(string? isoString, DateTime fallback)
+        {
+            return DateTime.TryParse(
+                isoString,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out DateTime parsed)
+                ? parsed
+                : fallback;
         }
 
         /// <summary>
