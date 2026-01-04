@@ -83,6 +83,18 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
+        [HttpGet("{id}/timeline")]
+        public async Task<IActionResult> GetRoundTimeline(Guid id)
+        {
+            RoundTimelineDTO timeline = await _roundService.GetRoundTimelineAsync(id);
+            return Ok(new BaseResponseModel<RoundTimelineDTO>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: timeline,
+                        message: "Round timeline retrieved successfully."
+                    ));
+        }
+
         /// <summary>
         /// Create a new round
         /// </summary>

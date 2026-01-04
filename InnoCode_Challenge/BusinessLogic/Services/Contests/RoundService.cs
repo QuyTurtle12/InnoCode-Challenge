@@ -15,6 +15,7 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using System.Globalization;
 using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
@@ -1041,6 +1042,7 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid round ID.");
 
                 Round round = await GetRoundOwnedByCurrentOrganizerAsync(roundId);
+                await EnsurePreviousRoundFinalizedAsync(round);
 
                 DateTime now = DateTime.UtcNow;
 
@@ -1257,6 +1259,46 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        private async Task EnsurePreviousRoundFinalizedAsync(Round round)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            Round? prevRound = await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.ContestId == round.ContestId
+                            && !r.IsRetakeRound
+                            && r.RoundId != round.RoundId
+                            && r.End <= round.Start
+                            && r.DeletedAt == null)
+                .OrderByDescending(r => r.End)
+                .FirstOrDefaultAsync();
+
+            if (prevRound == null) return;
+
+            bool hasUnfinishedSubmissions = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s =>
+                    s.DeletedAt == null
+                    && s.Problem != null
+                    && s.Problem.RoundId == prevRound.RoundId
+                    && s.Status == SubmissionStatusEnum.Pending.ToString());
+
+            bool hasPendingAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a =>
+                    a.DeletedAt == null
+                    && a.TargetId == prevRound.RoundId
+                    && (a.State != AppealStateEnum.Closed.ToString()
+                        || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            if (hasUnfinishedSubmissions || hasPendingAppeals)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                    $"Cannot start round '{round.Name}' because previous round '{prevRound.Name}' is not finalized.");
+            }
+        }
         private string GetCurrentUserIdOrThrow()
         {
             var user = _httpContextAccessor.HttpContext?.User;
@@ -2180,6 +2222,21 @@ namespace BusinessLogic.Services.Contests
             Guid studentId = await GetCurrentStudentIdAsync();
             Guid studentUserId = await GetCurrentStudentUserIdAsync(studentId);
 
+            // Ensure student's team in this contest is active
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            var team = await teamRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t =>
+                    t.ContestId == round.ContestId &&
+                    t.DeletedAt == null &&
+                    t.TeamMembers.Any(tm => tm.StudentId == studentId));
+
+            if (team == null || !string.Equals(team.Status, TeamStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
+                    "Your team is not active for this contest.");
+            }
+
             // Validate retake round access
             if (round.IsRetakeRound && round.MainRoundId.HasValue)
             {
@@ -2188,9 +2245,6 @@ namespace BusinessLogic.Services.Contests
 
             // Check if student has finished round
             await ValidateStudentNotFinishedAsync(round.RoundId, studentId);
-
-            // Enforce rank cutoff
-            await EnforceRoundRankCutoffForStudentAsync(round, studentId);
 
             // Validate open code
             await ValidateAndMarkOpenCodeAsync(round.RoundId, studentId, openCode);
@@ -2553,14 +2607,101 @@ namespace BusinessLogic.Services.Contests
 
             bool isManual = IsManualRound(round);
 
-            if (round.IsRetakeRound)
+            // Use actual configured deadlines if present (time-travel may set them)
+            DateTime submitDeadline = round.End.AddDays(submitDays).ToUniversalTime();
+            DateTime reviewDeadline = submitDeadline.AddDays(reviewDays).ToUniversalTime();
+
+            if (!round.IsRetakeRound)
             {
-                return isManual ? round.End.AddDays(judgeDays) : round.End;
+                string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
+                string? submitVal = await configRepo.Entities
+                    .Where(c => c.Key == submitKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                if (DateTime.TryParse(submitVal, out DateTime parsedSubmit))
+                {
+                    submitDeadline = parsedSubmit.ToUniversalTime();
+                }
+
+                string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
+                string? reviewVal = await configRepo.Entities
+                    .Where(c => c.Key == reviewKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                if (DateTime.TryParse(reviewVal, out DateTime parsedReview))
+                {
+                    reviewDeadline = parsedReview.ToUniversalTime();
+                }
             }
 
-            return isManual
-                ? round.End.AddDays(judgeDays * 2 + submitDays + reviewDays)
-                : round.End.AddDays(submitDays + reviewDays);
+            if (round.IsRetakeRound)
+            {
+                return isManual ? round.End.AddDays(judgeDays).ToUniversalTime() : round.End.ToUniversalTime();
+            }
+
+            if (!isManual)
+            {
+                return reviewDeadline;
+            }
+
+            // Manual main round: need both initial judge window and appeals/rescore window
+            DateTime initialJudgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+            DateTime rescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
+
+            // Finalize not-before should be after appeal review window AND after rescore window
+            return new[] { reviewDeadline, rescoreDeadline, initialJudgeDeadline }.Max();
+        }
+
+        public async Task<RoundTimelineDTO> GetRoundTimelineAsync(Guid roundId)
+        {
+            Round round = await FetchRoundWithIncludesAsync(roundId);
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+
+            DateTime? appealSubmitDeadline = null;
+            DateTime? appealReviewDeadline = null;
+            if (!round.IsRetakeRound)
+            {
+                string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
+                string? submitVal = await configRepo.Entities
+                    .Where(c => c.Key == submitKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                DateTime submitDeadline = ParseOrDefault(submitVal, round.End.AddDays(submitDays)).ToUniversalTime();
+                appealSubmitDeadline = submitDeadline;
+
+                string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
+                string? reviewVal = await configRepo.Entities
+                    .Where(c => c.Key == reviewKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                appealReviewDeadline = ParseOrDefault(reviewVal, submitDeadline.AddDays(reviewDays)).ToUniversalTime();
+            }
+
+            DateTime? judgeDeadline = null;
+            DateTime? judgeRescoreDeadline = null;
+            if (IsManualRound(round))
+            {
+                judgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+                judgeRescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
+            }
+
+            return new RoundTimelineDTO
+            {
+                RoundId = roundId,
+                Start = round.Start.ToUniversalTime(),
+                End = round.End.ToUniversalTime(),
+                AppealSubmitDeadline = appealSubmitDeadline,
+                AppealReviewDeadline = appealReviewDeadline,
+                JudgeDeadline = judgeDeadline,
+                JudgeRescoreDeadline = judgeRescoreDeadline
+            };
         }
 
         private static async Task UpsertDeadlineAsync(IGenericRepository<Config> configRepo, string key, DateTime value, string scope)
@@ -2584,6 +2725,17 @@ namespace BusinessLogic.Services.Contests
                 existing.UpdatedAt = DateTime.UtcNow;
                 await configRepo.UpdateAsync(existing);
             }
+        }
+
+        private static DateTime ParseOrDefault(string? isoString, DateTime fallback)
+        {
+            return DateTime.TryParse(
+                isoString,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out DateTime parsed)
+                ? parsed
+                : fallback;
         }
 
         /// <summary>
