@@ -2506,14 +2506,49 @@ namespace BusinessLogic.Services.Contests
 
             bool isManual = IsManualRound(round);
 
-            if (round.IsRetakeRound)
+            // Use actual configured deadlines if present (time-travel may set them)
+            DateTime submitDeadline = round.End.AddDays(submitDays).ToUniversalTime();
+            DateTime reviewDeadline = submitDeadline.AddDays(reviewDays).ToUniversalTime();
+
+            if (!round.IsRetakeRound)
             {
-                return isManual ? round.End.AddDays(judgeDays) : round.End;
+                string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
+                string? submitVal = await configRepo.Entities
+                    .Where(c => c.Key == submitKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                if (DateTime.TryParse(submitVal, out DateTime parsedSubmit))
+                {
+                    submitDeadline = parsedSubmit.ToUniversalTime();
+                }
+
+                string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
+                string? reviewVal = await configRepo.Entities
+                    .Where(c => c.Key == reviewKey && c.DeletedAt == null)
+                    .Select(c => c.Value)
+                    .FirstOrDefaultAsync();
+                if (DateTime.TryParse(reviewVal, out DateTime parsedReview))
+                {
+                    reviewDeadline = parsedReview.ToUniversalTime();
+                }
             }
 
-            return isManual
-                ? round.End.AddDays(judgeDays * 2 + submitDays + reviewDays)
-                : round.End.AddDays(submitDays + reviewDays);
+            if (round.IsRetakeRound)
+            {
+                return isManual ? round.End.AddDays(judgeDays).ToUniversalTime() : round.End.ToUniversalTime();
+            }
+
+            if (!isManual)
+            {
+                return reviewDeadline;
+            }
+
+            // Manual main round: need both initial judge window and appeals/rescore window
+            DateTime initialJudgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+            DateTime rescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
+
+            // Finalize not-before should be after appeal review window AND after rescore window
+            return new[] { reviewDeadline, rescoreDeadline, initialJudgeDeadline }.Max();
         }
 
         public async Task<RoundTimelineDTO> GetRoundTimelineAsync(Guid roundId)
@@ -2537,7 +2572,7 @@ namespace BusinessLogic.Services.Contests
                     .Where(c => c.Key == submitKey && c.DeletedAt == null)
                     .Select(c => c.Value)
                     .FirstOrDefaultAsync();
-                DateTime submitDeadline = ParseOrDefault(submitVal, round.End.AddDays(submitDays));
+                DateTime submitDeadline = ParseOrDefault(submitVal, round.End.AddDays(submitDays)).ToUniversalTime();
                 appealSubmitDeadline = submitDeadline;
 
                 string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
@@ -2545,22 +2580,22 @@ namespace BusinessLogic.Services.Contests
                     .Where(c => c.Key == reviewKey && c.DeletedAt == null)
                     .Select(c => c.Value)
                     .FirstOrDefaultAsync();
-                appealReviewDeadline = ParseOrDefault(reviewVal, submitDeadline.AddDays(reviewDays));
+                appealReviewDeadline = ParseOrDefault(reviewVal, submitDeadline.AddDays(reviewDays)).ToUniversalTime();
             }
 
             DateTime? judgeDeadline = null;
             DateTime? judgeRescoreDeadline = null;
             if (IsManualRound(round))
             {
-                judgeDeadline = round.End.AddDays(judgeDays);
-                judgeRescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays);
+                judgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+                judgeRescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
             }
 
             return new RoundTimelineDTO
             {
                 RoundId = roundId,
-                Start = round.Start,
-                End = round.End,
+                Start = round.Start.ToUniversalTime(),
+                End = round.End.ToUniversalTime(),
                 AppealSubmitDeadline = appealSubmitDeadline,
                 AppealReviewDeadline = appealReviewDeadline,
                 JudgeDeadline = judgeDeadline,
