@@ -1041,6 +1041,7 @@ namespace BusinessLogic.Services.Contests
                     throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Invalid round ID.");
 
                 Round round = await GetRoundOwnedByCurrentOrganizerAsync(roundId);
+                await EnsurePreviousRoundFinalizedAsync(round);
 
                 DateTime now = DateTime.UtcNow;
 
