@@ -1096,30 +1096,30 @@ namespace BusinessLogic.Services.Contests
             // Activity log
             var actorId = GetCurrentUserGuidOrThrow();
 
-                await SafeWriteActivityAsync(actorId,
-                    ActivityActions.RoundStartNow,
-                    TargetTypes.Round,
-                    persistedRoundId.ToString());
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundStartNow,
+                TargetTypes.Round,
+                persistedRoundId.ToString());
 
-                // Notification to participants
-                await SafeNotifyContestParticipantsAsync(contestId,
-                    NotificationTypes.RoundStarted,
-                    new
-                    {
-                        contestId = contestId,
-                        roundId = persistedRoundId,
-                        name = roundName,
-                        targetType = TargetTypes.Round,
-                        targetId = persistedRoundId.ToString(),
-                        message = $"Round '{roundName}' has started."
-                    });
+            // Notification to participants
+            await SafeNotifyContestParticipantsAsync(contestId,
+                NotificationTypes.RoundStarted,
+                new
+                {
+                    contestId = contestId,
+                    roundId = persistedRoundId,
+                    name = roundName,
+                    targetType = TargetTypes.Round,
+                    targetId = persistedRoundId.ToString(),
+                    message = $"Round '{roundName}' has started."
+                });
 
-                // Schedule background job to handle state transitions
-                SafeEnqueue(() =>
-                    BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
-                    "ScheduleRoundStateTransitionsAsync");
+            // Schedule background job to handle state transitions
+            SafeEnqueue(() =>
+                BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
+                "ScheduleRoundStateTransitionsAsync");
 
-                return await GetRoundByIdAsync( persistedRoundId, null);
+            return await GetRoundByIdAsync( persistedRoundId, null);
 
         }
         public async Task<GetRoundDTO> EndRoundNowAsync(Guid roundId)
@@ -1210,6 +1210,47 @@ namespace BusinessLogic.Services.Contests
 
             return await GetRoundByIdAsync(persistedRoundId, null);
 
+        }
+
+        private async Task EnsurePreviousRoundFinalizedAsync(Round round)
+        {
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
+
+            Round? prevRound = await roundRepo.Entities
+                .AsNoTracking()
+                .Where(r => r.ContestId == round.ContestId
+                            && !r.IsRetakeRound
+                            && r.RoundId != round.RoundId
+                            && r.End <= round.Start
+                            && r.DeletedAt == null)
+                .OrderByDescending(r => r.End)
+                .FirstOrDefaultAsync();
+
+            if (prevRound == null) return;
+
+            bool hasUnfinishedSubmissions = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s =>
+                    s.DeletedAt == null
+                    && s.Problem != null
+                    && s.Problem.RoundId == prevRound.RoundId
+                    && s.Status == SubmissionStatusEnum.Pending.ToString());
+
+            bool hasPendingAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a =>
+                    a.DeletedAt == null
+                    && a.TargetId == prevRound.RoundId
+                    && (a.State != AppealStateEnum.Closed.ToString()
+                        || a.Decision == AppealDecisionEnum.Pending.ToString()));
+
+            if (hasUnfinishedSubmissions || hasPendingAppeals)
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST,
+                    $"Cannot start round '{round.Name}' because previous round '{prevRound.Name}' is not finalized.");
+            }
         }
         private string GetCurrentUserIdOrThrow()
         {
@@ -2134,6 +2175,21 @@ namespace BusinessLogic.Services.Contests
             Guid studentId = await GetCurrentStudentIdAsync();
             Guid studentUserId = await GetCurrentStudentUserIdAsync(studentId);
 
+            // Ensure student's team in this contest is active
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            var team = await teamRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t =>
+                    t.ContestId == round.ContestId &&
+                    t.DeletedAt == null &&
+                    t.TeamMembers.Any(tm => tm.StudentId == studentId));
+
+            if (team == null || !string.Equals(team.Status, TeamStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
+                    "Your team is not active for this contest.");
+            }
+
             // Validate retake round access
             if (round.IsRetakeRound && round.MainRoundId.HasValue)
             {
@@ -2142,9 +2198,6 @@ namespace BusinessLogic.Services.Contests
 
             // Check if student has finished round
             await ValidateStudentNotFinishedAsync(round.RoundId, studentId);
-
-            // Enforce rank cutoff
-            await EnforceRoundRankCutoffForStudentAsync(round, studentId);
 
             // Validate open code
             await ValidateAndMarkOpenCodeAsync(round.RoundId, studentId, openCode);
