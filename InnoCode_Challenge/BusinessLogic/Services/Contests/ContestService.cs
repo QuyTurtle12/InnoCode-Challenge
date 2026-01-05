@@ -2261,6 +2261,9 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest start time is earlier than or equal to requested registration start.");
 
             await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(contestId), now.ToString("o"));
+
+            contest.Status = ContestStatusEnum.RegistrationOpen.ToString();
+            await contestRepo.UpdateAsync(contest);
             await _unitOfWork.SaveAsync();
         }
 
@@ -2283,6 +2286,8 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end cannot be after contest start.");
 
             await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(contestId), now.ToString("o"));
+            contest.Status = ContestStatusEnum.RegistrationClosed.ToString();
+            await contestRepo.UpdateAsync(contest);
             await _unitOfWork.SaveAsync();
         }
 
