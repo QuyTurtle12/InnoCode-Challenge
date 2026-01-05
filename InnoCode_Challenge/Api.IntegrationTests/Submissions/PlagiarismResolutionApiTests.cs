@@ -33,7 +33,7 @@ namespace Api.IntegrationTests.Submissions
             string StudentEmail,
             string StudentPassword);
 
-        private SeedData SeedPlagiarismCase()
+        private SeedData SeedPlagiarismCase(string problemType = null)
         {
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
@@ -113,7 +113,7 @@ namespace Api.IntegrationTests.Submissions
             {
                 RoundId = roundId,
                 ContestId = contestId,
-                Name = "Manual Round",
+                Name = "Plagiarism Round",
                 Start = now.AddHours(-1),
                 End = now.AddHours(2),
                 Status = RoundStatusEnum.Opened.ToString(),
@@ -126,7 +126,7 @@ namespace Api.IntegrationTests.Submissions
                 ProblemId = problemId,
                 RoundId = roundId,
                 Language = "markdown",
-                Type = ProblemTypeEnum.Manual.ToString(),
+                Type = problemType ?? ProblemTypeEnum.Manual.ToString(),
                 CreatedAt = now
             };
 
@@ -233,7 +233,7 @@ namespace Api.IntegrationTests.Submissions
         [Fact]
         public async Task Approve_ShouldRestoreStatus_AndKeepScore()
         {
-            var seed = SeedPlagiarismCase();
+            var seed = SeedPlagiarismCase(problemType: ProblemTypeEnum.Manual.ToString());
             var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
 
             var req = new HttpRequestMessage(HttpMethod.Post, $"/api/organizer/plagiarism/{seed.SubmissionId:D}/approve");
@@ -248,11 +248,10 @@ namespace Api.IntegrationTests.Submissions
             var team = db.Teams.First(t => t.TeamId == seed.TeamId);
             team.Status.Should().Be(TeamStatusConstants.Active);
 
-            var entry = db.LeaderboardEntries.First(e => e.TeamId == seed.TeamId && e.ContestId == seed.ContestId);
-            entry.Score.Should().BeGreaterThan(0);
-
             var submission = db.Submissions.First(s => s.SubmissionId == seed.SubmissionId);
-            submission.Status.Should().Be(SubmissionStatusEnum.Finished.ToString());
+            submission.Status.Should().Be(SubmissionStatusEnum.Pending.ToString());
+            submission.JudgedBy.Should().BeNull();
+            submission.Score.Should().Be(0);
         }
 
         [Fact]
@@ -288,6 +287,27 @@ namespace Api.IntegrationTests.Submissions
 
             var res = await _client.SendAsync(req);
             res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        }
+
+        [Fact]
+        public async Task Approve_AutoSubmission_ShouldRemainFinished_KeepScore()
+        {
+            var seed = SeedPlagiarismCase(problemType: ProblemTypeEnum.AutoEvaluation.ToString());
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+
+            var req = new HttpRequestMessage(HttpMethod.Post, $"/api/organizer/plagiarism/{seed.SubmissionId:D}/approve");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+
+            var submission = db.Submissions.First(s => s.SubmissionId == seed.SubmissionId);
+            submission.Status.Should().Be(SubmissionStatusEnum.Finished.ToString());
+            submission.JudgedBy.Should().BeNull();
+            submission.Score.Should().Be(50);
         }
     }
 }

@@ -71,7 +71,7 @@ namespace Api.IntegrationTests.Mentors
 
             var req = new HttpRequestMessage(HttpMethod.Post, $"/api/schools/{TestSeed.SchoolId:D}/mentors");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Content = JsonContent.Create(BuildMentorDto(email, "P@ssword123!", " 123 "));
+            req.Content = JsonContent.Create(BuildMentorDto(email, "P@ssword123!", "0123456789"));
 
             var res = await _client.SendAsync(req);
             res.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -90,7 +90,7 @@ namespace Api.IntegrationTests.Mentors
             var mentor = db.Mentors.First(m => m.UserId == user.UserId);
             mentor.SchoolId.Should().Be(TestSeed.SchoolId);
             mentor.CreatedBy.Should().Be(db.Users.First(u => u.Email == TestSeed.SchoolManagerEmail.ToLower()).UserId);
-            mentor.Phone.Should().Be("123");
+            mentor.Phone.Should().Be("0123456789");
         }
 
         [Fact]

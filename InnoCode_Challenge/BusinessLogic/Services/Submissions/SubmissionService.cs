@@ -42,7 +42,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
         private readonly ILogger<SubmissionService> _logger;
-
+        private readonly IRoundService _roundService;
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
         private const double DEFAULT_TIMELIMIT = 10.0;
@@ -99,6 +99,7 @@ namespace BusinessLogic.Services.Submissions
             IMockTestService mockTestExecutor,
             INotificationService notificationService,
             IActivityLogWriter logWriter,
+            IRoundService roundService,
             ILogger<SubmissionService> logger)
         {
             _unitOfWork = unitOfWork;
@@ -111,6 +112,7 @@ namespace BusinessLogic.Services.Submissions
             _mockTestExecutor = mockTestExecutor;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _roundService   = roundService;
             _logger = logger;
         }
 
@@ -2021,18 +2023,27 @@ namespace BusinessLogic.Services.Submissions
                 string staffUserId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
                     ?? throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User ID not found");
 
-                // If cleared: return submission to pending for re-judging; otherwise confirm plagiarism
+                bool isManual = submission.Problem?.Type == ProblemTypeEnum.Manual.ToString();
+
                 if (cleared)
                 {
-                    submission.Status = SubmissionStatusEnum.Pending.ToString();
                     submission.JudgedBy = null;
-                    submission.Score = 0;
+                    if (isManual)
+                    {
+                        submission.Status = SubmissionStatusEnum.Pending.ToString();
+                        submission.Score = 0;
+                    }
+                    else
+                    {
+                        // Auto/MCQ: keep finished status and retain existing score
+                        submission.Status = SubmissionStatusEnum.Finished.ToString();
+                    }
                 }
                 else
                 {
+                    submission.JudgedBy = staffUserId;
                     submission.Status = STATUS_PLAGIARISM_CONFIRMED;
                     submission.Score = 0;
-                    submission.JudgedBy = staffUserId;
                 }
 
                 await submissionRepo.UpdateAsync(submission);
@@ -2054,9 +2065,39 @@ namespace BusinessLogic.Services.Submissions
 
                 if (cleared)
                 {
-                    // Redistribute if manual round (reset distribution flag so pending submission gets assigned)
-                    await _configService.ResetDistributionStatusAsync(roundId);
-                    await _roundService.DistributeSubmissionsToJudgesAsync(roundId);
+                    if (isManual)
+                    {
+                        await _configService.ResetDistributionStatusAsync(roundId);
+                        try
+                        {
+                            await _roundService.DistributeSubmissionsToJudgesAsync(roundId);
+                        }
+                        catch (ErrorException)
+                        {
+                            // Ignore distribution errors (e.g., no judges) on plagiarism clear
+                        }
+                    }
+                    else
+                    {
+                        // For auto/MCQ, ensure leaderboard reflects current submission score
+                        var lbRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                        var entry = await lbRepo.Entities.FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == submission.TeamId);
+                        if (entry != null)
+                        {
+                            entry.Score = submission.Score;
+                            entry.SnapshotAt = DateTime.UtcNow;
+                            await lbRepo.UpdateAsync(entry);
+                            await _unitOfWork.SaveAsync();
+                            try
+                            {
+                                await _leaderboardService.RecalculateRanksAsync(contestId);
+                            }
+                            catch (Exception)
+                            {
+                                // ignore rank recalculation issues on resolve
+                            }
+                        }
+                    }
                 }
                 else
                 {
