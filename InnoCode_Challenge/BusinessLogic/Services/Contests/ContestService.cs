@@ -827,55 +827,17 @@ namespace BusinessLogic.Services.Contests
                     registrationEnd = regEnd;
                 }
 
-                // Determine contest status based on time and registration windows
-                string newStatus;
+                // Determine contest status using helper method
+                var (newStatus, shouldDeleteJobs) = await DetermineContestStatusAsync(
+                    contest,
+                    registrationStart,
+                    registrationEnd,
+                    now);
 
-                // Priority 1: Check if contest has ended (terminal state)
-                if (contest.End.HasValue && now >= contest.End.Value)
+                // Delete scheduled jobs if needed
+                if (shouldDeleteJobs)
                 {
-                    newStatus = ContestStatusEnum.Completed.ToString();
-                }
-                // Priority 2: Check if contest is ongoing
-                else if (contest.Start.HasValue && contest.End.HasValue && now >= contest.Start.Value && now < contest.End.Value)
-                {
-                    newStatus = ContestStatusEnum.Ongoing.ToString();
-                }
-                // Priority 3: Check if registration has closed but contest hasn't started
-                else if (registrationEnd.HasValue && now >= registrationEnd.Value
-                    && contest.Start.HasValue && now < contest.Start.Value)
-                {
-                    // Check if contest has at least 1 team
-                    bool hasTeams = await CheckContestHasTeamsAsync(contestId);
-
-                    if (!hasTeams)
-                    {
-                        // Set status to Delayed if no teams registered
-                        newStatus = ContestStatusEnum.Delayed.ToString();
-
-                        // Delete all scheduled jobs for this contest and its rounds
-                        await DeleteContestScheduledJobsAsync(contestId);
-                    }
-                    else if (contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
-                    {
-                        newStatus = ContestStatusEnum.RegistrationClosed.ToString();
-                    }
-                    else
-                    {
-                        // Keep current status if already RegistrationClosed
-                        newStatus = contest.Status;
-                    }
-                }
-                // Priority 4: Check if registration is open
-                else if (registrationStart.HasValue && registrationEnd.HasValue
-                    && now >= registrationStart.Value && now < registrationEnd.Value
-                    && contest.Status == ContestStatusEnum.Published.ToString())
-                {
-                    newStatus = ContestStatusEnum.RegistrationOpen.ToString();
-                }
-                // Default: Published (before registration starts)
-                else
-                {
-                    newStatus = ContestStatusEnum.Published.ToString();
+                    await DeleteContestScheduledJobsAsync(contestId);
                 }
 
                 // Update contest status only if not already Delayed
@@ -923,6 +885,63 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error publishing Contest: {ex.Message}");
             }
+        }
+
+        private async Task<(string NewStatus, bool ShouldDeleteJobs)> DetermineContestStatusAsync(
+            Contest contest,
+            DateTime? registrationStart,
+            DateTime? registrationEnd,
+            DateTime now)
+        {
+            string newStatus;
+            bool shouldDeleteJobs = false;
+
+            // Priority 1: Check if contest has ended
+            if (contest.End.HasValue && now >= contest.End.Value)
+            {
+                newStatus = ContestStatusEnum.Completed.ToString();
+            }
+            // Priority 2: Check if contest is ongoing
+            else if (contest.Start.HasValue && contest.End.HasValue && now >= contest.Start.Value && now < contest.End.Value)
+            {
+                newStatus = ContestStatusEnum.Ongoing.ToString();
+            }
+            // Priority 3: Check if registration has closed but contest hasn't started
+            else if (registrationEnd.HasValue && now >= registrationEnd.Value
+                && contest.Start.HasValue && now < contest.Start.Value)
+            {
+                // Check if contest has at least 1 team
+                bool hasTeams = await CheckContestHasTeamsAsync(contest.ContestId);
+
+                if (!hasTeams)
+                {
+                    // Set status to Delayed if no teams registered
+                    newStatus = ContestStatusEnum.Delayed.ToString();
+                    shouldDeleteJobs = true;
+                }
+                else if (contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+                {
+                    newStatus = ContestStatusEnum.RegistrationClosed.ToString();
+                }
+                else
+                {
+                    // Keep current status if already RegistrationClosed
+                    newStatus = contest.Status;
+                }
+            }
+            // Priority 4: Check if registration is open
+            else if (registrationStart.HasValue && registrationEnd.HasValue
+                && now >= registrationStart.Value && now < registrationEnd.Value)
+            {
+                newStatus = ContestStatusEnum.RegistrationOpen.ToString();
+            }
+            // Default: Published (before registration starts)
+            else
+            {
+                newStatus = ContestStatusEnum.Published.ToString();
+            }
+
+            return (newStatus, shouldDeleteJobs);
         }
 
         private async Task<bool> CheckContestHasTeamsAsync(Guid contestId)
@@ -2319,6 +2338,11 @@ namespace BusinessLogic.Services.Contests
                 return await ApplyMentorFilterAsync(query, userId);
             }
 
+            if (userRole == RoleConstants.Judge)
+            {
+                return await ApplyJudgeFilterAsync(query, userId);
+            }
+
             return query;
         }
 
@@ -2370,6 +2394,50 @@ namespace BusinessLogic.Services.Contests
                 query = query.Where(c => c.Teams.Any(t =>
                     t.MentorId == mentorId.Value
                  && t.DeletedAt == null));
+            }
+
+            return query;
+        }
+
+        /// <summary>
+        /// Applies judge-specific contest filter
+        /// </summary>
+        private async Task<IQueryable<Contest>> ApplyJudgeFilterAsync(
+            IQueryable<Contest> query,
+            string userId)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            // Get all contest IDs where this user is a judge
+            string judgeKeyPrefix = $"contest:";
+            string judgeKeySuffix = $":judge:{userId}";
+
+            List<string> judgeConfigs = await configRepo.Entities
+                .Where(c => c.Key.StartsWith(judgeKeyPrefix)
+                         && c.Key.EndsWith(judgeKeySuffix)
+                         && c.DeletedAt == null)
+                .Select(c => c.Key)
+                .ToListAsync();
+
+            // Extract contest IDs from config keys
+            List<Guid> contestIds = judgeConfigs
+                .Select(key => {
+                    // Extract contest ID from key format
+                    string[] parts = key.Split(':');
+                    if (parts.Length >= 2 && Guid.TryParse(parts[1], out Guid contestId))
+                    {
+                        return (Guid?)contestId;
+                    }
+                    return null;
+                })
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .ToList();
+
+            // Filter contests to only those where the user is a judge
+            if (contestIds.Any())
+            {
+                query = query.Where(c => contestIds.Contains(c.ContestId));
             }
 
             return query;
@@ -2696,7 +2764,8 @@ namespace BusinessLogic.Services.Contests
         private IQueryable<Contest> ApplyDraftFilterForRole(IQueryable<Contest> query, string? userRole)
         {
             // For non-organizers, don't show draft contests
-            if (userRole != RoleConstants.ContestOrganizer)
+            if (userRole != RoleConstants.ContestOrganizer &&
+                userRole != RoleConstants.Judge)
             {
                 query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }

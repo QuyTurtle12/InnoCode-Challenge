@@ -160,6 +160,9 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireStudentOrMentor",
                     policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor));
 
+                options.AddPolicy("RequireStudentOrMentorOrJudge",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor, RoleConstants.Judge));
+
                 options.AddPolicy("RequireAnyUserRole",
                     policy => policy.RequireRole(
                         RoleConstants.Student,

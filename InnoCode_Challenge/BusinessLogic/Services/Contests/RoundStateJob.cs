@@ -1,7 +1,6 @@
 ﻿using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.NotificationsAndLogs;
-using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -19,13 +18,16 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly ILogger<RoundStateJob> _logger;
         private readonly IServiceProvider _serviceProvider;
+        private readonly IConfigService _configService;
 
         public RoundStateJob(
             ILogger<RoundStateJob> logger,
-            IServiceProvider serviceProvider)
+            IServiceProvider serviceProvider,
+            IConfigService configService)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _configService = configService;
         }
 
         [DisableConcurrentExecution(timeoutInSeconds: 60)]
@@ -658,6 +660,9 @@ namespace BusinessLogic.Services.Contests
 
                 foreach (var sub in overdue)
                 {
+                    // Mark as finished for the round
+                    await _configService.MarkFinishedSubmissionAsync(roundId, sub.SubmittedByStudentId);
+
                     await leaderboardService.UpdateTeamScoreAsync(round.ContestId, sub.TeamId);
 
                     var recipients = new HashSet<Guid>();
