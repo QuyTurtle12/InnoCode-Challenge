@@ -2021,17 +2021,18 @@ namespace BusinessLogic.Services.Submissions
                 string staffUserId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
                     ?? throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User ID not found");
 
-                submission.JudgedBy = staffUserId;
-
-                // Update status
+                // If cleared: return submission to pending for re-judging; otherwise confirm plagiarism
                 if (cleared)
                 {
-                    submission.Status = SubmissionStatusEnum.Finished.ToString();
+                    submission.Status = SubmissionStatusEnum.Pending.ToString();
+                    submission.JudgedBy = null;
+                    submission.Score = 0;
                 }
                 else
                 {
                     submission.Status = STATUS_PLAGIARISM_CONFIRMED;
                     submission.Score = 0;
+                    submission.JudgedBy = staffUserId;
                 }
 
                 await submissionRepo.UpdateAsync(submission);
@@ -2047,26 +2048,24 @@ namespace BusinessLogic.Services.Submissions
                         submission.SubmissionId.ToString());
                 }
 
-                // Notify student
-                await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
-
                 Guid roundId = submission.Problem.RoundId;
                 Guid studentId = submission.SubmittedByStudentId;
                 Guid contestId = submission.Problem.Round.ContestId;
 
-                // Mark finished submission for the student in the round
-                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
-
                 if (cleared)
                 {
-                    // Update leaderboard if cleared
-                    await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
+                    // Redistribute if manual round (reset distribution flag so pending submission gets assigned)
+                    await _configService.ResetDistributionStatusAsync(roundId);
+                    await _roundService.DistributeSubmissionsToJudgesAsync(roundId);
                 }
                 else
                 {
                     // On confirmed plagiarism: eliminate team from contest and zero out scoreboard
                     await EliminateTeamForPlagiarismAsync(contestId, submission.TeamId);
                 }
+
+                // Notify student
+                await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
 
                 _unitOfWork.CommitTransaction();
             }
