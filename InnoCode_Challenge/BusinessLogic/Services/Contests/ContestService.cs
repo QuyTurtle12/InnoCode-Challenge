@@ -513,19 +513,8 @@ namespace BusinessLogic.Services.Contests
 
             Round lastRound = rounds.OrderBy(r => r.End).Last();
 
-            int submitDays = await GetContestPolicyDaysAsync(
-                contest.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
-            int reviewDays = await GetContestPolicyDaysAsync(
-                contest.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
-            int rescoreDays = await GetContestPolicyDaysAsync(
-                contest.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
-
-            bool lastIsManual = lastRound.Problem != null
-                && string.Equals(lastRound.Problem.Type, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
-
-            int bufferDays = submitDays + reviewDays + (lastIsManual ? rescoreDays * 2 : 0);
-
-            DateTime requiredEnd = lastRound.End.AddDays(bufferDays);
+            // Use actual finalize-not-before (considers configured deadlines/time-travel)
+            DateTime requiredEnd = await _roundService.GetFinalizeNotBeforeAsync(lastRound.RoundId);
 
             if (contest.End.Value < requiredEnd)
             {
