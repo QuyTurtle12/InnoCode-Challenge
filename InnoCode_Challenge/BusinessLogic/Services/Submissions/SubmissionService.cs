@@ -112,7 +112,7 @@ namespace BusinessLogic.Services.Submissions
             _mockTestExecutor = mockTestExecutor;
             _notificationService = notificationService;
             _logWriter = logWriter;
-            _roundService   = roundService;
+            _roundService = roundService;
             _logger = logger;
         }
 
@@ -2044,6 +2044,61 @@ namespace BusinessLogic.Services.Submissions
                     submission.JudgedBy = staffUserId;
                     submission.Status = STATUS_PLAGIARISM_CONFIRMED;
                     submission.Score = 0;
+
+                    // Notify team (students + mentor) and organizer about confirmed plagiarism
+                    try
+                    {
+                        var teamRepo = _unitOfWork.GetRepository<Team>();
+                        var team = await teamRepo.Entities
+                            .Include(t => t.TeamMembers)
+                                .ThenInclude(tm => tm.Student)
+                                    .ThenInclude(s => s.User)
+                            .FirstOrDefaultAsync(t => t.TeamId == submission.TeamId && t.DeletedAt == null);
+
+                        var users = new HashSet<Guid>();
+                        if (team != null)
+                        {
+                            foreach (var tm in team.TeamMembers)
+                            {
+                                users.Add(tm.Student.UserId);
+                            }
+
+                            if (team.MentorId != Guid.Empty)
+                            {
+                                var mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                                Guid? mentorUserId = await mentorRepo.Entities
+                                    .Where(m => m.MentorId == team.MentorId && m.DeletedAt == null)
+                                    .Select(m => (Guid?)m.UserId)
+                                    .FirstOrDefaultAsync();
+                                if (mentorUserId.HasValue) users.Add(mentorUserId.Value);
+                            }
+                        }
+
+                        if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                        {
+                            users.Add(organizerId);
+                        }
+
+                        if (users.Count > 0)
+                        {
+                            await _notificationService.CreateInAppToUsersAsync(
+                                users,
+                                NotificationTypes.PlagiarismConfirmed,
+                                new
+                                {
+                                    contestId = submission.Problem.Round.ContestId,
+                                    roundId = submission.Problem.RoundId,
+                                    submissionId = submission.SubmissionId,
+                                    teamId = submission.TeamId,
+                                    status = submission.Status,
+                                    message = "Submission was confirmed as plagiarism."
+                                });
+                        }
+                    }
+                    catch
+                    {
+                        // ignore notification failures
+                    }
                 }
 
                 await submissionRepo.UpdateAsync(submission);
@@ -2188,6 +2243,32 @@ namespace BusinessLogic.Services.Submissions
                 submission.Status = STATUS_PLAGIARISM_SUSPECTED;
                 submission.JudgedBy = null; // unassigned -> staff queue
                 await submissionRepo.UpdateAsync(submission);
+
+                // Notify organizer about suspected plagiarism
+                Guid contestId = submission.Problem.Round.ContestId;
+                Guid roundId = submission.Problem.RoundId;
+                if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _notificationService.CreateInAppToUserAsync(
+                            organizerId,
+                            NotificationTypes.PlagiarismSuspected,
+                            new
+                            {
+                                contestId,
+                                roundId,
+                                submissionId = submission.SubmissionId,
+                                teamId = submission.TeamId,
+                                status = submission.Status,
+                                message = "A submission was flagged as plagiarism suspected."
+                            });
+                    }
+                    catch
+                    {
+                        // ignore notification failures
+                    }
+                }
             }
 
             await _unitOfWork.SaveAsync();
@@ -3622,11 +3703,15 @@ namespace BusinessLogic.Services.Submissions
         {
             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
             Problem? problem = await problemRepo.Entities
+                .Include(p => p.Round)
+                    .ThenInclude(r => r.Contest)
                 .Where(p => p.ProblemId == submission.ProblemId && p.DeletedAt == null)
                 .FirstOrDefaultAsync();
 
             if (problem == null) return;
 
+            // hydrate navigation needed for notification
+            submission.Problem = problem;
             string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
 
             if (!string.IsNullOrWhiteSpace(combinedNormalized))

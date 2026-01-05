@@ -31,7 +31,8 @@ namespace Api.IntegrationTests.Submissions
             string OrganizerEmail,
             string OrganizerPassword,
             string StudentEmail,
-            string StudentPassword);
+            string StudentPassword,
+            Guid StudentUserId);
 
         private SeedData SeedPlagiarismCase(string problemType = null)
         {
@@ -189,7 +190,8 @@ namespace Api.IntegrationTests.Submissions
                 OrganizerEmail: organizerEmail,
                 OrganizerPassword: organizerPassword,
                 StudentEmail: studentUser.Email,
-                StudentPassword: studentPassword);
+                StudentPassword: studentPassword,
+                StudentUserId: studentUser.UserId);
         }
 
         private async Task<string> LoginAsync(string email, string password)
@@ -228,6 +230,10 @@ namespace Api.IntegrationTests.Submissions
 
             var submission = db.Submissions.First(s => s.SubmissionId == seed.SubmissionId);
             submission.Status.Should().Be(SubmissionStatusEnum.PlagiarismConfirmed.ToString());
+
+            // Notifications should be sent to team (student) and organizer
+            db.Notifications.Any(n => n.UserId == seed.StudentUserId && n.Type == NotificationTypes.PlagiarismConfirmed)
+                .Should().BeTrue();
         }
 
         [Fact]

@@ -45,5 +45,8 @@ namespace Utility.Constant
         public const string RoleRegistrationApproved = "role_registration.approved";
         public const string RoleRegistrationDenied = "role_registration.denied";
 
+        public const string PlagiarismSuspected = "submission.plagiarism_suspected";
+        public const string PlagiarismConfirmed = "submission.plagiarism_confirmed";
+
     }
 }
