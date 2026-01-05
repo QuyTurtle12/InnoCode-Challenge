@@ -147,19 +147,6 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.FORBIDDEN,
                     $"Cannot update leaderboard. Contest {contest.Name} is paused and the leaderboard is temporarily frozen.");
             }
-
-            // Verify all rounds have ended
-            DateTime now = DateTime.UtcNow;
-            List<Round> rounds = await roundRepo.Entities
-                .Where(r => r.ContestId == contestId && !r.DeletedAt.HasValue)
-                .ToListAsync();
-
-            if (rounds.Any() && rounds.All(r => now >= r.End))
-            {
-                throw new ErrorException(StatusCodes.Status403Forbidden,
-                    ResponseCodeConstants.FORBIDDEN,
-                    $"Cannot update leaderboard. All rounds in contest {contest.Name} have ended and the leaderboard is frozen.");
-            }
         }
 
         public async Task ApplyEliminationAsync(Guid contestId, Guid roundId)
@@ -393,6 +380,9 @@ namespace BusinessLogic.Services.Contests
                 {
                     currentUserId = parsedUserId;
                 }
+
+                // Update leaderboard before fetching
+                await UpdateContestLeaderboardAsync(contestIdSearch);
 
                 // Get repositories
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
@@ -697,8 +687,8 @@ namespace BusinessLogic.Services.Contests
 
                 // Get all leaderboard entries for the contest
                 List<LeaderboardEntry> allEntries = await leaderboardRepo.Entities
-                    .Include(e => e.Team)
                     .Where(e => e.ContestId == contestId)
+                    .Include(e => e.Team)
                     .ToListAsync();
 
                 // Validate that entries exist
@@ -1450,9 +1440,6 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Validate that the leaderboard is not frozen
-                await ValidateLeaderboardNotFrozenAsync(contestId);
-
                 IGenericRepository<LeaderboardEntry> leaderboardRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
                 IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
@@ -1468,11 +1455,12 @@ namespace BusinessLogic.Services.Contests
                         $"No leaderboard entries found for contest {contestId}");
                 }
 
-                // Get all non-eliminated teams in the contest
+                // Get all non-eliminated and non-diqualified teams in the contest
                 List<Guid> activeTeamIds = await teamRepo.Entities
                     .Where(t => t.ContestId == contestId
                         && t.DeletedAt == null
-                        && t.Status != TeamStatusConstants.Eliminated)
+                        && t.Status != TeamStatusConstants.Eliminated
+                        && t.Status != TeamStatusConstants.Disqualified)
                     .Select(t => t.TeamId)
                     .ToListAsync();
 

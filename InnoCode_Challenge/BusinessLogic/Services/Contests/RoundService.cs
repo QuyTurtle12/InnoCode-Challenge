@@ -2180,6 +2180,9 @@ namespace BusinessLogic.Services.Contests
             Guid studentId = await GetCurrentStudentIdAsync();
             Guid studentUserId = await GetCurrentStudentUserIdAsync(studentId);
 
+            // Validate student is not in an eliminated or disqualified team
+            await ValidateStudentQualificationAsync(round.ContestId, studentId);
+
             // Validate retake round access
             if (round.IsRetakeRound && round.MainRoundId.HasValue)
             {
@@ -2194,6 +2197,45 @@ namespace BusinessLogic.Services.Contests
 
             // Validate open code
             await ValidateAndMarkOpenCodeAsync(round.RoundId, studentId, openCode);
+        }
+
+        /// <summary>
+        /// Validates that student is not in an eliminated or disqualified team
+        /// </summary>
+        private async Task ValidateStudentQualificationAsync(Guid contestId, Guid studentId)
+        {
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Find the student's team in this contest
+            Team? studentTeam = await teamRepo.Entities
+                .Where(t => t.ContestId == contestId
+                           && t.DeletedAt == null
+                           && t.TeamMembers.Any(tm => tm.StudentId == studentId))
+                .FirstOrDefaultAsync();
+
+            // If student has no team, they cannot access the round
+            if (studentTeam == null)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "You are not part of any team in this contest.");
+            }
+
+            // Check if the team is eliminated
+            if (string.Equals(studentTeam.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Your team has been eliminated from this contest and cannot access round information.");
+            }
+
+            // Check if the team is disqualified
+            if (string.Equals(studentTeam.Status, TeamStatusConstants.Disqualified, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Your team is disqualified to participated in this contest and cannot access round information.");
+            }
         }
 
         /// <summary>

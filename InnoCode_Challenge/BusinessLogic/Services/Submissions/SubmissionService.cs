@@ -2178,8 +2178,11 @@ namespace BusinessLogic.Services.Submissions
                 await leaderboardRepo.UpdateAsync(entry);
             }
 
-            // Persist elimination and score reset so downstream reads see the change
+            // Persist elimination and score reset
             await _unitOfWork.SaveAsync();
+
+            // Update leaderboard ranks
+            await _leaderboardService.UpdateContestLeaderboardAsync(contestId);
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
@@ -3882,7 +3885,6 @@ namespace BusinessLogic.Services.Submissions
                 // Check if there are any pending submissions in the contest
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 bool hasPendingSubmissions = await submissionRepo.Entities
-                    .AsNoTracking()
                     .AnyAsync(s => s.DeletedAt == null
                         && s.Problem.Round.ContestId == contestId
                         && s.Status == SubmissionStatusEnum.Pending.ToString());
