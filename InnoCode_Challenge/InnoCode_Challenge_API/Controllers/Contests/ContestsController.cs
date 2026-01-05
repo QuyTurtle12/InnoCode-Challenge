@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ContestDTOs;
+using Repository.DTOs.RoundDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.PaginatedList;
@@ -80,6 +81,18 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         code: ResponseCodeConstants.SUCCESS,
                         data: contest,
                         message: "Contest retrieved successfully."
+                    ));
+        }
+
+        [HttpGet("{id}/timeline")]
+        public async Task<IActionResult> GetContestTimeline(Guid id)
+        {
+            var timeline = await _contestService.GetContestTimelineAsync(id);
+            return Ok(new BaseResponseModel<ContestTimelineDTO>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: timeline,
+                        message: "Contest timeline retrieved successfully."
                     ));
         }
 
@@ -324,6 +337,30 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
                 message: "Contest end time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/start-registration-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> StartRegistrationNow(Guid id)
+        {
+            await _contestService.SetRegistrationStartNowAsync(id);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Contest registration start time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/end-registration-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> EndRegistrationNow(Guid id)
+        {
+            await _contestService.SetRegistrationEndNowAsync(id);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Contest registration end time updated to now."
             ));
         }
 

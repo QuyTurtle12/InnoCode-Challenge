@@ -4,6 +4,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Utility.Constant;
 
 namespace Repository.DTOs.MentorManagementDTOs
 {
@@ -22,7 +23,8 @@ namespace Repository.DTOs.MentorManagementDTOs
 
         [Required, Compare("Password", ErrorMessage = "Passwords do not match.")]
         public string ConfirmPassword { get; set; } = null!;
-        [Phone, MaxLength(20)]
+        [RegularExpression(ValidationConstants.VietnamPhoneRegex, ErrorMessage = ValidationConstants.VietnamPhoneErrorMessage)]
+        [MaxLength(11)]
         public string? Phone { get; set; }
     }
 

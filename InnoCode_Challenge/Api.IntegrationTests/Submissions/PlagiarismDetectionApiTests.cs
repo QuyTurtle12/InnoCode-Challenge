@@ -48,6 +48,7 @@ namespace Api.IntegrationTests.Submissions
             Guid RoundId,
             Guid ProblemId,
             Guid TeamId,
+            Guid OrganizerUserId,
             string Code);
 
         private PlagiarismSeed SeedPlagiarismScenario()
@@ -122,6 +123,18 @@ namespace Api.IntegrationTests.Submissions
                 CreatedAt = now
             };
 
+            var organizerUser = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = "Organizer",
+                Email = $"org{Guid.NewGuid():N}@test.com",
+                PasswordHash = PasswordHasher.Hash("P@ssword123!"),
+                Role = RoleConstants.ContestOrganizer,
+                Status = UserStatusConstants.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
             var contestId = Guid.NewGuid();
             var contest = new Contest
             {
@@ -133,7 +146,7 @@ namespace Api.IntegrationTests.Submissions
                 CreatedAt = now,
                 Start = now.AddHours(-1),
                 End = now.AddHours(1),
-                CreatedBy = Guid.NewGuid().ToString()
+                CreatedBy = organizerUser.UserId.ToString()
             };
 
             var roundId = Guid.NewGuid();
@@ -233,7 +246,7 @@ namespace Api.IntegrationTests.Submissions
                 CreatedAt = now
             };
 
-            db.Users.AddRange(studentUser, mentorUser, otherMentorUser, otherStudentUser);
+            db.Users.AddRange(studentUser, mentorUser, otherMentorUser, otherStudentUser, organizerUser);
             db.Mentors.AddRange(mentor, otherMentor);
             db.Students.AddRange(student, otherStudent);
             db.Contests.Add(contest);
@@ -245,14 +258,15 @@ namespace Api.IntegrationTests.Submissions
             db.SubmissionFingerprints.Add(existingFingerprint);
             db.SaveChanges();
 
-            return new PlagiarismSeed(
-                StudentEmail: studentEmail,
-                StudentPassword: studentPassword,
-                StudentId: student.StudentId,
-                RoundId: roundId,
-                ProblemId: problemId,
-                TeamId: teamId,
-                Code: code);
+        return new PlagiarismSeed(
+            StudentEmail: studentEmail,
+            StudentPassword: studentPassword,
+            StudentId: student.StudentId,
+            RoundId: roundId,
+            ProblemId: problemId,
+            TeamId: teamId,
+            OrganizerUserId: organizerUser.UserId,
+            Code: code);
         }
 
         private PlagiarismSeed SeedNoMatchScenario()
@@ -303,6 +317,18 @@ namespace Api.IntegrationTests.Submissions
                 CreatedAt = now
             };
 
+            var organizerUser = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = "Organizer",
+                Email = $"org{Guid.NewGuid():N}@test.com",
+                PasswordHash = PasswordHasher.Hash("P@ssword123!"),
+                Role = RoleConstants.ContestOrganizer,
+                Status = UserStatusConstants.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
             var contestId = Guid.NewGuid();
             var contest = new Contest
             {
@@ -314,7 +340,7 @@ namespace Api.IntegrationTests.Submissions
                 CreatedAt = now,
                 Start = now.AddHours(-1),
                 End = now.AddHours(1),
-                CreatedBy = Guid.NewGuid().ToString()
+                CreatedBy = organizerUser.UserId.ToString()
             };
 
             var roundId = Guid.NewGuid();
@@ -361,7 +387,7 @@ namespace Api.IntegrationTests.Submissions
 
             var code = string.Concat(Enumerable.Repeat("b=1\n", 80));
 
-            db.Users.AddRange(studentUser, mentorUser);
+            db.Users.AddRange(studentUser, mentorUser, organizerUser);
             db.Mentors.Add(mentor);
             db.Students.Add(student);
             db.Contests.Add(contest);
@@ -371,14 +397,15 @@ namespace Api.IntegrationTests.Submissions
             db.TeamMembers.Add(teamMember);
             db.SaveChanges();
 
-            return new PlagiarismSeed(
-                StudentEmail: studentEmail,
-                StudentPassword: studentPassword,
-                StudentId: student.StudentId,
-                RoundId: roundId,
-                ProblemId: problemId,
-                TeamId: teamId,
-                Code: code);
+        return new PlagiarismSeed(
+            StudentEmail: studentEmail,
+            StudentPassword: studentPassword,
+            StudentId: student.StudentId,
+            RoundId: roundId,
+            ProblemId: problemId,
+            TeamId: teamId,
+            OrganizerUserId: organizerUser.UserId,
+            Code: code);
         }
 
         private static MultipartFormDataContent BuildZipUpload(string code)
@@ -427,6 +454,10 @@ namespace Api.IntegrationTests.Submissions
 
             var fingerprint = db.SubmissionFingerprints.First(f => f.SubmissionId == submission.SubmissionId);
             fingerprint.Hash.Should().NotBeNullOrWhiteSpace();
+
+            // Organizer should receive suspected notification
+            db.Notifications.Any(n => n.UserId == seed.OrganizerUserId && n.Type == NotificationTypes.PlagiarismSuspected)
+                .Should().BeTrue();
         }
 
         [Fact]

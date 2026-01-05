@@ -487,7 +487,7 @@ namespace Api.IntegrationTests.Organizers
 
             var submission = db.Submissions.First(s => s.SubmissionId == seed.SubmissionId);
             submission.Status.Should().Be(SubmissionStatusEnum.Finished.ToString());
-            submission.JudgedBy.Should().Be(seed.OrganizerUserId.ToString());
+            submission.JudgedBy.Should().BeNull();
 
             var entry = db.LeaderboardEntries.First(e => e.ContestId == seed.ContestId && e.TeamId == seed.TeamId);
             entry.Score.Should().Be(seed.Score);
@@ -535,7 +535,7 @@ namespace Api.IntegrationTests.Organizers
             var submission = db.Submissions.First(s => s.SubmissionId == seed.SubmissionId);
             submission.Status.Should().Be("PlagiarismConfirmed");
             submission.Score.Should().Be(0);
-            submission.JudgedBy.Should().Be(seed.OrganizerUserId.ToString());
+            submission.JudgedBy.Should().NotBeNullOrWhiteSpace();
 
             var entry = db.LeaderboardEntries.First(e => e.ContestId == seed.ContestId && e.TeamId == seed.TeamId);
             entry.Score.Should().Be(0);

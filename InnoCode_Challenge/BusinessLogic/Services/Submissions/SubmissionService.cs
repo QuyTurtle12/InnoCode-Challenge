@@ -42,7 +42,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
         private readonly ILogger<SubmissionService> _logger;
-
+        private readonly IRoundService _roundService;
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
         private const double DEFAULT_TIMELIMIT = 10.0;
@@ -99,6 +99,7 @@ namespace BusinessLogic.Services.Submissions
             IMockTestService mockTestExecutor,
             INotificationService notificationService,
             IActivityLogWriter logWriter,
+            IRoundService roundService,
             ILogger<SubmissionService> logger)
         {
             _unitOfWork = unitOfWork;
@@ -111,6 +112,7 @@ namespace BusinessLogic.Services.Submissions
             _mockTestExecutor = mockTestExecutor;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _roundService = roundService;
             _logger = logger;
         }
 
@@ -2021,17 +2023,82 @@ namespace BusinessLogic.Services.Submissions
                 string staffUserId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
                     ?? throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "User ID not found");
 
-                submission.JudgedBy = staffUserId;
+                bool isManual = submission.Problem?.Type == ProblemTypeEnum.Manual.ToString();
 
-                // Update status
                 if (cleared)
                 {
-                    submission.Status = SubmissionStatusEnum.Finished.ToString();
+                    submission.JudgedBy = null;
+                    if (isManual)
+                    {
+                        submission.Status = SubmissionStatusEnum.Pending.ToString();
+                        submission.Score = 0;
+                    }
+                    else
+                    {
+                        // Auto/MCQ: keep finished status and retain existing score
+                        submission.Status = SubmissionStatusEnum.Finished.ToString();
+                    }
                 }
                 else
                 {
+                    submission.JudgedBy = staffUserId;
                     submission.Status = STATUS_PLAGIARISM_CONFIRMED;
                     submission.Score = 0;
+
+                    // Notify team (students + mentor) and organizer about confirmed plagiarism
+                    try
+                    {
+                        var teamRepo = _unitOfWork.GetRepository<Team>();
+                        var team = await teamRepo.Entities
+                            .Include(t => t.TeamMembers)
+                                .ThenInclude(tm => tm.Student)
+                                    .ThenInclude(s => s.User)
+                            .FirstOrDefaultAsync(t => t.TeamId == submission.TeamId && t.DeletedAt == null);
+
+                        var users = new HashSet<Guid>();
+                        if (team != null)
+                        {
+                            foreach (var tm in team.TeamMembers)
+                            {
+                                users.Add(tm.Student.UserId);
+                            }
+
+                            if (team.MentorId != Guid.Empty)
+                            {
+                                var mentorRepo = _unitOfWork.GetRepository<Mentor>();
+                                Guid? mentorUserId = await mentorRepo.Entities
+                                    .Where(m => m.MentorId == team.MentorId && m.DeletedAt == null)
+                                    .Select(m => (Guid?)m.UserId)
+                                    .FirstOrDefaultAsync();
+                                if (mentorUserId.HasValue) users.Add(mentorUserId.Value);
+                            }
+                        }
+
+                        if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                        {
+                            users.Add(organizerId);
+                        }
+
+                        if (users.Count > 0)
+                        {
+                            await _notificationService.CreateInAppToUsersAsync(
+                                users,
+                                NotificationTypes.PlagiarismConfirmed,
+                                new
+                                {
+                                    contestId = submission.Problem.Round.ContestId,
+                                    roundId = submission.Problem.RoundId,
+                                    submissionId = submission.SubmissionId,
+                                    teamId = submission.TeamId,
+                                    status = submission.Status,
+                                    message = "Submission was confirmed as plagiarism."
+                                });
+                        }
+                    }
+                    catch
+                    {
+                        // ignore notification failures
+                    }
                 }
 
                 await submissionRepo.UpdateAsync(submission);
@@ -2047,26 +2114,54 @@ namespace BusinessLogic.Services.Submissions
                         submission.SubmissionId.ToString());
                 }
 
-                // Notify student
-                await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
-
                 Guid roundId = submission.Problem.RoundId;
                 Guid studentId = submission.SubmittedByStudentId;
                 Guid contestId = submission.Problem.Round.ContestId;
 
-                // Mark finished submission for the student in the round
-                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
-
                 if (cleared)
                 {
-                    // Update leaderboard if cleared
-                    await _leaderboardService.UpdateTeamScoreAsync(contestId, submission.TeamId);
+                    if (isManual)
+                    {
+                        await _configService.ResetDistributionStatusAsync(roundId);
+                        try
+                        {
+                            await _roundService.DistributeSubmissionsToJudgesAsync(roundId);
+                        }
+                        catch (ErrorException)
+                        {
+                            // Ignore distribution errors (e.g., no judges) on plagiarism clear
+                        }
+                    }
+                    else
+                    {
+                        // For auto/MCQ, ensure leaderboard reflects current submission score
+                        var lbRepo = _unitOfWork.GetRepository<LeaderboardEntry>();
+                        var entry = await lbRepo.Entities.FirstOrDefaultAsync(e => e.ContestId == contestId && e.TeamId == submission.TeamId);
+                        if (entry != null)
+                        {
+                            entry.Score = submission.Score;
+                            entry.SnapshotAt = DateTime.UtcNow;
+                            await lbRepo.UpdateAsync(entry);
+                            await _unitOfWork.SaveAsync();
+                            try
+                            {
+                                await _leaderboardService.RecalculateRanksAsync(contestId);
+                            }
+                            catch (Exception)
+                            {
+                                // ignore rank recalculation issues on resolve
+                            }
+                        }
+                    }
                 }
                 else
                 {
                     // On confirmed plagiarism: eliminate team from contest and zero out scoreboard
                     await EliminateTeamForPlagiarismAsync(contestId, submission.TeamId);
                 }
+
+                // Notify student
+                await TryNotifySubmissionStatusAsync(submission, "Submission status updated.");
 
                 _unitOfWork.CommitTransaction();
             }
@@ -2148,6 +2243,32 @@ namespace BusinessLogic.Services.Submissions
                 submission.Status = STATUS_PLAGIARISM_SUSPECTED;
                 submission.JudgedBy = null; // unassigned -> staff queue
                 await submissionRepo.UpdateAsync(submission);
+
+                // Notify organizer about suspected plagiarism
+                Guid contestId = submission.Problem.Round.ContestId;
+                Guid roundId = submission.Problem.RoundId;
+                if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _notificationService.CreateInAppToUserAsync(
+                            organizerId,
+                            NotificationTypes.PlagiarismSuspected,
+                            new
+                            {
+                                contestId,
+                                roundId,
+                                submissionId = submission.SubmissionId,
+                                teamId = submission.TeamId,
+                                status = submission.Status,
+                                message = "A submission was flagged as plagiarism suspected."
+                            });
+                    }
+                    catch
+                    {
+                        // ignore notification failures
+                    }
+                }
             }
 
             await _unitOfWork.SaveAsync();
@@ -3585,11 +3706,15 @@ namespace BusinessLogic.Services.Submissions
         {
             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
             Problem? problem = await problemRepo.Entities
+                .Include(p => p.Round)
+                    .ThenInclude(r => r.Contest)
                 .Where(p => p.ProblemId == submission.ProblemId && p.DeletedAt == null)
                 .FirstOrDefaultAsync();
 
             if (problem == null) return;
 
+            // hydrate navigation needed for notification
+            submission.Problem = problem;
             string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
 
             if (!string.IsNullOrWhiteSpace(combinedNormalized))

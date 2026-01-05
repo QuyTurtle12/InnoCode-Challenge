@@ -5,6 +5,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Utility.Constant;
 
 namespace Repository.DTOs.RoleRegistrationDTOs
 {
@@ -25,7 +26,8 @@ namespace Repository.DTOs.RoleRegistrationDTOs
         [Required, MinLength(6)]
         public string ConfirmPassword { get; set; } = null!;
 
-        [MaxLength(30)]
+        [RegularExpression(ValidationConstants.VietnamPhoneRegex, ErrorMessage = ValidationConstants.VietnamPhoneErrorMessage)]
+        [MaxLength(11)]
         public string? Phone { get; set; }
 
         public string? Payload { get; set; }

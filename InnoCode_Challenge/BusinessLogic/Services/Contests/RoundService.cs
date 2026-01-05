@@ -2560,16 +2560,57 @@ namespace BusinessLogic.Services.Contests
         public async Task FastForwardAppealSubmitDeadlineAsync(Guid roundId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            Round? round = await roundRepo.Entities
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            if (round.IsRetakeRound)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Appeals are not allowed for retake rounds.");
+
+            DateTime now = DateTime.UtcNow;
+            if (round.Start > now || round.Status == RoundStatusEnum.Incoming.ToString())
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot fast-forward appeal submit before round starts.");
+
+            if (round.End > now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Appeal submit deadline cannot be before round end.");
+
             string key = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
-            await UpsertDeadlineAsync(configRepo, key, DateTime.UtcNow.AddSeconds(-1), scope: SCOPE_CONTEST);
+            await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
             await _unitOfWork.SaveAsync();
         }
 
         public async Task FastForwardAppealReviewDeadlineAsync(Guid roundId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            Round? round = await roundRepo.Entities
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            if (round.IsRetakeRound)
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Appeals are not allowed for retake rounds.");
+
+            DateTime now = DateTime.UtcNow;
+            if (round.Start > now || round.Status == RoundStatusEnum.Incoming.ToString())
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot fast-forward appeal review before round starts.");
+
+            // Ensure appeal review is not before appeal submit
+            string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
+            string? submitVal = await configRepo.Entities
+                .Where(c => c.Key == submitKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+            DateTime submitDeadline = ParseOrDefault(submitVal, round.End);
+            if (submitDeadline > now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Appeal review cannot end before appeal submit deadline.");
+
             string key = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
-            await UpsertDeadlineAsync(configRepo, key, DateTime.UtcNow.AddSeconds(-1), scope: SCOPE_CONTEST);
+            await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
             await _unitOfWork.SaveAsync();
         }
 
@@ -2577,6 +2618,21 @@ namespace BusinessLogic.Services.Contests
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
             var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+
+            Round? round = await roundRepo.Entities
+                .Include(r => r.Problem)
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            if (round.Problem?.Type != ProblemTypeEnum.Manual.ToString())
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Judge deadline applies only to manual rounds.");
+
+            DateTime now = DateTime.UtcNow;
+            if (round.End > now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Judge deadline cannot be before round end.");
 
             List<Submission> subs = await submissionRepo.Entities
                 .Where(s => s.Problem != null && s.Problem.RoundId == roundId && s.DeletedAt == null)
@@ -2607,6 +2663,7 @@ namespace BusinessLogic.Services.Contests
 
             DateTime finalizeNotBefore = await GetFinalizeNotBeforeAsync(roundId);
 
+            // Finalize only when all deadlines and round end are in the past
             if (DateTime.UtcNow < finalizeNotBefore)
                 return;
 

@@ -34,6 +34,7 @@ namespace BusinessLogic.Services.Contests
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _activityLogWriter;
         private readonly ILogger<ContestService> _logger;
+        private readonly IRoundService _roundService;
 
         private const int MIN_YEAR = 10;
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
@@ -62,7 +63,8 @@ namespace BusinessLogic.Services.Contests
             ICloudinaryService cloudinaryService,
             INotificationService notificationService,
             IActivityLogWriter activityLogWriter,
-            ILogger<ContestService> logger) 
+            ILogger<ContestService> logger,
+            IRoundService roundService)
         {
             _mapper = mapper;
             _unitOfWork = uow;
@@ -70,7 +72,8 @@ namespace BusinessLogic.Services.Contests
             _cloudinaryService = cloudinaryService;
             _notificationService = notificationService;
             _activityLogWriter = activityLogWriter;
-            _logger = logger; 
+            _logger = logger;
+            _roundService = roundService;
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -510,19 +513,8 @@ namespace BusinessLogic.Services.Contests
 
             Round lastRound = rounds.OrderBy(r => r.End).Last();
 
-            int submitDays = await GetContestPolicyDaysAsync(
-                contest.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
-            int reviewDays = await GetContestPolicyDaysAsync(
-                contest.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
-            int rescoreDays = await GetContestPolicyDaysAsync(
-                contest.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
-
-            bool lastIsManual = lastRound.Problem != null
-                && string.Equals(lastRound.Problem.Type, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase);
-
-            int bufferDays = submitDays + reviewDays + (lastIsManual ? rescoreDays * 2 : 0);
-
-            DateTime requiredEnd = lastRound.End.AddDays(bufferDays);
+            // Use actual finalize-not-before (considers configured deadlines/time-travel)
+            DateTime requiredEnd = await _roundService.GetFinalizeNotBeforeAsync(lastRound.RoundId);
 
             if (contest.End.Value < requiredEnd)
             {
@@ -1296,6 +1288,11 @@ namespace BusinessLogic.Services.Contests
                 // Prevent invalid timeline if End already passed
                 if (contest.End.HasValue && contest.End.Value <= now)
                     throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest already ended. Cannot start now.");
+
+                var configRepo = _unitOfWork.GetRepository<Config>();
+                DateTime? regEnd = await GetNullableDateAsync(configRepo, ConfigKeys.ContestRegEnd(contestId));
+                if (regEnd.HasValue && regEnd.Value > now)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration has not ended yet. Cannot start contest now.");
 
                 contest.Start = now;
 
@@ -2184,6 +2181,137 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.RollBack();
                 throw;
             }
+        }
+
+        private static DateTime? ParseNullableUtc(string? isoString)
+        {
+            if (string.IsNullOrWhiteSpace(isoString)) return null;
+
+            return DateTime.TryParse(
+                isoString,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out DateTime parsed)
+                ? parsed.ToUniversalTime()
+                : null;
+        }
+
+        private static async Task<DateTime?> GetNullableDateAsync(IGenericRepository<Config> configRepo, string key)
+        {
+            string? val = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return ParseNullableUtc(val);
+        }
+
+        public async Task<ContestTimelineDTO> GetContestTimelineAsync(Guid contestId)
+        {
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Contest not found.");
+            }
+
+            string regStartKey = ConfigKeys.ContestRegStart(contestId);
+            string regEndKey = ConfigKeys.ContestRegEnd(contestId);
+
+            string? regStartVal = await configRepo.Entities
+                .Where(c => c.Key == regStartKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            string? regEndVal = await configRepo.Entities
+                .Where(c => c.Key == regEndKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            DateTime? regStart = ParseNullableUtc(regStartVal);
+            DateTime? regEnd = ParseNullableUtc(regEndVal);
+
+            var rounds = await roundRepo.Entities
+                .Where(r => r.ContestId == contestId && r.DeletedAt == null)
+                .OrderBy(r => r.Start)
+                .ThenBy(r => r.End)
+                .ToListAsync();
+
+            var roundTimelines = new List<RoundTimelineDTO>();
+            foreach (var r in rounds)
+            {
+                var timeline = await _roundService.GetRoundTimelineAsync(r.RoundId);
+                roundTimelines.Add(timeline);
+            }
+
+            return new ContestTimelineDTO
+            {
+                ContestId = contestId,
+                RegistrationStart = regStart,
+                RegistrationEnd = regEnd,
+                ContestStart = contest.Start?.ToUniversalTime(),
+                ContestEnd = contest.End?.ToUniversalTime(),
+                Rounds = roundTimelines
+                    .OrderBy(t => t.Start)
+                    .ThenBy(t => t.End)
+                .ToList()
+            };
+        }
+
+        public async Task SetRegistrationStartNowAsync(Guid contestId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            DateTime now = DateTime.UtcNow;
+
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            DateTime? regEnd = await GetNullableDateAsync(configRepo, ConfigKeys.ContestRegEnd(contestId));
+
+            if (regEnd.HasValue && regEnd.Value <= now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end time is earlier than or equal to requested start.");
+            if (contest.Start.HasValue && contest.Start.Value <= now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest start time is earlier than or equal to requested registration start.");
+
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(contestId), now.ToString("o"));
+
+            contest.Status = ContestStatusEnum.RegistrationOpen.ToString();
+            await contestRepo.UpdateAsync(contest);
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task SetRegistrationEndNowAsync(Guid contestId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            DateTime now = DateTime.UtcNow;
+
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            DateTime? regStart = await GetNullableDateAsync(configRepo, ConfigKeys.ContestRegStart(contestId));
+
+            if (regStart.HasValue && regStart.Value > now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end cannot be before registration start.");
+            if (contest.Start.HasValue && now > contest.Start.Value)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end cannot be after contest start.");
+
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(contestId), now.ToString("o"));
+            contest.Status = ContestStatusEnum.RegistrationClosed.ToString();
+            await contestRepo.UpdateAsync(contest);
+            await _unitOfWork.SaveAsync();
         }
 
         private static string BuildMentorTeamReportCsv(
