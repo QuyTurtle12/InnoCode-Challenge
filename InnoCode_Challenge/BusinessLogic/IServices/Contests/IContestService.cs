@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Repository.DTOs.ContestDTOs;
+using Repository.DTOs.RoundDTOs;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests
@@ -27,6 +28,7 @@ namespace BusinessLogic.IServices.Contests
         Task<PublishReadinessDTO> CheckPublishReadinessAsync(Guid contestId);
         Task PublishIfReadyAsync(Guid contestId);
         Task CancelContestAsync(Guid contestId);
+        Task<ContestTimelineDTO> GetContestTimelineAsync(Guid contestId);
 
         Task<IReadOnlyList<ContestPolicyDTO>> GetContestPoliciesAsync(Guid contestId);
         Task SetContestPoliciesAsync(Guid contestId, IList<ContestPolicyDTO> policies);

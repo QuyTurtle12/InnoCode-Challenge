@@ -34,6 +34,7 @@ namespace BusinessLogic.Services.Contests
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _activityLogWriter;
         private readonly ILogger<ContestService> _logger;
+        private readonly IRoundService _roundService;
 
         private const int MIN_YEAR = 10;
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
@@ -62,7 +63,8 @@ namespace BusinessLogic.Services.Contests
             ICloudinaryService cloudinaryService,
             INotificationService notificationService,
             IActivityLogWriter activityLogWriter,
-            ILogger<ContestService> logger) 
+            ILogger<ContestService> logger,
+            IRoundService roundService)
         {
             _mapper = mapper;
             _unitOfWork = uow;
@@ -70,7 +72,8 @@ namespace BusinessLogic.Services.Contests
             _cloudinaryService = cloudinaryService;
             _notificationService = notificationService;
             _activityLogWriter = activityLogWriter;
-            _logger = logger; 
+            _logger = logger;
+            _roundService = roundService;
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -2150,6 +2153,78 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.RollBack();
                 throw;
             }
+        }
+
+        private static DateTime? ParseNullableUtc(string? isoString)
+        {
+            if (string.IsNullOrWhiteSpace(isoString)) return null;
+
+            return DateTime.TryParse(
+                isoString,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out DateTime parsed)
+                ? parsed.ToUniversalTime()
+                : null;
+        }
+
+        public async Task<ContestTimelineDTO> GetContestTimelineAsync(Guid contestId)
+        {
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+            var roundRepo = _unitOfWork.GetRepository<Round>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Contest not found.");
+            }
+
+            string regStartKey = ConfigKeys.ContestRegStart(contestId);
+            string regEndKey = ConfigKeys.ContestRegEnd(contestId);
+
+            string? regStartVal = await configRepo.Entities
+                .Where(c => c.Key == regStartKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            string? regEndVal = await configRepo.Entities
+                .Where(c => c.Key == regEndKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            DateTime? regStart = ParseNullableUtc(regStartVal);
+            DateTime? regEnd = ParseNullableUtc(regEndVal);
+
+            var rounds = await roundRepo.Entities
+                .Where(r => r.ContestId == contestId && r.DeletedAt == null)
+                .OrderBy(r => r.Start)
+                .ThenBy(r => r.End)
+                .ToListAsync();
+
+            var roundTimelines = new List<RoundTimelineDTO>();
+            foreach (var r in rounds)
+            {
+                var timeline = await _roundService.GetRoundTimelineAsync(r.RoundId);
+                roundTimelines.Add(timeline);
+            }
+
+            return new ContestTimelineDTO
+            {
+                ContestId = contestId,
+                RegistrationStart = regStart,
+                RegistrationEnd = regEnd,
+                ContestStart = contest.Start?.ToUniversalTime(),
+                ContestEnd = contest.End?.ToUniversalTime(),
+                Rounds = roundTimelines
+                    .OrderBy(t => t.Start)
+                    .ThenBy(t => t.End)
+                    .ToList()
+            };
         }
 
         private static string BuildMentorTeamReportCsv(

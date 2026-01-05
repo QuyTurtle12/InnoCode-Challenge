@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.ContestDTOs;
+using Repository.DTOs.RoundDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.PaginatedList;
@@ -80,6 +81,18 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                         code: ResponseCodeConstants.SUCCESS,
                         data: contest,
                         message: "Contest retrieved successfully."
+                    ));
+        }
+
+        [HttpGet("{id}/timeline")]
+        public async Task<IActionResult> GetContestTimeline(Guid id)
+        {
+            var timeline = await _contestService.GetContestTimelineAsync(id);
+            return Ok(new BaseResponseModel<ContestTimelineDTO>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: timeline,
+                        message: "Contest timeline retrieved successfully."
                     ));
         }
 
