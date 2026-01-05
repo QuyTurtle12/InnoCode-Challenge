@@ -340,6 +340,30 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
+        [HttpPut("{id}/start-registration-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> StartRegistrationNow(Guid id)
+        {
+            await _contestService.SetRegistrationStartNowAsync(id);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Contest registration start time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/end-registration-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> EndRegistrationNow(Guid id)
+        {
+            await _contestService.SetRegistrationEndNowAsync(id);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Contest registration end time updated to now."
+            ));
+        }
+
         /// <summary>
         /// Download contest report (ZIP of CSVs) for organizer
         /// </summary>

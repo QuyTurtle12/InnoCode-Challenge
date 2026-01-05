@@ -2223,8 +2223,24 @@ namespace BusinessLogic.Services.Contests
                 Rounds = roundTimelines
                     .OrderBy(t => t.Start)
                     .ThenBy(t => t.End)
-                    .ToList()
+                .ToList()
             };
+        }
+
+        public async Task SetRegistrationStartNowAsync(Guid contestId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            DateTime now = DateTime.UtcNow;
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(contestId), now.ToString("o"));
+            await _unitOfWork.SaveAsync();
+        }
+
+        public async Task SetRegistrationEndNowAsync(Guid contestId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            DateTime now = DateTime.UtcNow;
+            await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(contestId), now.ToString("o"));
+            await _unitOfWork.SaveAsync();
         }
 
         private static string BuildMentorTeamReportCsv(

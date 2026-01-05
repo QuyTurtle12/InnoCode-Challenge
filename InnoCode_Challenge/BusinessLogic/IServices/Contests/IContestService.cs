@@ -35,6 +35,8 @@ namespace BusinessLogic.IServices.Contests
         Task DeleteContestPolicyAsync(Guid contestId, string policyKey);
         Task<GetContestDTO> StartContestNowAsync(Guid contestId);
         Task<GetContestDTO> EndContestNowAsync(Guid contestId);
+        Task SetRegistrationStartNowAsync(Guid contestId);
+        Task SetRegistrationEndNowAsync(Guid contestId);
         Task<string> DownloadContestReportZipAsync(Guid contestId);
         Task<string> DownloadMentorContestReportAsync(Guid contestId);
 
