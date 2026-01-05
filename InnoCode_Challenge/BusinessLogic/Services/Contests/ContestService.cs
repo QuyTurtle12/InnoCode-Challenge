@@ -1281,6 +1281,11 @@ namespace BusinessLogic.Services.Contests
                 if (contest.End.HasValue && contest.End.Value <= now)
                     throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest already ended. Cannot start now.");
 
+                var configRepo = _unitOfWork.GetRepository<Config>();
+                DateTime? regEnd = await GetNullableDateAsync(configRepo, ConfigKeys.ContestRegEnd(contestId));
+                if (regEnd.HasValue && regEnd.Value > now)
+                    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration has not ended yet. Cannot start contest now.");
+
                 contest.Start = now;
 
                 // Update status
@@ -2168,6 +2173,16 @@ namespace BusinessLogic.Services.Contests
                 : null;
         }
 
+        private static async Task<DateTime?> GetNullableDateAsync(IGenericRepository<Config> configRepo, string key)
+        {
+            string? val = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return ParseNullableUtc(val);
+        }
+
         public async Task<ContestTimelineDTO> GetContestTimelineAsync(Guid contestId)
         {
             var contestRepo = _unitOfWork.GetRepository<Contest>();
@@ -2230,7 +2245,21 @@ namespace BusinessLogic.Services.Contests
         public async Task SetRegistrationStartNowAsync(Guid contestId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
             DateTime now = DateTime.UtcNow;
+
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            DateTime? regEnd = await GetNullableDateAsync(configRepo, ConfigKeys.ContestRegEnd(contestId));
+
+            if (regEnd.HasValue && regEnd.Value <= now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end time is earlier than or equal to requested start.");
+            if (contest.Start.HasValue && contest.Start.Value <= now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Contest start time is earlier than or equal to requested registration start.");
+
             await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegStart(contestId), now.ToString("o"));
             await _unitOfWork.SaveAsync();
         }
@@ -2238,7 +2267,21 @@ namespace BusinessLogic.Services.Contests
         public async Task SetRegistrationEndNowAsync(Guid contestId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
             DateTime now = DateTime.UtcNow;
+
+            Contest? contest = await contestRepo.Entities
+                .FirstOrDefaultAsync(c => c.ContestId == contestId && c.DeletedAt == null);
+            if (contest == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+
+            DateTime? regStart = await GetNullableDateAsync(configRepo, ConfigKeys.ContestRegStart(contestId));
+
+            if (regStart.HasValue && regStart.Value > now)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end cannot be before registration start.");
+            if (contest.Start.HasValue && now > contest.Start.Value)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Registration end cannot be after contest start.");
+
             await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(contestId), now.ToString("o"));
             await _unitOfWork.SaveAsync();
         }
