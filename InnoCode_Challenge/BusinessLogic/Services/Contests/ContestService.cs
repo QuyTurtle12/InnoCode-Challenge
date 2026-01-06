@@ -806,18 +806,8 @@ namespace BusinessLogic.Services.Contests
                     .Where(c => c.Key == regEndKey && c.DeletedAt == null)
                     .FirstOrDefaultAsync();
 
-                DateTime? registrationStart = null;
-                DateTime? registrationEnd = null;
-
-                if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
-                {
-                    registrationStart = regStart;
-                }
-
-                if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
-                {
-                    registrationEnd = regEnd;
-                }
+                DateTime? registrationStart = ParseNullableUtc(regStartConfig?.Value);
+                DateTime? registrationEnd = ParseNullableUtc(regEndConfig?.Value);
 
                 // Determine contest status using helper method
                 var (newStatus, shouldDeleteJobs) = await DetermineContestStatusAsync(

@@ -20,6 +20,7 @@ namespace BusinessLogic.Services.Contests
 
         private const string PISTON_URL = "https://emkc.org/api/v2/piston/execute";
         private const string PYTHON_VERSION = "3.10.0";
+        private const string PROGRAMMING_LANGUAGE = "python3";
 
         public MockTestService(
             HttpClient httpClient,
@@ -102,47 +103,47 @@ namespace BusinessLogic.Services.Contests
 
             // Add test runner that outputs JSON
             sb.AppendLine(@"
-if __name__ == '__main__':
-    # Redirect output to capture results
-    test_output = StringIO()
-    runner = unittest.TextTestRunner(stream=test_output, verbosity=2)
+            if __name__ == '__main__':
+                # Redirect output to capture results
+                test_output = StringIO()
+                runner = unittest.TextTestRunner(stream=test_output, verbosity=2)
     
-    # Load and run tests
-    loader = unittest.TestLoader()
-    suite = loader.loadTestsFromModule(sys.modules[__name__])
-    result = runner.run(suite)
+                # Load and run tests
+                loader = unittest.TestLoader()
+                suite = loader.loadTestsFromModule(sys.modules[__name__])
+                result = runner.run(suite)
     
-    # Parse test results
-    results = {
-        'total': result.testsRun,
-        'passed': result.testsRun - len(result.failures) - len(result.errors),
-        'failed': len(result.failures),
-        'errors': len(result.errors),
-        'success': result.wasSuccessful(),
-        'details': []
-    }
+                # Parse test results
+                results = {
+                    'total': result.testsRun,
+                    'passed': result.testsRun - len(result.failures) - len(result.errors),
+                    'failed': len(result.failures),
+                    'errors': len(result.errors),
+                    'success': result.wasSuccessful(),
+                    'details': []
+                }
     
-    # Add failure details
-    for test, traceback in result.failures + result.errors:
-        results['details'].append({
-            'test': str(test),
-            'status': 'failed',
-            'message': traceback.split('\\n')[-2] if '\\n' in traceback else traceback[:100]
-        })
+                # Add failure details
+                for test, traceback in result.failures + result.errors:
+                    results['details'].append({
+                        'test': str(test),
+                        'status': 'failed',
+                        'message': traceback.split('\\n')[-2] if '\\n' in traceback else traceback[:100]
+                    })
     
-    # Add passed test details
-    passed_count = result.testsRun - len(result.failures) - len(result.errors)
-    for i in range(passed_count):
-        results['details'].append({
-            'test': 'test_' + str(i + 1),
-            'status': 'passed',
-            'message': ''
-        })
+                # Add passed test details
+                passed_count = result.testsRun - len(result.failures) - len(result.errors)
+                for i in range(passed_count):
+                    results['details'].append({
+                        'test': 'test_' + str(i + 1),
+                        'status': 'passed',
+                        'message': ''
+                    })
     
-    # Output JSON marker and results
-    print('===MOCK_TEST_RESULTS===')
-    print(json.dumps(results))
-");
+                # Output JSON marker and results
+                print('===MOCK_TEST_RESULTS===')
+                print(json.dumps(results))
+            ");
 
             return sb.ToString();
         }
@@ -157,7 +158,7 @@ if __name__ == '__main__':
                 // Prepare Piston request
                 var pistonRequest = new PistonExecuteRequest
                 {
-                    Language = "python",
+                    Language = PROGRAMMING_LANGUAGE,
                     Version = PYTHON_VERSION,
                     Files = new[]
                     {
@@ -226,10 +227,17 @@ if __name__ == '__main__':
                 _logger.LogWarning("Failed to find test results marker in output. Output: {Output}", output);
                 return new MockTestResultDTO
                 {
-                    Success = false,
-                    TotalTests = 0,
-                    PassedTests = 0,
-                    FailedTests = 0,
+                    Id = Guid.NewGuid(),
+                    ProblemId = string.Empty,
+                    Summary = new MockTestSummaryDTO
+                    {
+                        Total = 0,
+                        Passed = 0,
+                        Failed = 0,
+                        rawScore = 0,
+                        penaltyScore = 0
+                    },
+                    Language = PROGRAMMING_LANGUAGE,
                     ErrorMessage = "Failed to parse test results. " + (string.IsNullOrEmpty(stderr) ? output : stderr),
                     Details = new List<MockTestCaseDetail>()
                 };
@@ -255,10 +263,17 @@ if __name__ == '__main__':
 
                 return new MockTestResultDTO
                 {
-                    Success = rawResult.Success,
-                    TotalTests = rawResult.Total,
-                    PassedTests = rawResult.Passed,
-                    FailedTests = rawResult.Failed + rawResult.Errors,
+                    Id = Guid.NewGuid(),
+                    ProblemId = string.Empty,
+                    Summary = new MockTestSummaryDTO
+                    {
+                        Total = rawResult.Total,
+                        Passed = rawResult.Passed,
+                        Failed = rawResult.Failed + rawResult.Errors,
+                        rawScore = 0,
+                        penaltyScore = 0
+                    },
+                    Language = PROGRAMMING_LANGUAGE,
                     ErrorMessage = string.IsNullOrEmpty(stderr) ? null : stderr,
                     Details = rawResult.Details?.Select(d => new MockTestCaseDetail
                     {
@@ -273,10 +288,17 @@ if __name__ == '__main__':
                 _logger.LogError(ex, "Failed to parse JSON results: {Json}", jsonPart);
                 return new MockTestResultDTO
                 {
-                    Success = false,
-                    TotalTests = 0,
-                    PassedTests = 0,
-                    FailedTests = 0,
+                    Id = Guid.NewGuid(),
+                    ProblemId = string.Empty,
+                    Summary = new MockTestSummaryDTO
+                    {
+                        Total = 0,
+                        Passed = 0,
+                        Failed = 0,
+                        rawScore = 0,
+                        penaltyScore = 0
+                    },
+                    Language = PROGRAMMING_LANGUAGE,
                     ErrorMessage = $"JSON parse error: {ex.Message}",
                     Details = new List<MockTestCaseDetail>()
                 };

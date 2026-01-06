@@ -2596,161 +2596,47 @@ namespace BusinessLogic.Services.Submissions
             {
                 _unitOfWork.BeginTransaction();
 
+                // Validate round deadline
                 await ValidateRoundDeadlineAsync(roundId, OPERATION_NAME);
 
-                // Get problem with MockTestUrl
-                IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
-                Problem? problem = await problemRepo.Entities
-                    .Where(p => p.RoundId == roundId)
-                    .FirstOrDefaultAsync();
+                // Get and validate problem with mock test
+                Problem problem = await GetAndValidateMockTestProblemAsync(roundId);
 
-                if (problem == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        $"No problem found for round {roundId}");
-                }
+                // Get student and team information
+                var (studentId, teamId, contestId) = await GetMockTestSubmitterInfoAsync(roundId);
 
-                if (string.IsNullOrEmpty(problem.MockTestUrl))
-                {
-                    throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "This problem does not have a mock test configured");
-                }
+                // Validate student hasn't finished round
+                await ValidateStudentNotFinishedRoundAsync(roundId, studentId);
 
-                // Get student and team info
-                string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
-                    ?? throw new ErrorException(StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "User ID not found");
+                // Count previous submissions for penalty calculation
+                int previousSubmissionsCount = await CountPreviousSubmissionsAsync(problem.ProblemId, studentId);
 
-                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
-                Guid studentId = studentRepo.Entities
-                    .Where(s => s.UserId.ToString() == userId)
-                    .Select(s => s.StudentId)
-                    .FirstOrDefault();
+                // Process submission artifact (file or code)
+                var (sourceCode, artifactType, artifactUrl) = await ProcessSubmissionArtifactAsync(
+                    submissionDTO, evaluationType, studentId);
 
-                bool isAlreadyFinished = await _configService.IsStudentFinishedRoundAsync(roundId, studentId);
-                if (isAlreadyFinished)
-                {
-                    throw new ErrorException(StatusCodes.Status403Forbidden,
-                        ResponseCodeConstants.FORBIDDEN,
-                        "You have already finished this round");
-                }
-
-                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-                Guid contestId = contestRepo.Entities
-                    .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
-                    .Select(c => c.ContestId)
-                    .FirstOrDefault();
-
-                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
-                Guid teamId = teamRepo.Entities
-                    .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId)
-                        && !t.DeletedAt.HasValue
-                        && t.ContestId == contestId)
-                    .Select(t => t.TeamId)
-                    .FirstOrDefault();
-
-                // Count previous submissions
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                int previousSubmissionsCount = await submissionRepo.Entities
-                    .Where(s => s.ProblemId == problem.ProblemId
-                        && s.SubmittedByStudentId == studentId
-                        && s.DeletedAt == null)
-                    .CountAsync();
-
-                // Get source code and upload artifact
-                string sourceCode;
-                string artifactType;
-                string artifactUrl;
-
-                if (evaluationType == TestCaseEvaluationTypeEnum.File)
-                {
-                    if (submissionDTO.File == null || submissionDTO.File.Length == 0)
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            "File is required for File evaluation type");
-                    }
-
-                    artifactUrl = await _cloudinaryService.UploadFileAsync(submissionDTO.File, AUTO_TEST_SUBMISSION_FOLDER);
-                    sourceCode = await SubmissionHelpers.DownloadFileContentAsync(artifactUrl);
-                    artifactType = FILE_ARTIFACT_TYPE;
-                }
-                else
-                {
-                    if (string.IsNullOrEmpty(submissionDTO.Code))
-                    {
-                        throw new ErrorException(StatusCodes.Status400BadRequest,
-                            ResponseCodeConstants.BADREQUEST,
-                            "Code is required for Code evaluation type");
-                    }
-
-                    sourceCode = System.Text.RegularExpressions.Regex.Unescape(submissionDTO.Code);
-                    string fileName = $"code_{studentId}_{DateTime.UtcNow:yyyyMMddHHmmss}.py";
-                    artifactUrl = await UploadCodeAsFileAsync(submissionDTO.Code, fileName);
-                    artifactType = CODE_ARTIFACT_TYPE;
-                }
-
-                // Create submission record
-                Submission submission = new Submission
-                {
-                    SubmissionId = Guid.NewGuid(),
-                    TeamId = teamId,
-                    ProblemId = problem.ProblemId,
-                    SubmittedByStudentId = studentId,
-                    JudgedBy = DEFAULT_JUDGED_BY,
-                    Status = SubmissionStatusEnum.Pending.ToString(),
-                    Score = 0,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                await submissionRepo.InsertAsync(submission);
-
-                // Save artifact
-                IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
-                SubmissionArtifact artifact = new SubmissionArtifact
-                {
-                    ArtifactId = Guid.NewGuid(),
-                    SubmissionId = submission.SubmissionId,
-                    Type = artifactType,
-                    Url = artifactUrl,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                await artifactRepo.InsertAsync(artifact);
-                await _unitOfWork.SaveAsync();
+                // Create submission record with artifact
+                Submission submission = await CreateMockTestSubmissionAsync(
+                    teamId, problem.ProblemId, studentId, artifactType, artifactUrl);
 
                 // Execute mock tests
                 MockTestResultDTO mockResult = await _mockTestExecutor.ExecuteMockTestAsync(
                     sourceCode,
-                    problem.MockTestUrl,
+                    problem.MockTestUrl!,
                     timeLimitSec: 30,
                     memoryLimitMb: 1024
                 );
 
-                // Check if mock test execution failed
+                // Set problem metadata in result
+                mockResult.ProblemId = problem.ProblemId.ToString();
+                mockResult.Language = problem.Language;
+
+                // Handle execution failure
                 if (!string.IsNullOrEmpty(mockResult.ErrorMessage))
                 {
-                    // Mark submission as failed
-                    submission.Status = SubmissionStatusEnum.Finished.ToString();
-                    submission.Score = 0;
-                    await submissionRepo.UpdateAsync(submission);
-                    await _unitOfWork.SaveAsync();
-
+                    MockTestResultDTO failedResult = await HandleFailedMockTestAsync(submission, mockResult);
                     _unitOfWork.CommitTransaction();
-
-                    // Return error result
-                    return new MockTestResultDTO
-                    {
-                        Success = false,
-                        TotalTests = 0,
-                        PassedTests = 0,
-                        FailedTests = 0,
-                        ErrorMessage = mockResult.ErrorMessage,
-                        Details = new List<MockTestCaseDetail>()
-                    };
+                    return failedResult;
                 }
 
                 // Apply penalty and save results
@@ -2760,7 +2646,7 @@ namespace BusinessLogic.Services.Submissions
                     previousSubmissionsCount,
                     problem.PenaltyRate);
 
-                // Check plagiarism
+                // Check for plagiarism
                 await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
 
                 _unitOfWork.CommitTransaction();
@@ -2771,7 +2657,6 @@ namespace BusinessLogic.Services.Submissions
             {
                 _unitOfWork.RollBack();
                 if (ex is ErrorException) throw;
-
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error evaluating mock test submission: {ex.Message}");
@@ -2794,9 +2679,9 @@ namespace BusinessLogic.Services.Submissions
                     $"Submission {submissionId} not found");
             }
 
-            // Calculate score: (passed / total) * 100
-            double totalTests = mockResult.TotalTests;
-            double passedTests = mockResult.PassedTests;
+            // Calculate raw score: (passed / total) * 100
+            double totalTests = mockResult.Summary.Total;
+            double passedTests = mockResult.Summary.Passed;
             double rawScore = totalTests > 0 ? (passedTests / totalTests) * 100 : 0;
 
             // Apply penalty
@@ -2812,8 +2697,14 @@ namespace BusinessLogic.Services.Submissions
             submission.Status = SubmissionStatusEnum.Finished.ToString();
             submission.Score = Math.Round(finalScore, 2);
 
+            // Update summary with scores
+            mockResult.Summary.rawScore = Math.Round(rawScore, 2);
+            mockResult.Summary.penaltyScore = Math.Round(finalScore, 2);
+
             // Save mock test details as submission details
             IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
+            double weightPerTest = totalTests > 0 ? (100.0 / totalTests) : 0;
+
             foreach (var detail in mockResult.Details)
             {
                 SubmissionDetail submissionDetail = new SubmissionDetail
@@ -2821,7 +2712,7 @@ namespace BusinessLogic.Services.Submissions
                     DetailsId = Guid.NewGuid(),
                     SubmissionId = submissionId,
                     TestcaseId = null,
-                    Weight = 1.0 / mockResult.TotalTests * 100,
+                    Weight = weightPerTest,
                     Note = $"{detail.TestName}: {detail.Status}",
                     RuntimeMs = 0,
                     MemoryKb = 0,
@@ -4083,6 +3974,150 @@ namespace BusinessLogic.Services.Submissions
                 ?? throw new ErrorException(StatusCodes.Status401Unauthorized,
                     ResponseCodeConstants.UNAUTHORIZED,
                     "User ID not found.");
+        }
+
+        /// <summary>
+        /// Gets mock test problem and validates configuration
+        /// </summary>
+        private async Task<Problem> GetAndValidateMockTestProblemAsync(Guid roundId)
+        {
+            IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
+            Problem? problem = await problemRepo.Entities
+                .Where(p => p.RoundId == roundId)
+                .FirstOrDefaultAsync();
+
+            if (problem == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    $"No problem found for round {roundId}");
+            }
+
+            if (string.IsNullOrEmpty(problem.MockTestUrl))
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "This problem does not have a mock test configured");
+            }
+
+            return problem;
+        }
+
+        /// <summary>
+        /// Gets student and team information for mock test submission
+        /// </summary>
+        private async Task<(Guid StudentId, Guid TeamId, Guid ContestId)> GetMockTestSubmitterInfoAsync(Guid roundId)
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? throw new ErrorException(StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "User ID not found");
+
+            IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+            Guid studentId = studentRepo.Entities
+                .Where(s => s.UserId.ToString() == userId)
+                .Select(s => s.StudentId)
+                .FirstOrDefault();
+
+            if (studentId == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Student not found");
+            }
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+            Guid contestId = contestRepo.Entities
+                .Where(c => c.Rounds.Any(r => r.RoundId == roundId) && !c.DeletedAt.HasValue)
+                .Select(c => c.ContestId)
+                .FirstOrDefault();
+
+            if (contestId == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Contest not found for this round");
+            }
+
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+            Guid teamId = teamRepo.Entities
+                .Where(t => t.TeamMembers.Any(tm => tm.StudentId == studentId)
+                    && !t.DeletedAt.HasValue
+                    && t.ContestId == contestId)
+                .Select(t => t.TeamId)
+                .FirstOrDefault();
+
+            if (teamId == Guid.Empty)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "You are not in a team for this contest");
+            }
+
+            return (studentId, teamId, contestId);
+        }
+
+        /// <summary>
+        /// Creates mock test submission with artifact
+        /// </summary>
+        private async Task<Submission> CreateMockTestSubmissionAsync(
+            Guid teamId,
+            Guid problemId,
+            Guid studentId,
+            string artifactType,
+            string artifactUrl)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            Submission submission = new Submission
+            {
+                SubmissionId = Guid.NewGuid(),
+                TeamId = teamId,
+                ProblemId = problemId,
+                SubmittedByStudentId = studentId,
+                JudgedBy = DEFAULT_JUDGED_BY,
+                Status = SubmissionStatusEnum.Pending.ToString(),
+                Score = 0,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await submissionRepo.InsertAsync(submission);
+
+            // Save artifact
+            IGenericRepository<SubmissionArtifact> artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+            SubmissionArtifact artifact = new SubmissionArtifact
+            {
+                ArtifactId = Guid.NewGuid(),
+                SubmissionId = submission.SubmissionId,
+                Type = artifactType,
+                Url = artifactUrl,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await artifactRepo.InsertAsync(artifact);
+            await _unitOfWork.SaveAsync();
+
+            return submission;
+        }
+
+        /// <summary>
+        /// Handles failed mock test execution
+        /// </summary>
+        private async Task<MockTestResultDTO> HandleFailedMockTestAsync(
+            Submission submission,
+            MockTestResultDTO mockResult)
+        {
+            IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            submission.Status = SubmissionStatusEnum.Finished.ToString();
+            submission.Score = 0;
+            await submissionRepo.UpdateAsync(submission);
+            await _unitOfWork.SaveAsync();
+
+            mockResult.Summary.rawScore = 0;
+            mockResult.Summary.penaltyScore = 0;
+
+            return mockResult;
         }
     }
 }
