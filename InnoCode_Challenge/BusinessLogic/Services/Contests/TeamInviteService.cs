@@ -285,8 +285,12 @@ namespace BusinessLogic.Services
             var memberRepo = _uow.GetRepository<TeamMember>();
             var roundRepo = _uow.GetRepository<Round>();
             var configRepo = _uow.GetRepository<Config>();
+            var contestRepo = _uow.GetRepository<Contest>();
 
             var (invite, user, _) = await ValidateInviteTokenAsync(inviteRepo, userRepo, token, email);
+
+            // Registration must still be open
+            await EnsureRegistrationOpenAsync(invite.Team.ContestId, contestRepo, configRepo);
 
             var student = await studentRepo.Entities
                 .FirstOrDefaultAsync(s => s.UserId == user.UserId && s.DeletedAt == null);
@@ -379,8 +383,13 @@ namespace BusinessLogic.Services
         {
             var inviteRepo = _uow.GetRepository<TeamInvite>();
             var userRepo = _uow.GetRepository<User>();
+            var configRepo = _uow.GetRepository<Config>();
+            var contestRepo = _uow.GetRepository<Contest>();
 
             var (invite, user, normEmail) = await ValidateInviteTokenAsync(inviteRepo, userRepo, token, email);
+
+            // Registration must still be open
+            await EnsureRegistrationOpenAsync(invite.Team.ContestId, contestRepo, configRepo);
 
             invite.Status = Declined; // (cancelled)
             inviteRepo.Update(invite);
