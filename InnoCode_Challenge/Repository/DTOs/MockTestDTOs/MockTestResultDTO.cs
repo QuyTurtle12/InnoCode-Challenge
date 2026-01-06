@@ -4,7 +4,7 @@ namespace Repository.DTOs.MockTestDTOs
 {
     public class MockTestResultDTO
     {
-        public Guid Id { get; set; }
+        public Guid SubmissionId { get; set; }
         public string ProblemId { get; set; } = string.Empty;
         public MockTestSummaryDTO Summary { get; set; } = new();
         public string Language { get; set; } = string.Empty;

@@ -227,7 +227,7 @@ namespace BusinessLogic.Services.Contests
                 _logger.LogWarning("Failed to find test results marker in output. Output: {Output}", output);
                 return new MockTestResultDTO
                 {
-                    Id = Guid.NewGuid(),
+                    SubmissionId = Guid.NewGuid(),
                     ProblemId = string.Empty,
                     Summary = new MockTestSummaryDTO
                     {
@@ -263,7 +263,7 @@ namespace BusinessLogic.Services.Contests
 
                 return new MockTestResultDTO
                 {
-                    Id = Guid.NewGuid(),
+                    SubmissionId = Guid.NewGuid(),
                     ProblemId = string.Empty,
                     Summary = new MockTestSummaryDTO
                     {
@@ -288,7 +288,7 @@ namespace BusinessLogic.Services.Contests
                 _logger.LogError(ex, "Failed to parse JSON results: {Json}", jsonPart);
                 return new MockTestResultDTO
                 {
-                    Id = Guid.NewGuid(),
+                    SubmissionId = Guid.NewGuid(),
                     ProblemId = string.Empty,
                     Summary = new MockTestSummaryDTO
                     {
