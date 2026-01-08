@@ -139,8 +139,6 @@ namespace BusinessLogic.Services
             await TryLogConfigChangeAsync(entity.Key);
         }
 
-        // ---------- Contest helpers ----------
-
         public async Task SetRegistrationWindowAsync(Guid contestId, SetRegistrationWindowDTO dto, string performedByRole)
         {
             EnsureStaffOrAdmin(performedByRole);
@@ -175,8 +173,6 @@ namespace BusinessLogic.Services
 
             await TryLogConfigChangeAsync(contestId.ToString());
         }
-
-        // ---------- helpers ----------
 
         private static void ValidateKey(string key)
         {
@@ -253,7 +249,7 @@ namespace BusinessLogic.Services
             await SetConfigValueAsync(key, "false", "round");
         }
 
-        private async Task SetConfigValueAsync(string key, string value, string? scope = null)
+        public async Task SetConfigValueAsync(string key, string value, string? scope = null)
         {
             var configRepo = _uow.GetRepository<Config>();
 

@@ -48,10 +48,15 @@ namespace BusinessLogic.Services.Contests
         private const string PROBLEM_TYPE_AUTO_EVALUATION = nameof(ProblemTypeEnum.AutoEvaluation);
         private const string PROBLEM_TYPE_MANUAL = nameof(ProblemTypeEnum.Manual);
         private const string PROBLEM_TYPE_MCQ_TEST = nameof(ProblemTypeEnum.McqTest);
+        private const string AUTO_MOCK_TEST_TEST_TYPE = nameof(TestTypeEnum.MockTest);
+        private const string AUTO_INPUT_OUTPUT_TEST_TYPE = nameof(TestTypeEnum.InputOutput);
+
         private const string ROUND_TYPE_MCQ_TEST = "MCQ Test";
         private const string ROUND_TYPE_AUTO_EVALUATION = "Auto Evaluation";
         private const string UNKNOWN_ORGANIZER = "Unknown Organizer";
         private const string UNKNOWN_ROUND = "Unknown Round";
+        private const string TIME_LIMIT_SECONDS_KEY_SUFFIX = "time_limit_seconds";
+        private const string MOCK_TEST_WEIGHT_KEY_SUFFIX = "weight";
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
         private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
         private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
@@ -203,11 +208,11 @@ namespace BusinessLogic.Services.Contests
                 PaginatedList<Contest> resultQuery = await contestRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Load related data efficiently
-                var (configLookup, organizerNames, timeLimitDict) = await LoadRelatedDataAsync(resultQuery.Items);
+                var (configLookup, organizerNames, timeLimitDict, mockTestWeightDict) = await LoadRelatedDataAsync(resultQuery.Items);
 
                 // Map entities to DTOs
                 IReadOnlyCollection<GetContestDTO> result = resultQuery.Items
-                    .Select(item => MapContestEntityToDTO(item, configLookup, organizerNames, timeLimitDict))
+                    .Select(item => MapContestEntityToDTO(item, configLookup, organizerNames, timeLimitDict, mockTestWeightDict))
                     .ToList();
 
                 // Return paginated result
@@ -245,10 +250,10 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Load related data
-                var (configLookup, organizerName, timeLimitDict) = await LoadContestRelatedDataAsync(contest);
+                var (configLookup, organizerName, timeLimitDict, mockTestWeightDict) = await LoadContestRelatedDataAsync(contest);
 
                 // Map to DTO
-                return MapSingleContestToDTO(contest, configLookup, organizerName, timeLimitDict);
+                return MapSingleContestToDTO(contest, configLookup, organizerName, timeLimitDict, mockTestWeightDict);
             }
             catch (Exception ex)
             {
@@ -680,6 +685,17 @@ namespace BusinessLogic.Services.Contests
                 else if (hasMockTestUrl && hasTestCases)
                 {
                     result.Missing.Add($"Auto-evaluation round '{roundName}' cannot have both mock test file and test cases. Please use only one evaluation method.");
+                }
+
+                // Check mock test round's weight
+                if (problem.TestType == AUTO_MOCK_TEST_TEST_TYPE)
+                {
+                    string mockTestRoundWeightKey = ConfigKeys.RoundWeight(round!.RoundId);
+
+                    if (string.IsNullOrWhiteSpace(mockTestRoundWeightKey))
+                    {
+                        result.Missing.Add($"Auto-evaluation round '{roundName}' with mock test type is missing weight.");
+                    }
                 }
             }
         }
@@ -2568,11 +2584,12 @@ namespace BusinessLogic.Services.Contests
             Contest contest,
             ILookup<string, Config> configLookup,
             Dictionary<Guid, string> organizerNames,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(contest);
 
-            contestDTO.rounds = MapContestRounds(contest, timeLimitDict);
+            contestDTO.rounds = MapContestRounds(contest, timeLimitDict, mockTestWeightDict);
             contestDTO.CreatedById = Guid.Parse(contest.CreatedBy!);
             contestDTO.CreatedByName = organizerNames.GetValueOrDefault(
                 contestDTO.CreatedById,
@@ -2589,11 +2606,12 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private List<GetRoundDTO> MapContestRounds(
             Contest contest,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             return contest.Rounds
                 .Where(r => !r.DeletedAt.HasValue)
-                .Select(r => MapRoundDTO(r, contest.Name, timeLimitDict))
+                .Select(r => MapRoundDTO(r, contest.Name, timeLimitDict, mockTestWeightDict))
                 .OrderBy(r => r.Start)
                 .ToList();
         }
@@ -2604,7 +2622,8 @@ namespace BusinessLogic.Services.Contests
         private GetRoundDTO MapRoundDTO(
             Round round,
             string contestName,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
 
@@ -2615,6 +2634,7 @@ namespace BusinessLogic.Services.Contests
 
             ApplyTimeLimitConfig(roundDTO, round.RoundId, timeLimitDict);
             MapRoundProblemOrTest(roundDTO, round);
+            ApplyMockTestWeightConfig(roundDTO, round, mockTestWeightDict);
 
             return roundDTO;
         }
@@ -2632,6 +2652,28 @@ namespace BusinessLogic.Services.Contests
                 && int.TryParse(timeLimitConfig.Value, out int timeLimit))
             {
                 roundDTO.TimeLimitSeconds = timeLimit;
+            }
+        }
+
+        /// <summary>
+        /// Applies mock test weight configuration to round DTO for auto evaluation rounds with mock tests
+        /// </summary>
+        private void ApplyMockTestWeightConfig(
+            GetRoundDTO roundDTO,
+            Round round,
+            Dictionary<string, Config> mockTestWeightDict)
+        {
+            // Check if this is an auto evaluation round with mock test
+            if (round.Problem != null
+                && round.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
+                && round.Problem.TestType == AUTO_MOCK_TEST_TEST_TYPE)
+            {
+                string weightKey = ConfigKeys.RoundWeight(round.RoundId);
+                if (mockTestWeightDict.TryGetValue(weightKey, out Config? weightConfig)
+                    && double.TryParse(weightConfig.Value, out double weight))
+                {
+                    roundDTO.Problem!.MockTestWeight = weight;
+                }
             }
         }
 
@@ -2952,7 +2994,7 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Loads all related data efficiently (configs, organizers, time limits)
         /// </summary>
-        private async Task<(ILookup<string, Config> configLookup, Dictionary<Guid, string> organizerNames, Dictionary<string, Config> timeLimitDict)>
+        private async Task<(ILookup<string, Config> configLookup, Dictionary<Guid, string> organizerNames, Dictionary<string, Config> timeLimitDict, Dictionary<string, Config> mockTestWeightDict)>
             LoadRelatedDataAsync(IReadOnlyCollection<Contest> contests)
         {
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -2989,13 +3031,22 @@ namespace BusinessLogic.Services.Contests
 
             List<Config> timeLimitConfigs = await configRepo.Entities
                 .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
-                            && c.Key.Contains("time_limit_seconds")
+                            && c.Key.Contains(TIME_LIMIT_SECONDS_KEY_SUFFIX)
                             && c.DeletedAt == null)
                 .ToListAsync();
 
             Dictionary<string, Config> timeLimitDict = timeLimitConfigs.ToDictionary(c => c.Key);
 
-            return (configLookup, organizerNames, timeLimitDict);
+            // Load mock test weight configs
+            List<Config> mockTestWeightConfigs = await configRepo.Entities
+                .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                            && c.Key.Contains(MOCK_TEST_WEIGHT_KEY_SUFFIX)
+                            && c.DeletedAt == null)
+                .ToListAsync();
+
+            Dictionary<string, Config> mockTestWeightDict = mockTestWeightConfigs.ToDictionary(c => c.Key);
+
+            return (configLookup, organizerNames, timeLimitDict, mockTestWeightDict);
         }
 
         /// <summary>
@@ -3016,7 +3067,7 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Loads all related data for a single contest
         /// </summary>
-        private async Task<(ILookup<string, Config> configLookup, string organizerName, Dictionary<string, Config> timeLimitDict)>
+        private async Task<(ILookup<string, Config> configLookup, string organizerName, Dictionary<string, Config> timeLimitDict, Dictionary<string, Config> mockTestWeightDict)>
             LoadContestRelatedDataAsync(Contest contest)
         {
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -3040,13 +3091,22 @@ namespace BusinessLogic.Services.Contests
             List<Guid> roundIds = contest.Rounds.Select(r => r.RoundId).Distinct().ToList();
             List<Config> timeLimitConfigs = await configRepo.Entities
                 .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
-                            && c.Key.Contains("time_limit_seconds")
+                            && c.Key.Contains(TIME_LIMIT_SECONDS_KEY_SUFFIX)
                             && c.DeletedAt == null)
                 .ToListAsync();
 
             Dictionary<string, Config> timeLimitDict = timeLimitConfigs.ToDictionary(c => c.Key);
 
-            return (configLookup, organizerName, timeLimitDict);
+            // Load weights for mock test rounds
+            List<Config> mockTestWeightConfigs = await configRepo.Entities
+                .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                            && c.Key.Contains(MOCK_TEST_WEIGHT_KEY_SUFFIX)
+                            && c.DeletedAt == null)
+                .ToListAsync();
+
+            Dictionary<string, Config> mockTestWeightDict = mockTestWeightConfigs.ToDictionary(c => c.Key);
+
+            return (configLookup, organizerName, timeLimitDict, mockTestWeightDict);
         }
 
         /// <summary>
@@ -3056,12 +3116,13 @@ namespace BusinessLogic.Services.Contests
             Contest contest,
             ILookup<string, Config> configLookup,
             string organizerName,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(contest);
 
             // Map rounds
-            contestDTO.rounds = MapContestRounds(contest, timeLimitDict);
+            contestDTO.rounds = MapContestRounds(contest, timeLimitDict, mockTestWeightDict);
 
             // Map creator info
             contestDTO.CreatedById = Guid.Parse(contest.CreatedBy!);

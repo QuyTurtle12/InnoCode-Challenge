@@ -26,6 +26,7 @@ using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace BusinessLogic.Services.Submissions
 {
@@ -53,6 +54,8 @@ namespace BusinessLogic.Services.Submissions
         private const string MANUAL_TEST_SUBMISSION_FOLDER = "submissions";
         private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
         private const string SCOPE_CONTEST = "contest";
+        private const string SCOPE_ROUND = "round";
+        private const double DEFAULT_MAX_SCORE = 100.0;
 
         // Submission status enum values
         private static readonly string SUBMISSION_STATUS_PENDING = SubmissionStatusEnum.Pending.ToString();
@@ -74,6 +77,8 @@ namespace BusinessLogic.Services.Submissions
         private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
         private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
         private const int MAX_PY_FILES = 50;
+        private const int MOCK_TEST_EXECUTION_TIME_LIMIT_SECONDS = 30;
+        private const int MOCK_TEST_EXECUTION_MEMORY_LIMIT = 2048;
 
         private const string EXTENSION_PY = ".py";
         private const string EXTENSION_PYTHON = ".python";
@@ -1058,8 +1063,8 @@ namespace BusinessLogic.Services.Submissions
                     {
                         RubricId = d.TestcaseId!.Value,
                         Description = d.Testcase?.Description ?? d.Testcase?.Input ?? "Criterion",
-                        MaxScore = d.Testcase?.Weight ?? 0,
-                        Score = d.Weight ?? 0,
+                        MaxScore = Math.Round(d.Testcase?.Weight ?? 0, 2),
+                        Score = Math.Round(d.Weight ?? 0, 2),
                         Note = d.Note
                     })
                     .ToList();
@@ -1078,8 +1083,8 @@ namespace BusinessLogic.Services.Submissions
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
                     JudgedBy = judgeEmail,
-                    TotalScore = submission.Score,
-                    MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                    TotalScore = Math.Round(submission.Score, 2),
+                    MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                     CriterionResults = results
                 };
 
@@ -1224,8 +1229,8 @@ namespace BusinessLogic.Services.Submissions
                         {
                             RubricId = d.TestcaseId!.Value,
                             Description = d.Testcase?.Description ?? d.Testcase?.Input ?? "Criterion",
-                            MaxScore = d.Testcase?.Weight ?? 0,
-                            Score = d.Weight ?? 0,
+                            MaxScore = Math.Round(d.Testcase?.Weight ?? 0, 2),
+                            Score = Math.Round(d.Weight ?? 0, 2),
                             Note = d.Note
                         })
                         .ToList();
@@ -1239,8 +1244,8 @@ namespace BusinessLogic.Services.Submissions
                     {
                         SubmissionId = submission.SubmissionId,
                         JudgedBy = judgeEmail,
-                        TotalScore = submission.Score,
-                        MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                        TotalScore = Math.Round(submission.Score, 2),
+                        MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                         CriterionResults = criterionResults,
                         StudentName = submission.SubmittedByStudent?.User?.Fullname ?? "Unknown",
                         TeamName = submission.Team?.Name ?? "Unknown",
@@ -1342,7 +1347,17 @@ namespace BusinessLogic.Services.Submissions
                 if (submission?.SubmissionDetails != null)
                 {
                     dto.Details = submission.SubmissionDetails
-                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .Select(detail => new GetSubmissionDetailDTO
+                        {
+                            DetailsId = detail.DetailsId,
+                            CreatedAt = detail.CreatedAt,
+                            SubmissionId = detail.SubmissionId,
+                            TestcaseId = detail.TestcaseId ?? Guid.Empty,
+                            Weight = Math.Round(detail.Weight ?? 0, 2),
+                            Note = detail.Note,
+                            RuntimeMs = detail.RuntimeMs,
+                            MemoryKb = detail.MemoryKb
+                        })
                         .ToList();
                 }
                 else
@@ -1474,9 +1489,26 @@ namespace BusinessLogic.Services.Submissions
                         : 1;
 
                     // Map test case details to DTOs
-                    dto.Details = submission.SubmissionDetails?
-                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
-                        .ToList();
+                    if (submission?.SubmissionDetails != null)
+                    {
+                        dto.Details = submission.SubmissionDetails
+                            .Select(detail => new GetSubmissionDetailDTO
+                            {
+                                DetailsId = detail.DetailsId,
+                                CreatedAt = detail.CreatedAt,
+                                SubmissionId = detail.SubmissionId,
+                                TestcaseId = detail.TestcaseId ?? Guid.Empty,
+                                Weight = Math.Round(detail.Weight ?? 0, 2),
+                                Note = detail.Note,
+                                RuntimeMs = detail.RuntimeMs,
+                                MemoryKb = detail.MemoryKb
+                            })
+                            .ToList();
+                    }
+                    else
+                    {
+                        dto.Details = null;
+                    }
 
                     // Map Artifacts to DTOs
                     dto.Artifacts = submission.SubmissionArtifacts?
@@ -1653,8 +1685,8 @@ namespace BusinessLogic.Services.Submissions
                             {
                                 RubricId = sd.TestcaseId!.Value,
                                 Description = sd.Testcase?.Description ?? sd.Testcase?.Input ?? "Criterion",
-                                MaxScore = sd.Testcase?.Weight ?? 0,
-                                Score = sd.Weight ?? 0,
+                                MaxScore = Math.Round(sd.Testcase?.Weight ?? 0, 2),
+                                Score = Math.Round(sd.Weight ?? 0, 2),
                                 Note = sd.Note
                             })
                             .ToList() ?? new List<RubricCriterionResultDTO>()
@@ -1745,8 +1777,8 @@ namespace BusinessLogic.Services.Submissions
                         {
                             RubricId = sd.TestcaseId!.Value,
                             Description = sd.Testcase?.Description ?? sd.Testcase?.Input ?? "Criterion",
-                            MaxScore = sd.Testcase?.Weight ?? 0,
-                            Score = sd.Weight ?? 0,
+                            MaxScore = Math.Round(sd.Testcase?.Weight ?? 0, 2),
+                            Score = Math.Round(sd.Weight ?? 0, 2),
                             Note = sd.Note
                         })
                         .ToList() ?? new List<RubricCriterionResultDTO>()
@@ -2074,7 +2106,7 @@ namespace BusinessLogic.Services.Submissions
                             }
                         }
 
-                        if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                        if (Guid.TryParse(submission.Problem?.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
                         {
                             users.Add(organizerId);
                         }
@@ -2086,8 +2118,8 @@ namespace BusinessLogic.Services.Submissions
                                 NotificationTypes.PlagiarismConfirmed,
                                 new
                                 {
-                                    contestId = submission.Problem.Round.ContestId,
-                                    roundId = submission.Problem.RoundId,
+                                    contestId = submission.Problem?.Round.ContestId,
+                                    roundId = submission.Problem?.RoundId,
                                     submissionId = submission.SubmissionId,
                                     teamId = submission.TeamId,
                                     status = submission.Status,
@@ -2114,7 +2146,7 @@ namespace BusinessLogic.Services.Submissions
                         submission.SubmissionId.ToString());
                 }
 
-                Guid roundId = submission.Problem.RoundId;
+                Guid roundId = submission.Problem!.RoundId;
                 Guid studentId = submission.SubmittedByStudentId;
                 Guid contestId = submission.Problem.Round.ContestId;
 
@@ -2241,7 +2273,7 @@ namespace BusinessLogic.Services.Submissions
                 var submissionRepo = _unitOfWork.GetRepository<Submission>();
 
                 submission.Status = STATUS_PLAGIARISM_SUSPECTED;
-                submission.JudgedBy = null; // unassigned -> staff queue
+                submission.JudgedBy = null;
                 await submissionRepo.UpdateAsync(submission);
 
                 // Notify organizer about suspected plagiarism
@@ -2266,7 +2298,7 @@ namespace BusinessLogic.Services.Submissions
                     }
                     catch
                     {
-                        // ignore notification failures
+                        
                     }
                 }
             }
@@ -2623,11 +2655,12 @@ namespace BusinessLogic.Services.Submissions
                 MockTestResultDTO mockResult = await _mockTestExecutor.ExecuteMockTestAsync(
                     sourceCode,
                     problem.MockTestUrl!,
-                    timeLimitSec: 30,
-                    memoryLimitMb: 1024
+                    timeLimitSec: MOCK_TEST_EXECUTION_TIME_LIMIT_SECONDS,
+                    memoryLimitMb: MOCK_TEST_EXECUTION_MEMORY_LIMIT
                 );
 
-                // Set problem metadata in result
+                // Populate result metadata
+                mockResult.SubmissionId = submission.SubmissionId;
                 mockResult.ProblemId = problem.ProblemId.ToString();
                 mockResult.Language = problem.Language;
 
@@ -2670,7 +2703,11 @@ namespace BusinessLogic.Services.Submissions
             double? penaltyRate)
         {
             IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-            Submission? submission = await submissionRepo.GetByIdAsync(submissionId);
+            Submission? submission = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                    .ThenInclude(p => p.Round)
+                .Where(s => s.SubmissionId == submissionId)
+                .FirstOrDefaultAsync();
 
             if (submission == null)
             {
@@ -2679,10 +2716,23 @@ namespace BusinessLogic.Services.Submissions
                     $"Submission {submissionId} not found");
             }
 
-            // Calculate raw score: (passed / total) * 100
+            // Get round weight from config for mock test rounds
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+            string weightKey = ConfigKeys.RoundWeight(submission.Problem.RoundId);
+
+            Config? weightConfig = await configRepo.Entities
+                .Where(c => c.Key == weightKey && c.Scope == SCOPE_ROUND && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            // Default max possible score
+            double maxPossibleScore = double.TryParse(weightConfig?.Value, out double configuredWeight) 
+                ? configuredWeight 
+                : DEFAULT_MAX_SCORE;
+
+            // Calculate raw score: (passed / total) * maxPossibleScore
             double totalTests = mockResult.Summary.Total;
             double passedTests = mockResult.Summary.Passed;
-            double rawScore = totalTests > 0 ? (passedTests / totalTests) * 100 : 0;
+            double rawScore = totalTests > 0 ? (passedTests / totalTests) * maxPossibleScore : 0;
 
             // Apply penalty
             double finalScore = rawScore;
@@ -2703,7 +2753,7 @@ namespace BusinessLogic.Services.Submissions
 
             // Save mock test details as submission details
             IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
-            double weightPerTest = totalTests > 0 ? (100.0 / totalTests) : 0;
+            double weightPerTest = totalTests > 0 ? (maxPossibleScore / totalTests) : 0;
 
             foreach (var detail in mockResult.Details)
             {
@@ -2725,6 +2775,7 @@ namespace BusinessLogic.Services.Submissions
             await submissionRepo.UpdateAsync(submission);
             await _unitOfWork.SaveAsync();
         }
+
         private sealed class TeamRankRow
         {
             public Guid TeamId { get; set; }
@@ -2979,10 +3030,20 @@ namespace BusinessLogic.Services.Submissions
                 dto.submissionAttemptNumber = attemptNumber;
 
                 // Map test case details to DTOs
-                if (submission.SubmissionDetails != null)
+                if (submission?.SubmissionDetails != null)
                 {
                     dto.Details = submission.SubmissionDetails
-                        .Select(detail => _mapper.Map<GetSubmissionDetailDTO>(detail))
+                        .Select(detail => new GetSubmissionDetailDTO
+                        {
+                            DetailsId = detail.DetailsId,
+                            CreatedAt = detail.CreatedAt,
+                            SubmissionId = detail.SubmissionId,
+                            TestcaseId = detail.TestcaseId ?? Guid.Empty,
+                            Weight = Math.Round(detail.Weight ?? 0, 2),
+                            Note = detail.Note,
+                            RuntimeMs = detail.RuntimeMs,
+                            MemoryKb = detail.MemoryKb
+                        })
                         .ToList();
                 }
                 else
@@ -2991,7 +3052,7 @@ namespace BusinessLogic.Services.Submissions
                 }
 
                 // Map Artifacts to DTOs
-                if (submission.SubmissionArtifacts != null)
+                if (submission?.SubmissionArtifacts != null)
                 {
                     dto.Artifacts = submission.SubmissionArtifacts
                         .Select(artifact => _mapper.Map<GetSubmissionArtifactDTO>(artifact))
@@ -3059,8 +3120,8 @@ namespace BusinessLogic.Services.Submissions
                     {
                         RubricId = d.TestcaseId!.Value,
                         Description = d.Testcase?.Description ?? d.Testcase?.Input ?? "Criterion",
-                        MaxScore = d.Testcase?.Weight ?? 0,
-                        Score = d.Weight ?? 0,
+                        MaxScore = Math.Round(d.Testcase?.Weight ?? 0, 2),
+                        Score = Math.Round(d.Weight ?? 0, 2),
                         Note = d.Note
                     })
                     .ToList();
@@ -3084,8 +3145,8 @@ namespace BusinessLogic.Services.Submissions
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
                     JudgedBy = judgeEmail,
-                    TotalScore = submission.Score,
-                    MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
+                    TotalScore = Math.Round(submission.Score, 2),
+                    MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                     CriterionResults = results
                 };
 

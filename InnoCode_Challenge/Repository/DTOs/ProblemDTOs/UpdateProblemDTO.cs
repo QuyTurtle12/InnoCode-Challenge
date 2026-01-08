@@ -12,11 +12,12 @@ namespace Repository.DTOs.ProblemDTOs
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public ProblemTypeEnum Type { get; set; } = ProblemTypeEnum.Manual;
 
-        [Required]
         [EnumDataType(typeof(TestTypeEnum))]
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public TestTypeEnum? TestType { get; set; }
 
         public IFormFile? TemplateFile { get; set; }
+
+        public double? MockTestWeight { get; set; }
     }
 }

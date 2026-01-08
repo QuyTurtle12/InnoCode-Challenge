@@ -42,6 +42,7 @@ namespace BusinessLogic.Services.Contests
 
         private const string CODE_TEMPLATE_FOLDER = "code_template";
         private const string SCOPE_CONTEST = "contest";
+        private const string SCOPE_ROUND = "round";
         private const string JUDGE_STATUS_ACTIVE = "active";
         private const int OPEN_CODE_MIN = 1000;
         private const int OPEN_CODE_MAX = 10000;
@@ -60,6 +61,10 @@ namespace BusinessLogic.Services.Contests
         private static readonly string APPEAL_STATE_CLOSED = AppealStateEnum.Closed.ToString();
         private static readonly string APPEAL_DECISION_APPROVED = AppealDecisionEnum.Approved.ToString();
         private static readonly string APPEAL_RESOLUTION_RETAKE = AppealResolutionEnum.Retake.ToString();
+
+        // Auto test types values
+        private const string AUTO_MOCK_TEST_TEST_TYPE = nameof(TestTypeEnum.MockTest);
+        private const string AUTO_INPUT_OUTPUT_TEST_TYPE = nameof(TestTypeEnum.InputOutput);
 
         public RoundService(
             IMapper mapper,
@@ -305,10 +310,10 @@ namespace BusinessLogic.Services.Contests
                 Round round = await FetchRoundWithIncludesAsync(id);
 
                 // Load configurations
-                var (timeLimitSeconds, rankCutoff) = await LoadRoundConfigurationsAsync(id);
+                var (timeLimitSeconds, rankCutoff, mockTestRoundWeight) = await LoadRoundConfigurationsAsync(id);
 
                 // Map to DTO
-                GetRoundDTO roundDTO = MapRoundToDTO(round, timeLimitSeconds, rankCutoff);
+                GetRoundDTO roundDTO = MapRoundToDTO(round, timeLimitSeconds, rankCutoff, mockTestRoundWeight);
 
                 // Apply student-specific validations if user is a student
                 await ApplyStudentValidationsAsync(round, openCode);
@@ -358,8 +363,11 @@ namespace BusinessLogic.Services.Contests
                 // Load time limit configurations
                 Dictionary<string, Config> timeLimitLookup = await LoadTimeLimitConfigurationsAsync(resultQuery.Items);
 
+                // Load mock test weight configurations
+                Dictionary<string, Config> mockTestWeightLookup = await LoadMockTestWeightConfigurationsAsync(resultQuery.Items);
+
                 // Map to DTOs
-                IReadOnlyCollection<GetRoundDTO> result = MapRoundsToDTO(resultQuery.Items, timeLimitLookup);
+                IReadOnlyCollection<GetRoundDTO> result = MapRoundsToDTO(resultQuery.Items, timeLimitLookup, mockTestWeightLookup);
 
                 // Return paginated result
                 return new PaginatedList<GetRoundDTO>(
@@ -1788,10 +1796,16 @@ namespace BusinessLogic.Services.Contests
 
             await _problemService.CreateProblemAsync(roundId, config);
 
-            // Upload template file if provided
+            // Upload template file
             if (config.TemplateFile != null)
             {
                 await UploadProblemTemplateAsync(roundId, config.TemplateFile);
+            }
+
+            // Set mock test weight
+            if (config.MockTestWeight != null) 
+            {
+                await AssignWeightToRoundAsync(roundId, config.MockTestWeight.Value);
             }
         }
 
@@ -1802,11 +1816,21 @@ namespace BusinessLogic.Services.Contests
         {
             await _problemService.CreateProblemAsync(roundId, config);
 
-            // Upload template file if provided
+            // Upload template file
             if (config.TemplateFile != null)
             {
                 await UploadProblemTemplateAsync(roundId, config.TemplateFile);
             }
+        }
+
+        /// <summary>
+        /// Assign weight to round
+        /// </summary>
+        private async Task AssignWeightToRoundAsync(Guid roundId, double weight)
+        {
+            string roundWeightKey = ConfigKeys.RoundWeight(roundId);
+
+            await _configService.SetConfigValueAsync(roundWeightKey, weight.ToString(), SCOPE_ROUND);
         }
 
         /// <summary>
@@ -1930,8 +1954,10 @@ namespace BusinessLogic.Services.Contests
                     break;
 
                 case ProblemTypeEnum.AutoEvaluation:
+                    await UpdateProblemAsync(round.Problem!, roundDTO.ProblemConfig!);
+                    break;
                 case ProblemTypeEnum.Manual:
-                    await UpdateProblemWithTemplateAsync(round.Problem!, roundDTO.ProblemConfig!);
+                    await UpdateProblemAsync(round.Problem!, roundDTO.ProblemConfig!);
                     break;
 
                 default:
@@ -1941,9 +1967,9 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Updates problem and handles template file upload
+        /// Updates problem
         /// </summary>
-        private async Task UpdateProblemWithTemplateAsync(Problem problem, UpdateProblemDTO config)
+        private async Task UpdateProblemAsync(Problem problem, UpdateProblemDTO config)
         {
             // Update problem configuration
             await _problemService.UpdateProblemAsync(problem.ProblemId, config);
@@ -1962,6 +1988,12 @@ namespace BusinessLogic.Services.Contests
 
                 // Delete old file if exists and is different
                 await DeleteOldTemplateFileAsync(oldUrl, uploadedUrl);
+            }
+
+            // Set mock test weight
+            if (config.MockTestWeight != null)
+            {
+                await AssignWeightToRoundAsync(problem.RoundId, config.MockTestWeight.Value);
             }
         }
 
@@ -2138,9 +2170,9 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Loads round configurations (time limit and rank cutoff)
+        /// Loads round configurations
         /// </summary>
-        private async Task<(int? TimeLimitSeconds, int RankCutoff)> LoadRoundConfigurationsAsync(Guid roundId)
+        private async Task<(int? timeLimitSeconds, int rankCutoff, double? mockTestRoundWeight)> LoadRoundConfigurationsAsync(Guid roundId)
         {
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
@@ -2168,13 +2200,25 @@ namespace BusinessLogic.Services.Contests
                 rankCutoff = cutoff;
             }
 
-            return (timeLimitSeconds, rankCutoff);
+            // Load mock test round weight
+            string rwKey = ConfigKeys.RoundWeight(roundId);
+            Config? rwConfig = await configRepo.Entities
+                .Where(c => c.Key == rwKey && c.Scope == SCOPE_ROUND && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            double? mockTestRoundWeight = null;
+            if (rwConfig != null && double.TryParse(rwConfig.Value, out double weight))
+            {
+                mockTestRoundWeight = weight;
+            }
+
+            return (timeLimitSeconds, rankCutoff, mockTestRoundWeight);
         }
 
         /// <summary>
         /// Maps round entity to DTO
         /// </summary>
-        private GetRoundDTO MapRoundToDTO(Round round, int? timeLimitSeconds, int rankCutoff)
+        private GetRoundDTO MapRoundToDTO(Round round, int? timeLimitSeconds, int rankCutoff, double? mockTestRoundWeight)
         {
             GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
 
@@ -2183,7 +2227,7 @@ namespace BusinessLogic.Services.Contests
             roundDTO.RankCutoff = rankCutoff;
 
             // Map problem or MCQ test
-            MapRoundContent(roundDTO, round);
+            MapRoundContent(roundDTO, round, mockTestRoundWeight);
 
             return roundDTO;
         }
@@ -2191,13 +2235,14 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Maps problem or MCQ test content to DTO
         /// </summary>
-        private void MapRoundContent(GetRoundDTO roundDTO, Round round)
+        private void MapRoundContent(GetRoundDTO roundDTO, Round round, double? mockTestRoundWeight)
         {
             if (round.Problem != null && round.Problem.DeletedAt == null)
             {
                 roundDTO.ProblemType = round.Problem.Type;
                 roundDTO.Problem = _mapper.Map<GetProblemDTO>(round.Problem);
                 roundDTO.Problem.TemplateUrl = round.Problem.TemplateUrl;
+                roundDTO.Problem!.MockTestWeight = mockTestRoundWeight;
             }
             else if (round.McqTest != null && round.McqTest.DeletedAt == null)
             {
@@ -2459,7 +2504,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private IReadOnlyCollection<GetRoundDTO> MapRoundsToDTO(
             IReadOnlyCollection<Round> rounds,
-            Dictionary<string, Config> timeLimitLookup)
+            Dictionary<string, Config> timeLimitLookup,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             return rounds.Select(item =>
             {
@@ -2480,11 +2526,42 @@ namespace BusinessLogic.Services.Contests
                     roundDTO.TimeLimitSeconds = secs;
                 }
 
+                // Map mock test weight from config
+                double? mockTestWeight = null;
+                if (item.Problem != null
+                    && item.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                    && item.Problem.TestType == AUTO_MOCK_TEST_TEST_TYPE)
+                {
+                    string weightKey = ConfigKeys.RoundWeight(item.RoundId);
+                    if (mockTestWeightDict.TryGetValue(weightKey, out Config? weightConfig)
+                        && double.TryParse(weightConfig.Value, out double weight))
+                    {
+                        mockTestWeight = weight;
+                    }
+                }
+
                 // Map problem or MCQ test
-                MapRoundContent(roundDTO, item);
+                MapRoundContent(roundDTO, item, mockTestWeight);
 
                 return roundDTO;
             }).ToList();
+        }
+
+        /// <summary>
+        /// Loads mock test weight configurations for rounds
+        /// </summary>
+        private async Task<Dictionary<string, Config>> LoadMockTestWeightConfigurationsAsync(IReadOnlyCollection<Round> rounds)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
+            List<string> weightKeys = roundIds.Select(ConfigKeys.RoundWeight).ToList();
+
+            List<Config> weightConfigs = await configRepo.Entities
+                .Where(c => weightKeys.Contains(c.Key) && c.Scope == SCOPE_ROUND && c.DeletedAt == null)
+                .ToListAsync();
+
+            return weightConfigs.ToDictionary(c => c.Key);
         }
 
         /// <summary>

@@ -17,5 +17,7 @@ namespace Repository.DTOs.ProblemDTOs
         public TestTypeEnum? TestType { get; set; }
 
         public IFormFile? TemplateFile { get; set; }
+
+        public double? MockTestWeight { get; set; }
     }
 }

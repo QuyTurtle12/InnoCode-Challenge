@@ -9,7 +9,7 @@ namespace Repository.DTOs.MockTestDTOs
         public MockTestSummaryDTO Summary { get; set; } = new();
         public string Language { get; set; } = string.Empty;
         public string? ErrorMessage { get; set; }
-        public List<MockTestCaseDetail> Details { get; set; } = new();
+        public List<MockTestDetail> Details { get; set; } = new();
     }
 
     public class MockTestSummaryDTO
@@ -21,7 +21,7 @@ namespace Repository.DTOs.MockTestDTOs
         public double penaltyScore { get; set; } = 0;
     }
 
-    public class MockTestCaseDetail
+    public class MockTestDetail
     {
         public string TestName { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
