@@ -15,6 +15,7 @@ using BusinessLogic.Services;
 using BusinessLogic.Services.Appeals;
 using BusinessLogic.Services.Certificates;
 using BusinessLogic.Services.Contests;
+using BusinessLogic.Services.Dashboards;
 using BusinessLogic.Services.FileStorages;
 using BusinessLogic.Services.Mcqs;
 using BusinessLogic.Services.Mentors;
@@ -34,9 +35,9 @@ using Repository.IRepositories;
 using Repository.Repositories;
 using System.Reflection;
 using System.Text;
+using Utility.ConfigDTOs;
 using Utility.Constant;
 using Utility.Helpers;
-using Utility.ConfigDTOs;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -354,6 +355,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISchoolCreationRequestService, SchoolCreationRequestService>();
             services.AddScoped<IMentorManagementService, MentorManagementService>();
             services.AddScoped<IMockTestService, MockTestService>();
+            services.AddScoped<IDashboardService, DashboardService>();
         }
     }
 }
