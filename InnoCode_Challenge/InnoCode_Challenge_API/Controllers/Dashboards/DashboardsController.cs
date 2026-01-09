@@ -16,13 +16,16 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
     {
         private readonly IDashboardService _dashboardService;
 
+        private const int DEFAULT_TOP_COUNT = 3;
+        private const int DEFAULT_TOP_SCHOOL_COUNT = 5;
+
         public DashboardsController(IDashboardService dashboardService)
         {
             _dashboardService = dashboardService;
         }
 
         /// <summary>
-        /// Get dashboard metrics such as total contests, teams, students, and contest status breakdown.
+        /// Get dashboard metrics
         /// </summary>
         /// <param name="startDate"></param>
         /// <param name="endDate"></param>
@@ -46,6 +49,90 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
                 code: ResponseCodeConstants.SUCCESS,
                 data: metrics,
                 message: "Dashboard metrics retrieved successfully."));
+        }
+
+        /// <summary>
+        /// Get chart data
+        /// </summary>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <param name="predefined"></param>
+        /// <returns></returns>
+        [HttpGet("charts")]
+        [Authorize(Policy = "RequireAdminRole")]
+        public async Task<IActionResult> GetChartData(
+            DateTime? startDate = null,
+            DateTime? endDate = null,
+            TimeRangePredefinedEnum? predefined = null)
+        {
+            ChartDataDTO chartData = await _dashboardService.GetChartDataAsync(
+                startDate,
+                endDate,
+                predefined);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: chartData,
+                message: "Chart data retrieved successfully."));
+        }
+
+        /// <summary>
+        /// Get top performers
+        /// </summary>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <param name="predefined"></param>
+        /// <param name="topCount"></param>
+        /// <returns></returns>
+        [HttpGet("top-performers")]
+        [Authorize(Policy = "RequireAdminRole")]
+        public async Task<IActionResult> GetTopPerformers(
+            int topCount = DEFAULT_TOP_COUNT,
+            DateTime? startDate = null,
+            DateTime? endDate = null,
+            TimeRangePredefinedEnum? predefined = null)
+        {
+            TopPerformersDTO topPerformers = await _dashboardService.GetTopPerformersAsync(
+                startDate,
+                endDate,
+                predefined,
+                topCount);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: topPerformers,
+                message: "Top performers retrieved successfully."));
+        }
+
+        /// <summary>
+        /// Get school metrics
+        /// </summary>
+        /// <param name="topSchoolCount"></param>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <param name="predefined"></param>
+        /// <returns></returns>
+        [HttpGet("school-metrics")]
+        [Authorize(Policy = "RequireAdminRole")]
+        public async Task<IActionResult> GetSchoolMetrics(
+            int topSchoolCount = DEFAULT_TOP_SCHOOL_COUNT,
+            DateTime? startDate = null,
+            DateTime? endDate = null,
+            TimeRangePredefinedEnum? predefined = null)
+        {
+            SchoolMetricsDTO schoolMetrics = await _dashboardService.GetSchoolMetricsAsync(
+                startDate,
+                endDate,
+                predefined,
+                topSchoolCount);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: schoolMetrics,
+                message: "School metrics retrieved successfully."));
         }
     }
 }

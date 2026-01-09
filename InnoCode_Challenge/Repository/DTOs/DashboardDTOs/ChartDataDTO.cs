@@ -2,14 +2,19 @@
 {
     public class ChartDataDTO
     {
-        // For line/bar charts
-        public List<string> Labels { get; set; }
-        public List<int> ContestCreationTrend { get; set; }
-        public List<int> SubmissionTrend { get; set; }
-        public List<int> TeamRegistrationTrend { get; set; }
+        public List<string> Labels { get; set; } = new();
+        public List<int> ContestCreationTrend { get; set; } = new();
+        public List<int> TeamRegistrationTrend { get; set; } = new();
+        public Dictionary<string, int> ContestsByStatus { get; set; } = new();
+    }
 
-        // For pie charts
-        public Dictionary<string, int> SubmissionsByStatus { get; set; }
-        public Dictionary<string, int> TeamsPerContest { get; set; }
+    public class TrendDataPoint
+    {
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public int Count { get; set; }
+        public int ContestCount { get; set; }
+        public int TeamCount { get; set; }
+        public string Label { get; set; } = string.Empty;
     }
 }
