@@ -25,6 +25,8 @@
         public static string RoundTimeLimitSeconds(Guid roundId) => $"contest:round:{roundId}:time_limit_seconds";
         public static string RoundAppealSubmitDeadlineUtc(Guid roundId) => $"round:{roundId}:appeal_submit_deadline_utc";
         public static string RoundAppealReviewDeadlineUtc(Guid roundId) => $"round:{roundId}:appeal_review_deadline_utc";
+        public static string RoundJudgeDeadlineUtc(Guid roundId) => $"round:{roundId}:judge_deadline_utc";
+        public static string RoundJudgeRescoreDeadlineUtc(Guid roundId) => $"round:{roundId}:judge_rescore_deadline_utc";
         public static string McqTestImportTemplate() => $"template:McqImportTemplate:mcq_test";
         public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
         public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";
