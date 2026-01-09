@@ -11,6 +11,7 @@ using Repository.ResponseModel;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.PaginatedList;
+using Utility.ExceptionCustom;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {
@@ -559,6 +560,14 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> ForceFinalize(Guid roundId)
         {
+            DateTime finalizeNotBefore = await _roundService.GetFinalizeNotBeforeAsync(roundId);
+            if (DateTime.UtcNow < finalizeNotBefore)
+            {
+                throw new ErrorException(StatusCodes.Status409Conflict,
+                    "INVALID_STATE",
+                    "Finalize is only allowed after all deadlines are completed.");
+            }
+
             await _roundService.TryFinalizeRoundAsync(roundId);
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,

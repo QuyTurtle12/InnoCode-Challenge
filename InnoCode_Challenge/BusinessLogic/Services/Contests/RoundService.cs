@@ -2525,13 +2525,13 @@ namespace BusinessLogic.Services.Contests
             if (round.Start > now || round.Status == RoundStatusEnum.Incoming.ToString())
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot fast-forward appeal review before round starts.");
 
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+
             // Ensure appeal review is not before appeal submit
-            string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
-            string? submitVal = await configRepo.Entities
-                .Where(c => c.Key == submitKey && c.DeletedAt == null)
-                .Select(c => c.Value)
-                .FirstOrDefaultAsync();
-            DateTime submitDeadline = ParseOrDefault(submitVal, round.End);
+            var (submitDeadline, _) = await GetAppealDeadlinesUtcAsync(round, configRepo, submitDays, reviewDays);
             if (submitDeadline > now)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Appeal review cannot end before appeal submit deadline.");
 
@@ -2560,11 +2560,36 @@ namespace BusinessLogic.Services.Contests
             if (round.End > now)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Judge deadline cannot be before round end.");
 
+            int submitDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealSubmitDays, DEFAULT_APPEAL_SUBMIT_DAYS, configRepo);
+            int reviewDays = await GetContestPolicyDaysAsync(
+                round.ContestId, ContestPolicyKeys.AppealReviewDays, DEFAULT_APPEAL_REVIEW_DAYS, configRepo);
+
+            var (appealSubmitDeadline, appealReviewDeadline) = await GetAppealDeadlinesUtcAsync(
+                round, configRepo, submitDays, reviewDays);
+
             List<Submission> subs = await submissionRepo.Entities
                 .Where(s => s.Problem != null && s.Problem.RoundId == roundId && s.DeletedAt == null)
                 .ToListAsync();
 
-            DateTime past = DateTime.UtcNow.AddSeconds(-1);
+            DateTime past = now.AddSeconds(-1);
+
+            if (now >= appealReviewDeadline)
+            {
+                string judgeRescoreKey = ConfigKeys.RoundJudgeRescoreDeadlineUtc(roundId);
+                await UpsertDeadlineAsync(configRepo, judgeRescoreKey, past, scope: SCOPE_CONTEST);
+            }
+            else if (now <= appealSubmitDeadline)
+            {
+                string judgeKey = ConfigKeys.RoundJudgeDeadlineUtc(roundId);
+                await UpsertDeadlineAsync(configRepo, judgeKey, past, scope: SCOPE_CONTEST);
+            }
+            else
+            {
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Judge deadline can only be fast-forwarded before appeal submit ends or after appeal review ends.");
+            }
+
             foreach (var sub in subs)
             {
                 if (Guid.TryParse(sub.JudgedBy, out var judgeId))
@@ -2617,36 +2642,16 @@ namespace BusinessLogic.Services.Contests
 
             bool isManual = IsManualRound(round);
 
-            // Use actual configured deadlines if present (time-travel may set them)
-            DateTime submitDeadline = round.End.AddDays(submitDays).ToUniversalTime();
-            DateTime reviewDeadline = submitDeadline.AddDays(reviewDays).ToUniversalTime();
-
-            if (!round.IsRetakeRound)
-            {
-                string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
-                string? submitVal = await configRepo.Entities
-                    .Where(c => c.Key == submitKey && c.DeletedAt == null)
-                    .Select(c => c.Value)
-                    .FirstOrDefaultAsync();
-                if (DateTime.TryParse(submitVal, out DateTime parsedSubmit))
-                {
-                    submitDeadline = parsedSubmit.ToUniversalTime();
-                }
-
-                string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
-                string? reviewVal = await configRepo.Entities
-                    .Where(c => c.Key == reviewKey && c.DeletedAt == null)
-                    .Select(c => c.Value)
-                    .FirstOrDefaultAsync();
-                if (DateTime.TryParse(reviewVal, out DateTime parsedReview))
-                {
-                    reviewDeadline = parsedReview.ToUniversalTime();
-                }
-            }
+            var (_, reviewDeadline) = await GetAppealDeadlinesUtcAsync(round, configRepo, submitDays, reviewDays);
 
             if (round.IsRetakeRound)
             {
-                return isManual ? round.End.AddDays(judgeDays).ToUniversalTime() : round.End.ToUniversalTime();
+                if (!isManual)
+                    return round.End.ToUniversalTime();
+
+                var (judgeDeadline, _) = await GetJudgeDeadlinesUtcAsync(
+                    round, configRepo, judgeDays, submitDays, reviewDays);
+                return judgeDeadline;
             }
 
             if (!isManual)
@@ -2654,12 +2659,12 @@ namespace BusinessLogic.Services.Contests
                 return reviewDeadline;
             }
 
-            // Manual main round: need both initial judge window and appeals/rescore window
-            DateTime initialJudgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
-            DateTime rescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
+            // Manual main round: need appeal review AND judge windows (initial + rescore)
+            var (initialJudgeDeadline, rescoreDeadline) = await GetJudgeDeadlinesUtcAsync(
+                round, configRepo, judgeDays, submitDays, reviewDays);
 
-            // Finalize not-before should be after appeal review window AND after rescore window
-            return new[] { reviewDeadline, rescoreDeadline, initialJudgeDeadline }.Max();
+            // Finalize not-before should be after appeal review window AND after judge windows
+            return new[] { reviewDeadline, initialJudgeDeadline, rescoreDeadline }.Max();
         }
 
         public async Task<RoundTimelineDTO> GetRoundTimelineAsync(Guid roundId)
@@ -2678,28 +2683,20 @@ namespace BusinessLogic.Services.Contests
             DateTime? appealReviewDeadline = null;
             if (!round.IsRetakeRound)
             {
-                string submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
-                string? submitVal = await configRepo.Entities
-                    .Where(c => c.Key == submitKey && c.DeletedAt == null)
-                    .Select(c => c.Value)
-                    .FirstOrDefaultAsync();
-                DateTime submitDeadline = ParseOrDefault(submitVal, round.End.AddDays(submitDays)).ToUniversalTime();
+                var (submitDeadline, reviewDeadline) = await GetAppealDeadlinesUtcAsync(
+                    round, configRepo, submitDays, reviewDays);
                 appealSubmitDeadline = submitDeadline;
-
-                string reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
-                string? reviewVal = await configRepo.Entities
-                    .Where(c => c.Key == reviewKey && c.DeletedAt == null)
-                    .Select(c => c.Value)
-                    .FirstOrDefaultAsync();
-                appealReviewDeadline = ParseOrDefault(reviewVal, submitDeadline.AddDays(reviewDays)).ToUniversalTime();
+                appealReviewDeadline = reviewDeadline;
             }
 
             DateTime? judgeDeadline = null;
             DateTime? judgeRescoreDeadline = null;
             if (IsManualRound(round))
             {
-                judgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
-                judgeRescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
+                var (initialJudgeDeadline, rescoreDeadline) = await GetJudgeDeadlinesUtcAsync(
+                    round, configRepo, judgeDays, submitDays, reviewDays);
+                judgeDeadline = initialJudgeDeadline;
+                judgeRescoreDeadline = rescoreDeadline;
             }
 
             return new RoundTimelineDTO
@@ -2746,6 +2743,88 @@ namespace BusinessLogic.Services.Contests
                 out DateTime parsed)
                 ? parsed
                 : fallback;
+        }
+
+        private static DateTime? TryParseUtc(string? isoString)
+        {
+            if (string.IsNullOrWhiteSpace(isoString))
+                return null;
+
+            if (!DateTime.TryParse(
+                    isoString,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out DateTime parsed))
+            {
+                return null;
+            }
+
+            return parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+        }
+
+        private static async Task<DateTime?> TryGetDeadlineUtcAsync(
+            IGenericRepository<Config> configRepo,
+            string key)
+        {
+            string? value = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            return TryParseUtc(value);
+        }
+
+        private async Task<(DateTime SubmitDeadline, DateTime ReviewDeadline)> GetAppealDeadlinesUtcAsync(
+            Round round,
+            IGenericRepository<Config> configRepo,
+            int submitDays,
+            int reviewDays)
+        {
+            DateTime submitDeadline = round.End.AddDays(submitDays).ToUniversalTime();
+            DateTime reviewDeadline = submitDeadline.AddDays(reviewDays).ToUniversalTime();
+
+            DateTime? submitOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundAppealSubmitDeadlineUtc(round.RoundId));
+            if (submitOverride.HasValue)
+            {
+                submitDeadline = submitOverride.Value;
+            }
+
+            DateTime? reviewOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundAppealReviewDeadlineUtc(round.RoundId));
+            if (reviewOverride.HasValue)
+            {
+                reviewDeadline = reviewOverride.Value;
+            }
+
+            return (submitDeadline, reviewDeadline);
+        }
+
+        private async Task<(DateTime JudgeDeadline, DateTime JudgeRescoreDeadline)> GetJudgeDeadlinesUtcAsync(
+            Round round,
+            IGenericRepository<Config> configRepo,
+            int judgeDays,
+            int submitDays,
+            int reviewDays)
+        {
+            DateTime judgeDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+            DateTime judgeRescoreDeadline = round.End.AddDays(judgeDays * 2 + submitDays + reviewDays).ToUniversalTime();
+
+            DateTime? judgeOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundJudgeDeadlineUtc(round.RoundId));
+            if (judgeOverride.HasValue)
+            {
+                judgeDeadline = judgeOverride.Value;
+            }
+
+            DateTime? rescoreOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundJudgeRescoreDeadlineUtc(round.RoundId));
+            if (rescoreOverride.HasValue)
+            {
+                judgeRescoreDeadline = rescoreOverride.Value;
+            }
+
+            return (judgeDeadline, judgeRescoreDeadline);
         }
 
         /// <summary>
