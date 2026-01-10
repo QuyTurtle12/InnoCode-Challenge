@@ -30,6 +30,8 @@
         public static string McqTestImportTemplate() => $"template:McqImportTemplate:mcq_test";
         public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
         public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";
+        public static string OrganizerMockTestTemplate() => $"template:MockTestTemplate:organizer";
+        public static string StudentMockTestTemplateForOrganizer() => $"template:MockTestTemplate:student";
         public static string RoundStudent(Guid roundId, Guid studentId) => $"round:{roundId}:student:{studentId}";
         public static string RoundOpenCode(Guid roundId) => $"round:{roundId}:open_code";
         public static string RoundRankCutoff(Guid roundId) => $"round:{roundId}:rank_cutoff";

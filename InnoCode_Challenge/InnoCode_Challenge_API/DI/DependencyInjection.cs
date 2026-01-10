@@ -2,6 +2,7 @@ using BusinessLogic.IServices;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
 using BusinessLogic.IServices.Mentors;
@@ -275,7 +276,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddSignalR(options =>
             {
                 options.EnableDetailedErrors = true;
-                options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+                options.KeepAliveInterval = TimeSpan.FromSeconds(15);
                 options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
             });
         }
@@ -356,6 +357,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IMentorManagementService, MentorManagementService>();
             services.AddScoped<IMockTestService, MockTestService>();
             services.AddScoped<IDashboardService, DashboardService>();
+            services.AddSingleton<IDashboardNotifierService, DashboardNotifierService>();
         }
     }
 }

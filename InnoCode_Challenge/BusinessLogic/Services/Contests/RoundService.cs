@@ -1236,6 +1236,120 @@ namespace BusinessLogic.Services.Contests
             return await GetRoundByIdAsync(persistedRoundId, null);
         }
 
+
+        public async Task<string?> GetOrganizerMockTestTemplateUrl()
+        {
+            try
+            {
+                // Get config repository
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Get config key
+                string key = ConfigKeys.OrganizerMockTestTemplate();
+
+                // Retrieve attachment ID from config
+                Config? config = await configRepo.Entities
+                    .Where(c => c.Key == key && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                if (config == null || string.IsNullOrWhiteSpace(config.Value))
+                {
+                    return null;
+                }
+
+                // Parse attachment ID
+                if (!Guid.TryParse(config.Value, out Guid attachmentId))
+                {
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                        "Invalid attachment ID in configuration.");
+                }
+
+                // Get attachment repository
+                IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
+
+                // Retrieve attachment
+                Attachment? attachment = await attachmentRepo.Entities
+                    .Where(a => a.AttachmentId == attachmentId && !a.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (attachment == null)
+                {
+                    return null;
+                }
+
+                return attachment.Url;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving organizer mock test template: {ex.Message}");
+            }
+        }
+
+        public async Task<string?> GetStudentMockTestTemplateUrl()
+        {
+            try
+            {
+                // Get config repository
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Get config key
+                string key = ConfigKeys.StudentMockTestTemplateForOrganizer();
+
+                // Retrieve attachment ID from config
+                Config? config = await configRepo.Entities
+                    .Where(c => c.Key == key && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                if (config == null || string.IsNullOrWhiteSpace(config.Value))
+                {
+                    return null;
+                }
+
+                // Parse attachment ID
+                if (!Guid.TryParse(config.Value, out Guid attachmentId))
+                {
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                        "Invalid attachment ID in configuration.");
+                }
+
+                // Get attachment repository
+                IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
+
+                // Retrieve attachment
+                Attachment? attachment = await attachmentRepo.Entities
+                    .Where(a => a.AttachmentId == attachmentId && !a.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (attachment == null)
+                {
+                    return null;
+                }
+
+                return attachment.Url;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving student mock test template: {ex.Message}");
+            }
+        }
+
+
         public async Task RegenerateOpenCodeAsync(Guid roundId)
         {
             try

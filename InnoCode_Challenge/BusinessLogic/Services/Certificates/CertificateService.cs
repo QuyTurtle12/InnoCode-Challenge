@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Certificates;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
@@ -26,6 +27,7 @@ namespace BusinessLogic.Services.Certificates
         private readonly ILogger<CertificateService> _logger;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         public CertificateService(
             IMapper mapper,
@@ -35,7 +37,8 @@ namespace BusinessLogic.Services.Certificates
             ILogger<CertificateService> logger,
             IHttpContextAccessor httpContextAccessor,
             INotificationService notificationService,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
@@ -45,6 +48,7 @@ namespace BusinessLogic.Services.Certificates
             _httpContextAccessor = httpContextAccessor;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task<IReadOnlyList<IssuedCertificateDTO>> IssueAsync(IssueCertificatesDTO dto)
@@ -338,6 +342,9 @@ namespace BusinessLogic.Services.Certificates
                                 await _unitOfWork.SaveAsync();
                                 _logger.LogInformation("Certificate saved successfully. CertificateId={CertificateId}, Recipient={RecipientName}", 
                                     entity.CertificateId, recipientName);
+
+                                // Notify dashboard about new certificate
+                                await _dashboardNotifier.NotifyCertificateIssuedAsync();
                             }
                             catch (Exception ex)
                             {

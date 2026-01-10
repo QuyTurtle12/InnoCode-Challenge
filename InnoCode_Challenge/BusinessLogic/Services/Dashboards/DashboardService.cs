@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices.Contests;
+﻿using BusinessLogic.IServices.Dashboards;
 using DataAccess.Entities;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.DashboardDTOs;
@@ -228,10 +228,18 @@ namespace BusinessLogic.Services.Dashboards
                 .Where(c => c.DeletedAt == null);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 query = query.Where(c => c.CreatedAt >= startDate.Value);
+            }
+            
 
             if (endDate.HasValue)
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
                 query = query.Where(c => c.CreatedAt <= endDate.Value);
+            }
 
             return query;
         }
@@ -443,10 +451,17 @@ namespace BusinessLogic.Services.Dashboards
                             && t.Status != TeamStatusConstants.Disqualified);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 teamQuery = teamQuery.Where(t => t.CreatedAt >= startDate.Value);
+            }
 
             if (endDate.HasValue)
-                teamQuery = teamQuery.Where(t => t.CreatedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                teamQuery = teamQuery.Where(t => t.CreatedAt < endOfDay);
+            }
 
             List<TrendDataPoint> trendData = await teamQuery
                 .GroupBy(t => new { t.CreatedAt.Year, t.CreatedAt.Month })
@@ -513,10 +528,17 @@ namespace BusinessLogic.Services.Dashboards
                             && !string.IsNullOrEmpty(c.CreatedBy));
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 contestQuery = contestQuery.Where(c => c.CreatedAt >= startDate.Value);
+            } 
 
             if (endDate.HasValue)
-                contestQuery = contestQuery.Where(c => c.CreatedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                contestQuery = contestQuery.Where(c => c.CreatedAt < endOfDay);
+            }
 
             // Group by organizer and count completed contests
             List<OrganizerStats> organizerStats = await contestQuery
@@ -584,10 +606,17 @@ namespace BusinessLogic.Services.Dashboards
                             && c.CertificateType == CertificateTypeConstants.Team);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 certificateQuery = certificateQuery.Where(c => c.IssuedAt >= startDate.Value);
+            }
 
             if (endDate.HasValue)
-                certificateQuery = certificateQuery.Where(c => c.IssuedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                certificateQuery = certificateQuery.Where(c => c.IssuedAt < endOfDay);
+            }
 
             // Get top mentors by certificate count
             List<MentorStats> mentorStats = await certificateQuery
@@ -653,10 +682,17 @@ namespace BusinessLogic.Services.Dashboards
                 .Where(c => c.DeletedAt == null);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 certificateQuery = certificateQuery.Where(c => c.IssuedAt >= startDate.Value);
+            }
 
             if (endDate.HasValue)
-                certificateQuery = certificateQuery.Where(c => c.IssuedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                certificateQuery = certificateQuery.Where(c => c.IssuedAt < endOfDay);
+            }
 
             // Get individual certificates per student
             Dictionary<Guid, int> individualCerts = await certificateQuery
@@ -788,10 +824,17 @@ namespace BusinessLogic.Services.Dashboards
                 .Where(t => t.DeletedAt == null && t.Status != TeamStatusConstants.Eliminated);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 teamQuery = teamQuery.Where(t => t.CreatedAt >= startDate.Value);
+            }
 
             if (endDate.HasValue)
-                teamQuery = teamQuery.Where(t => t.CreatedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                teamQuery = teamQuery.Where(t => t.CreatedAt < endOfDay);
+            }
 
             // Get team counts per school
             Dictionary<Guid, int> teamCountsBySchool = await teamQuery
@@ -815,10 +858,17 @@ namespace BusinessLogic.Services.Dashboards
                 .Where(c => c.DeletedAt == null);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 certQuery = certQuery.Where(c => c.IssuedAt >= startDate.Value);
+            }
 
             if (endDate.HasValue)
-                certQuery = certQuery.Where(c => c.IssuedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                certQuery = certQuery.Where(c => c.IssuedAt < endOfDay);
+            }
 
             // Get certificate counts per school (from both team and student certificates)
             Dictionary<Guid, int> certificatesBySchool = new Dictionary<Guid, int>();
@@ -905,10 +955,17 @@ namespace BusinessLogic.Services.Dashboards
                 .Where(t => t.DeletedAt == null && t.Status != TeamStatusConstants.Eliminated);
 
             if (startDate.HasValue)
+            {
+                // Start date: beginning of the day (00:00:00)
                 teamQuery = teamQuery.Where(t => t.CreatedAt >= startDate.Value);
+            }
 
             if (endDate.HasValue)
-                teamQuery = teamQuery.Where(t => t.CreatedAt <= endDate.Value);
+            {
+                // End date: end of the day (23:59:59)
+                DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                teamQuery = teamQuery.Where(t => t.CreatedAt < endOfDay);
+            }
 
             // Get team counts per school with province info
             Dictionary<Guid, int> teamsBySchoolId = await teamQuery

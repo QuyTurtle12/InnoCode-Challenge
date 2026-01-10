@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Students;
 using DataAccess.Entities;
@@ -22,19 +23,22 @@ namespace BusinessLogic.Services.Students
         private readonly ILeaderboardEntryService _leaderboardEntryService;
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IActivityLogWriter _logWriter;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         public TeamService(
             IUOW unitOfWork,
             IMapper mapper,
             ILeaderboardEntryService leaderboardEntryService,
             IHttpContextAccessor httpContextAccessor,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            IDashboardNotifierService dashboardNotifier)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
             _leaderboardEntryService = leaderboardEntryService;
-            _httpContextAccessor = httpContextAccessor; 
+            _httpContextAccessor = httpContextAccessor;
             _logWriter = logWriter;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task<PaginatedList<TeamWithMembersDTO>> GetAsync(
@@ -232,6 +236,9 @@ namespace BusinessLogic.Services.Students
             }
 
             await _leaderboardEntryService.AddTeamToLeaderboardAsync(dto.ContestId, team.TeamId);
+
+            // Notify dashboard about new team registration
+            await _dashboardNotifier.NotifyTeamRegisteredAsync();
 
             var created = await teamRepository.Entities
                 .Include(t => t.Contest)

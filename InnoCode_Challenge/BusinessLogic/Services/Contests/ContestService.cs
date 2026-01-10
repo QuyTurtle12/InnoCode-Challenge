@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
@@ -35,6 +36,7 @@ namespace BusinessLogic.Services.Contests
         private readonly IActivityLogWriter _activityLogWriter;
         private readonly ILogger<ContestService> _logger;
         private readonly IRoundService _roundService;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         private const int MIN_YEAR = 10;
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
@@ -69,7 +71,8 @@ namespace BusinessLogic.Services.Contests
             INotificationService notificationService,
             IActivityLogWriter activityLogWriter,
             ILogger<ContestService> logger,
-            IRoundService roundService)
+            IRoundService roundService,
+            IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = uow;
@@ -79,6 +82,7 @@ namespace BusinessLogic.Services.Contests
             _activityLogWriter = activityLogWriter;
             _logger = logger;
             _roundService = roundService;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -362,6 +366,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Post-create operations
                 await PerformPostCreateOperationsAsync(entity);
+
+                // Notify dashboard
+                await _dashboardNotifier.NotifyContestCreatedAsync();
 
                 // Map and return result
                 return MapToContestCreatedDTO(entity, dto, imageUrl, configValues, policyValues);
@@ -843,6 +850,9 @@ namespace BusinessLogic.Services.Contests
                 await contestRepo.UpdateAsync(contest);
                 await _unitOfWork.SaveAsync();
 
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
                 // Schedule state transitions only if not moving to Delayed status
                 if (newStatus != ContestStatusEnum.Delayed.ToString())
                 {
@@ -1248,6 +1258,9 @@ namespace BusinessLogic.Services.Contests
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
                 // Notify activity log
                 var actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, existingContest.ContestId.ToString());
@@ -1309,6 +1322,9 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -1382,6 +1398,9 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();

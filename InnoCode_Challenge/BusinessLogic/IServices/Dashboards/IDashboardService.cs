@@ -1,7 +1,7 @@
 ﻿using Repository.DTOs.DashboardDTOs;
 using Utility.Enums;
 
-namespace BusinessLogic.IServices.Contests
+namespace BusinessLogic.IServices.Dashboards
 {
     public interface IDashboardService
     {

@@ -1,4 +1,4 @@
-﻿using BusinessLogic.IServices.Contests;
+﻿using BusinessLogic.IServices.Dashboards;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
