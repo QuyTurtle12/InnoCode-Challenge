@@ -12,6 +12,7 @@ using Repository.DTOs.CertificateTemplateDTOs;
 using Repository.IRepositories;
 using System.Security.Claims;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -351,6 +352,11 @@ namespace BusinessLogic.Services.Certificates
                                 {
                                     Guid contestId = tpl.ContestId;
                                     await NotifiMentorDashboardContestUpdated(contestId);
+
+                                    if (Guid.TryParse(tpl.Contest.CreatedBy, out Guid organizerId))
+                                    {
+                                        await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+                                    }
                                 }
                             }
                             catch (Exception ex)

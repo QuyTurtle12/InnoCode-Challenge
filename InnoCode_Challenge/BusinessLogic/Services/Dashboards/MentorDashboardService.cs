@@ -147,13 +147,13 @@ namespace BusinessLogic.Services.Dashboards
                 dashboard.TeamStatusBreakdown = new TeamStatusBreakdownDTO
                 {
                     ActiveTeams = teams.Count(t =>
-                        string.Equals(t.Status, TeamStatusConstants.Active, StringComparison.OrdinalIgnoreCase)),
+                        string.Equals(t.Status, TeamStatusConstants.Active)),
                     CompletedTeams = teams.Count(t =>
-                        string.Equals(t.Contest?.Status, ContestStatusEnum.Completed.ToString(), StringComparison.OrdinalIgnoreCase)),
+                        string.Equals(t.Contest?.Status, ContestStatusEnum.Completed.ToString())),
                     EliminatedTeams = teams.Count(t =>
-                        string.Equals(t.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase)),
+                        string.Equals(t.Status, TeamStatusConstants.Eliminated)),
                     DisqualifiedTeams = teams.Count(t =>
-                        string.Equals(t.Status, TeamStatusConstants.Disqualified, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(t.Status, TeamStatusConstants.Disqualified))
                 };
 
                 // Contest Activity Breakdown
@@ -165,13 +165,13 @@ namespace BusinessLogic.Services.Dashboards
                 dashboard.ContestActivity = new ContestActivityDTO
                 {
                     OngoingContests = contests.Count(c =>
-                        string.Equals(c.Status, ContestStatusEnum.Ongoing.ToString(), StringComparison.OrdinalIgnoreCase)),
+                        string.Equals(c.Status, ContestStatusEnum.Ongoing.ToString())),
                     CompletedContests = contests.Count(c =>
-                        string.Equals(c.Status, ContestStatusEnum.Completed.ToString(), StringComparison.OrdinalIgnoreCase)),
+                        string.Equals(c.Status, ContestStatusEnum.Completed.ToString())),
                     UpcomingContests = contests.Count(c =>
-                        string.Equals(c.Status, ContestStatusEnum.RegistrationOpen.ToString(), StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(c.Status, ContestStatusEnum.RegistrationClosed.ToString(), StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(c.Status, ContestStatusEnum.Paused.ToString(), StringComparison.OrdinalIgnoreCase))
+                        string.Equals(c.Status, ContestStatusEnum.RegistrationOpen.ToString()) ||
+                        string.Equals(c.Status, ContestStatusEnum.RegistrationClosed.ToString()) ||
+                        string.Equals(c.Status, ContestStatusEnum.Paused.ToString()))
                 };
 
                 // Recent Certificates (last 5, Team type only)

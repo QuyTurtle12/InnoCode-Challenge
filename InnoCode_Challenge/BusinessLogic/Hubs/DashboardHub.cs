@@ -38,5 +38,15 @@ namespace BusinessLogic.Hubs
         {
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"MentorDashboard_{mentorId}");
         }
+
+        public async Task JoinOrganizerDashboard(string organizerId)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"OrganizerDashboard_{organizerId}");
+        }
+
+        public async Task LeaveOrganizerDashboard(string organizerId)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"OrganizerDashboard_{organizerId}");
+        }
     }
 }

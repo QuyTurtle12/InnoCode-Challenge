@@ -4,6 +4,7 @@ using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Students;
 using DataAccess.Entities;
+using Humanizer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.TeamDTOs;
@@ -240,6 +241,7 @@ namespace BusinessLogic.Services.Students
             // Notify dashboard about new team registration
             await _dashboardNotifier.NotifyTeamRegisteredAsync();
             await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+            await NotifyOrganizerDashboardUpdatedAsync(dto.ContestId, contestRepository);
 
             var created = await teamRepository.Entities
                 .Include(t => t.Contest)
@@ -526,6 +528,20 @@ namespace BusinessLogic.Services.Students
         {
             var user = _httpContextAccessor.HttpContext?.User;
             return user != null && user.IsInRole(RoleConstants.Admin);
+        }
+
+        /// <summary>
+        // Notify organizer dashboard about team registration
+        /// </summary>
+        private async Task NotifyOrganizerDashboardUpdatedAsync(
+            Guid contestId,
+            IGenericRepository<Contest> contestRepo)
+        {
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (contest != null && Guid.TryParse(contest.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
     }

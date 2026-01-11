@@ -1,5 +1,6 @@
 ﻿using BusinessLogic.Hubs;
 using Microsoft.AspNetCore.SignalR;
+using Utility.Enums;
 
 namespace BusinessLogic.IServices.Dashboards
 {
@@ -13,5 +14,9 @@ namespace BusinessLogic.IServices.Dashboards
 
         // Mentor Dashboard Notifications
         Task NotifyMentorDashboardUpdatedAsync(Guid mentorId);
+
+        // Organizer Dashboard
+        Task NotifyOrganizerDashboardUpdatedAsync(Guid organizerId);
+
     }
 }

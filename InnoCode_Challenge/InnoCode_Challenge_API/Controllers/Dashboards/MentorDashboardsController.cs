@@ -29,7 +29,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
         /// <param name="predefined"></param>
         /// <returns></returns>
         [HttpGet]
-        [Authorize(Policy = "RequireAdminOrMentor")]
+        [Authorize(Policy = "RequireAdminOrStaffOrMentor")]
         public async Task<IActionResult> GetMentorDashboard(
             Guid? mentorId = null,
             DateTime? startDate = null,

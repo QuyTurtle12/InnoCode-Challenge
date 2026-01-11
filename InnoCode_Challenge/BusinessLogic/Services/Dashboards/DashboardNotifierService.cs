@@ -1,6 +1,8 @@
 ﻿using BusinessLogic.Hubs;
 using BusinessLogic.IServices.Dashboards;
 using Microsoft.AspNetCore.SignalR;
+using Utility.Constant;
+using Utility.Enums;
 
 namespace BusinessLogic.Services.Dashboards
 {
@@ -60,6 +62,17 @@ namespace BusinessLogic.Services.Dashboards
                 {
                     MentorId = mentorId,
                     Message = "Your mentor dashboard has been updated",
+                    Timestamp = DateTime.UtcNow
+                });
+        }
+
+        public async Task NotifyOrganizerDashboardUpdatedAsync(Guid organizerId)
+        {
+            await _hubContext.Clients.Group($"OrganizerDashboard_{organizerId}")
+                .SendAsync("OrganizerDashboardUpdated", new
+                {
+                    OrganizerId = organizerId,
+                    Message = "Your organizer dashboard has been updated",
                     Timestamp = DateTime.UtcNow
                 });
         }

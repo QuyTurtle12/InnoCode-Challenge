@@ -1,9 +1,10 @@
 using AutoMapper;
+using BusinessLogic.Helpers;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
-using BusinessLogic.Helpers;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,7 @@ namespace BusinessLogic.Services.Appeals
         private readonly ILeaderboardEntryService _leaderboardEntryService;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         private const string APPEAL_EVIDENCE_FOLDER = "appeal_evidences";
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
@@ -41,7 +43,8 @@ namespace BusinessLogic.Services.Appeals
             ICloudinaryService cloudinaryService,
             ILeaderboardEntryService leaderboardEntryService,
             INotificationService notificationService,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = uow;
@@ -50,6 +53,7 @@ namespace BusinessLogic.Services.Appeals
             _leaderboardEntryService = leaderboardEntryService;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task<GetAppealDTO> CreateAppealAsync(CreateAppealDTO dto)
@@ -299,6 +303,9 @@ namespace BusinessLogic.Services.Appeals
 
                     if (Guid.TryParse(organizerId, out var organizerUserId))
                     {
+                        // Notify organizer dashboard
+                        await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerUserId);
+
                         await _notificationService.CreateInAppToUserAsync(
                             organizerUserId,
                             NotificationTypes.AppealCreated,

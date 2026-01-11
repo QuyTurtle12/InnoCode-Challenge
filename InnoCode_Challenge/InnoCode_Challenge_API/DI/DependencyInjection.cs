@@ -162,14 +162,17 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireStudentOrMentor",
                     policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor));
 
-                options.AddPolicy("RequireAdminOrMentor",
-                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Mentor));
-
                 options.AddPolicy("RequireStudentOrOrganizer",
                     policy => policy.RequireRole(RoleConstants.Student, RoleConstants.ContestOrganizer));
 
                 options.AddPolicy("RequireStudentOrMentorOrJudge",
                     policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor, RoleConstants.Judge));
+
+                options.AddPolicy("RequireAdminOrStaffOrOrganizer",
+                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Staff, RoleConstants.ContestOrganizer));
+
+                options.AddPolicy("RequireAdminOrStaffOrMentor",
+                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Staff, RoleConstants.Mentor));
 
                 options.AddPolicy("RequireAnyUserRole",
                     policy => policy.RequireRole(
@@ -364,6 +367,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IMockTestService, MockTestService>();
             services.AddScoped<IDashboardService, DashboardService>();
             services.AddScoped<IMentorDashboardService, MentorDashboardService>();
+            services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
             services.AddSingleton<IDashboardNotifierService, DashboardNotifierService>();
         }
     }
