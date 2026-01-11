@@ -130,7 +130,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                message: "Team score updated and broadcasted successfully."
+                message: "Team score updated"
             ));
         }
     }

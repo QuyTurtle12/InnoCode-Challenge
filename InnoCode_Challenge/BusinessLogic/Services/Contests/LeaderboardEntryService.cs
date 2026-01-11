@@ -642,7 +642,7 @@ namespace BusinessLogic.Services.Contests
 
                 _unitOfWork.CommitTransaction();
 
-                // Recalculate ranks and broadcast full leaderboard update
+                // Recalculate ranks
                 await RecalculateRanksAsync(contestId);
             }
             catch (Exception ex)
@@ -971,8 +971,8 @@ namespace BusinessLogic.Services.Contests
 
                 await _unitOfWork.SaveAsync();
 
-                // Broadcast the updated leaderboard with full member details in real-time
-                await _realtimeService.BroadcastLeaderboardUpdateAsync(contestId, teamInfoList);
+                // Notify clients about the updated leaderboard
+                await _realtimeService.NotifyLeaderboardUpdatedAsync(contestId);
             }
             catch (Exception ex)
             {
