@@ -18,6 +18,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.Tasks;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -1261,6 +1262,9 @@ namespace BusinessLogic.Services.Contests
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
+
                 // Notify activity log
                 var actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, existingContest.ContestId.ToString());
@@ -1325,6 +1329,12 @@ namespace BusinessLogic.Services.Contests
 
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -1401,6 +1411,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -2313,6 +2326,9 @@ namespace BusinessLogic.Services.Contests
             contest.Status = ContestStatusEnum.RegistrationOpen.ToString();
             await contestRepo.UpdateAsync(contest);
             await _unitOfWork.SaveAsync();
+
+            // Notify dashboard
+            await _dashboardNotifier.NotifyContestStatusChangedAsync();
         }
 
         public async Task SetRegistrationEndNowAsync(Guid contestId)
@@ -2337,6 +2353,37 @@ namespace BusinessLogic.Services.Contests
             contest.Status = ContestStatusEnum.RegistrationClosed.ToString();
             await contestRepo.UpdateAsync(contest);
             await _unitOfWork.SaveAsync();
+
+            // Notify dashboard
+            await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+            // Notify mentors of teams in the contest
+            IGenericRepository<Team> _teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Notify all mentors with teams in the contest
+            await NotifiMentorDashboardContestUpdated(contestId);
+        }
+
+        private async Task NotifiMentorDashboardContestUpdated(Guid contestId)
+        {
+            // Notify all mentors with teams in the contest
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Get distinct mentor IDs from teams in the contest
+            List<Guid> mentorIds = teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .Select(t => t.MentorId)
+                .Distinct()
+                .ToList();
+
+            foreach (Guid mentorId in mentorIds)
+            {
+                if (mentorId == Guid.Empty)
+                    continue;
+
+                // Notify mentor dashboard about contest update
+                await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(mentorId);
+            }
         }
 
         private static string BuildMentorTeamReportCsv(

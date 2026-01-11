@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using BusinessLogic.IServices.Contests;
-using DataAccess.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.LeaderboardEntryDTOs;

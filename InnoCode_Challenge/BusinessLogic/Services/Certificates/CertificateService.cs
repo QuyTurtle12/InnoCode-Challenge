@@ -276,7 +276,7 @@ namespace BusinessLogic.Services.Certificates
 
 
                             // Create or update the certificate record
-                            Certificate entity;
+                            Certificate? entity;
                             if (dto.Reissue)
                             {
                                 _logger.LogDebug("Reissue mode: checking for existing certificate");
@@ -345,6 +345,13 @@ namespace BusinessLogic.Services.Certificates
 
                                 // Notify dashboard about new certificate
                                 await _dashboardNotifier.NotifyCertificateIssuedAsync();
+
+                                // Notify mentor if team certificate
+                                if (entity.TeamId.HasValue)
+                                {
+                                    Guid contestId = tpl.ContestId;
+                                    await NotifiMentorDashboardContestUpdated(contestId);
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -822,6 +829,28 @@ namespace BusinessLogic.Services.Certificates
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
                     "Only the organizer who created this contest can manage certificates.");
+        }
+
+        private async Task NotifiMentorDashboardContestUpdated(Guid contestId)
+        {
+            // Notify all mentors with teams in the contest
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Get distinct mentor IDs from teams in the contest
+            List<Guid> mentorIds = teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .Select(t => t.MentorId)
+                .Distinct()
+                .ToList();
+
+            foreach (Guid mentorId in mentorIds)
+            {
+                if (mentorId == Guid.Empty)
+                    continue;
+
+                // Notify mentor dashboard about contest update
+                await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(mentorId);
+            }
         }
 
     }

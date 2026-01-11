@@ -73,6 +73,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="openCode"></param>
         /// <returns></returns>
         [HttpGet("{id}")]
+        [Authorize(Policy = "RequireStudentOrOrganizer")]
         public async Task<IActionResult> GetRoundById(Guid id, string? openCode = null)
         {
             GetRoundDTO round = await _roundService.GetRoundByIdAsync(id, openCode);

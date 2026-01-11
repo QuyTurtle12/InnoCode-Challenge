@@ -239,6 +239,7 @@ namespace BusinessLogic.Services.Students
 
             // Notify dashboard about new team registration
             await _dashboardNotifier.NotifyTeamRegisteredAsync();
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
 
             var created = await teamRepository.Entities
                 .Include(t => t.Contest)

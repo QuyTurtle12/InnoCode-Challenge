@@ -1,7 +1,6 @@
 ﻿using BusinessLogic.Hubs;
 using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.SignalR;
-using Repository.DTOs.LeaderboardEntryDTOs;
 
 namespace BusinessLogic.Services.Contests
 {

@@ -52,5 +52,16 @@ namespace BusinessLogic.Services.Dashboards
                     Timestamp = DateTime.UtcNow
                 });
         }
+
+        public async Task NotifyMentorDashboardUpdatedAsync(Guid mentorId)
+        {
+            await _hubContext.Clients.Group($"MentorDashboard_{mentorId}")
+                .SendAsync("MentorDashboardUpdated", new
+                {
+                    MentorId = mentorId,
+                    Message = "Your mentor dashboard has been updated",
+                    Timestamp = DateTime.UtcNow
+                });
+        }
     }
 }

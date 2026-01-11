@@ -6,19 +6,37 @@ namespace BusinessLogic.Hubs
     {
         public override async Task OnConnectedAsync()
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, "AdminDashboard");
             await base.OnConnectedAsync();
         }
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminDashboard");
             await base.OnDisconnectedAsync(exception);
         }
 
         public async Task RequestDashboardRefresh()
         {
             await Clients.Caller.SendAsync("DashboardRefreshRequested");
+        }
+
+        public async Task JoinAdminDashboard()
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, "AdminDashboard");
+        }
+
+        public async Task LeaveAdminDashboard()
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminDashboard");
+        }
+
+        public async Task JoinMentorDashboard(string mentorId)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"MentorDashboard_{mentorId}");
+        }
+
+        public async Task LeaveMentorDashboard(string mentorId)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"MentorDashboard_{mentorId}");
         }
     }
 }
