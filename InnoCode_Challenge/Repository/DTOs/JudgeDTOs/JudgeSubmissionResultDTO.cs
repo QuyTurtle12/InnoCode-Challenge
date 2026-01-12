@@ -26,6 +26,7 @@
         public string Judge0Status { get; set; } = string.Empty;
         public string Expected { get; set; } = string.Empty;
         public string Actual { get; set; } = string.Empty;
+        public string? Stdout { get; set; }
         public string? Stderr { get; set; }
         public string? CompileOutput { get; set; }
         public string? Time { get; set; }

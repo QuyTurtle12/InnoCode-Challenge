@@ -1,13 +1,11 @@
 ﻿using BusinessLogic.IServices.Contests;
-using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.MockTestDTOs;
-using Repository.IRepositories;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 
 namespace BusinessLogic.Services.Contests
@@ -16,69 +14,50 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly HttpClient _httpClient;
         private readonly ILogger<MockTestService> _logger;
-        private readonly IUOW _unitOfWork;
+        private readonly IJudge0Service _judge0Service;
 
-        private const string PISTON_URL = "https://emkc.org/api/v2/piston/execute";
-        private const string PYTHON_VERSION = "3.10.0";
-        private const string PROGRAMMING_LANGUAGE = "python3";
-        private const int DEFAULT_EXECUTION_TIME_LIMIT_SECONDS = 30;
-        private const int DEFAULT_EXECUTION_MEMORY_LIMIT = 2048;
+        private const int PYTHON_LANGUAGE_ID = 71;
+        private const int DEFAULT_EXECUTION_TIME_LIMIT_SECONDS = 20;
+        private const int DEFAULT_EXECUTION_MEMORY_LIMIT = 1024;
+
+        private const string MOCK_TEST_SUCCESS_VALUE = "success";
+        private const string MOCK_TEST_ERROR_VALUE = "error";
+        private const string MOCK_TEST_UNKNOW_VALUE = "unknown";
 
         public MockTestService(
             HttpClient httpClient,
             ILogger<MockTestService> logger,
-            IUOW unitOfWork)
+            IJudge0Service judge0Service)
         {
             _httpClient = httpClient;
             _logger = logger;
-            _unitOfWork = unitOfWork;
+            _judge0Service = judge0Service;
         }
 
-        public async Task<MockTestResultDTO> ExecuteMockTestAsync(
+        public async Task<JudgeSubmissionResultDTO> ExecuteMockTestAsync(
             string userCode,
             string mockTestUrl,
             int timeLimitSec = DEFAULT_EXECUTION_TIME_LIMIT_SECONDS,
             int memoryLimitMb = DEFAULT_EXECUTION_MEMORY_LIMIT)
         {
-            try
-            {
-                // Download mock test code from the provided URL
-                string mockTestCode = await DownloadMockTestAsync(mockTestUrl);
+            // Download mock test code from the provided URL
+            string mockTestCode = await DownloadMockTestAsync(mockTestUrl);
 
-                // Build the complete test script using the helper method
-                string combinedScript = BuildTestScript(userCode, mockTestCode);
+            // Build the complete test script
+            string combinedScript = BuildTestScript(userCode, mockTestCode);
 
-                _logger?.LogDebug("Executing test script (length: {Length})", combinedScript.Length);
+            _logger?.LogDebug("Executing test script (length: {Length})", combinedScript.Length);
 
-                // Log the script for debugging
-                _logger?.LogTrace("Test script:\n{Script}", combinedScript);
+            // Log the script for debugging
+            _logger?.LogTrace("Test script:\n{Script}", combinedScript);
 
-                // Execute the combined script using Piston service
-                MockTestResultDTO executionResult = await ExecuteViaPistonAsync(
-                    combinedScript,
-                    timeLimitSec,
-                    memoryLimitMb);
+            // Execute the combined script using Piston service
+            JudgeSubmissionResultDTO executionResult = await ExecuteViaJudge0Async(
+                combinedScript,
+                timeLimitSec,
+                memoryLimitMb);
 
-                return executionResult;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "Mock test execution failed for URL: {Url}", mockTestUrl);
-
-                return new MockTestResultDTO
-                {
-                    ErrorMessage = $"Failed to execute mock test: {ex.Message}",
-                    Summary = new MockTestSummaryDTO
-                    {
-                        Total = 0,
-                        Passed = 0,
-                        Failed = 0,
-                        rawScore = 0,
-                        penaltyScore = 0
-                    },
-                    Details = new List<MockTestDetail>()
-                };
-            }
+            return executionResult;
         }
 
         private async Task<string> DownloadMockTestAsync(string url)
@@ -107,6 +86,8 @@ namespace BusinessLogic.Services.Contests
             sb.AppendLine("import unittest");
             sb.AppendLine("import json");
             sb.AppendLine("import sys");
+            sb.AppendLine("import io");
+            sb.AppendLine("import traceback");
             sb.AppendLine();
 
             // Add student code
@@ -122,10 +103,51 @@ namespace BusinessLogic.Services.Contests
             sb.AppendLine(cleanedMockTestCode);
             sb.AppendLine();
 
-            // Add test runner and result capturing
+            // Add custom assertion interceptor
+            sb.AppendLine("# ===== ASSERTION INTERCEPTOR =====");
+            sb.AppendLine("class AssertionCapture:");
+            sb.AppendLine("    def __init__(self):");
+            sb.AppendLine("        self.expected = None");
+            sb.AppendLine("        self.actual = None");
+            sb.AppendLine();
+            sb.AppendLine("    def capture_assertEqual(self, expected, actual, msg=None):");
+            sb.AppendLine("        self.expected = expected");
+            sb.AppendLine("        self.actual = actual");
+            sb.AppendLine("        if expected != actual:");
+            sb.AppendLine("            raise AssertionError(f'{msg or \"\"} Expected: {expected!r}, Actual: {actual!r}')");
+            sb.AppendLine();
+            sb.AppendLine("    def capture_assertTrue(self, value, msg=None):");
+            sb.AppendLine("        self.expected = True");
+            sb.AppendLine("        self.actual = value");
+            sb.AppendLine("        if not value:");
+            sb.AppendLine("            raise AssertionError(msg or f'Expected True, got {value!r}')");
+            sb.AppendLine();
+            sb.AppendLine("    def capture_assertFalse(self, value, msg=None):");
+            sb.AppendLine("        self.expected = False");
+            sb.AppendLine("        self.actual = value");
+            sb.AppendLine("        if value:");
+            sb.AppendLine("            raise AssertionError(msg or f'Expected False, got {value!r}')");
+            sb.AppendLine();
+
+            // Monkey-patch unittest.TestCase to use interceptor
+            sb.AppendLine("# Monkey-patch unittest.TestCase");
+            sb.AppendLine("_original_setUp = unittest.TestCase.setUp");
+            sb.AppendLine("def _patched_setUp(self):");
+            sb.AppendLine("    self._capture = AssertionCapture()");
+            sb.AppendLine("    self._original_assertEqual = self.assertEqual");
+            sb.AppendLine("    self._original_assertTrue = self.assertTrue");
+            sb.AppendLine("    self._original_assertFalse = self.assertFalse");
+            sb.AppendLine("    self.assertEqual = lambda *args, **kwargs: self._capture.capture_assertEqual(*args, **kwargs)");
+            sb.AppendLine("    self.assertTrue = lambda *args, **kwargs: self._capture.capture_assertTrue(*args, **kwargs)");
+            sb.AppendLine("    self.assertFalse = lambda *args, **kwargs: self._capture.capture_assertFalse(*args, **kwargs)");
+            sb.AppendLine("    if hasattr(_original_setUp, '__func__'):");
+            sb.AppendLine("        _original_setUp.__func__(self)");
+            sb.AppendLine("unittest.TestCase.setUp = _patched_setUp");
+            sb.AppendLine();
+
+            // Add test runner code
             sb.AppendLine("if __name__ == '__main__':");
-            sb.AppendLine("    # Custom result class to capture test names");
-            sb.AppendLine("    class JsonTestResult(unittest.TextTestResult):");
+            sb.AppendLine("    class DetailedTestResult(unittest.TextTestResult):");
             sb.AppendLine("        def __init__(self, stream, descriptions, verbosity):");
             sb.AppendLine("            super().__init__(stream, descriptions, verbosity)");
             sb.AppendLine("            self.test_results = []");
@@ -136,53 +158,81 @@ namespace BusinessLogic.Services.Contests
             sb.AppendLine();
             sb.AppendLine("        def addSuccess(self, test):");
             sb.AppendLine("            super().addSuccess(test)");
-            sb.AppendLine("            self.test_results.append({'test': test, 'status': 'passed', 'error': None})");
+            sb.AppendLine("            # ✅ Capture expected/actual from our interceptor");
+            sb.AppendLine("            expected = getattr(test._capture, 'expected', None)");
+            sb.AppendLine("            actual = getattr(test._capture, 'actual', None)");
+            sb.AppendLine("            self.test_results.append({");
+            sb.AppendLine("                'test': test,");
+            sb.AppendLine("                'status': 'success',");
+            sb.AppendLine("                'expected': repr(expected) if expected is not None else '',");
+            sb.AppendLine("                'actual': repr(actual) if actual is not None else '',");
+            sb.AppendLine("                'stderr': None,");
+            sb.AppendLine("                'error': None");
+            sb.AppendLine("            })");
             sb.AppendLine();
             sb.AppendLine("        def addError(self, test, err):");
             sb.AppendLine("            super().addError(test, err)");
-            sb.AppendLine("            self.test_results.append({'test': test, 'status': 'error', 'error': err})");
+            sb.AppendLine("            stderr = ''.join(traceback.format_exception(*err))");
+            sb.AppendLine("            self.test_results.append({");
+            sb.AppendLine("                'test': test,");
+            sb.AppendLine("                'status': 'error',");
+            sb.AppendLine("                'expected': '',");
+            sb.AppendLine("                'actual': '',");
+            sb.AppendLine("                'stderr': stderr[:500],");
+            sb.AppendLine("                'error': err");
+            sb.AppendLine("            })");
             sb.AppendLine();
             sb.AppendLine("        def addFailure(self, test, err):");
             sb.AppendLine("            super().addFailure(test, err)");
-            sb.AppendLine("            self.test_results.append({'test': test, 'status': 'failed', 'error': err})");
+            sb.AppendLine("            # ✅ Capture expected/actual from our interceptor");
+            sb.AppendLine("            expected = getattr(test._capture, 'expected', None)");
+            sb.AppendLine("            actual = getattr(test._capture, 'actual', None)");
+            sb.AppendLine("            stderr = ''.join(traceback.format_exception(*err))");
+            sb.AppendLine("            last_line = stderr.split('\\n')[-2] if '\\n' in stderr else stderr");
+            sb.AppendLine("            self.test_results.append({");
+            sb.AppendLine("                'test': test,");
+            sb.AppendLine("                'status': 'failed',");
+            sb.AppendLine("                'expected': repr(expected) if expected is not None else '',");
+            sb.AppendLine("                'actual': repr(actual) if actual is not None else '',");
+            sb.AppendLine("                'stderr': last_line[:200],");
+            sb.AppendLine("                'error': err");
+            sb.AppendLine("            })");
             sb.AppendLine();
-            sb.AppendLine("    # Run tests with custom result");
+
+            // Test execution
             sb.AppendLine("    loader = unittest.TestLoader()");
             sb.AppendLine("    suite = loader.loadTestsFromModule(sys.modules[__name__])");
-            sb.AppendLine("    runner = unittest.TextTestRunner(resultclass=JsonTestResult, stream=sys.stderr, verbosity=0)");
+            sb.AppendLine("    runner = unittest.TextTestRunner(resultclass=DetailedTestResult, stream=sys.stderr, verbosity=0)");
             sb.AppendLine("    result = runner.run(suite)");
             sb.AppendLine();
-            sb.AppendLine("    # Build details from captured results");
+
+            // Build detailed results
             sb.AppendLine("    details = []");
             sb.AppendLine("    for i, test_result in enumerate(result.test_results, 1):");
-            sb.AppendLine("        test_name = 'test ' + str(i)");
+            sb.AppendLine("        test_name = f'test {i}'");
             sb.AppendLine("        status = test_result['status']");
-            sb.AppendLine("        error = test_result['error']");
+            sb.AppendLine("        expected = test_result.get('expected', '')");
+            sb.AppendLine("        actual = test_result.get('actual', '')");
+            sb.AppendLine("        stderr = test_result.get('stderr', '')");
             sb.AppendLine();
-            sb.AppendLine("        if error:");
-            sb.AppendLine("            import traceback");
-            sb.AppendLine("            error_msg = ''.join(traceback.format_exception(*error))");
-            sb.AppendLine("            lines = error_msg.split('\\n')");
-            sb.AppendLine("            last_line = ''");
-            sb.AppendLine("            for line in reversed(lines):");
-            sb.AppendLine("                if line.strip():");
-            sb.AppendLine("                    last_line = line.strip()");
-            sb.AppendLine("                    break");
-            sb.AppendLine("            details.append({'test': test_name, 'status': status, 'message': last_line[:200]})");
-            sb.AppendLine("        else:");
-            sb.AppendLine("            details.append({'test': test_name, 'status': status, 'message': ''})");
+            sb.AppendLine("        details.append({");
+            sb.AppendLine("            'test': test_name,");
+            sb.AppendLine("            'status': status,");
+            sb.AppendLine("            'expected': expected if expected else None,");
+            sb.AppendLine("            'actual': actual if actual else None,");
+            sb.AppendLine("            'stderr': stderr if stderr else None");
+            sb.AppendLine("        })");
             sb.AppendLine();
-            sb.AppendLine("    # Build results");
+
+            // Output results
             sb.AppendLine("    results = {");
             sb.AppendLine("        'total': result.testsRun,");
-            sb.AppendLine("        'passed': len([t for t in result.test_results if t['status'] == 'passed']),");
-            sb.AppendLine("        'failed': len(result.failures),");
-            sb.AppendLine("        'errors': len(result.errors),");
+            sb.AppendLine("        'passed': len([t for t in result.test_results if t['status'] == 'success']),");
+            sb.AppendLine("        'failed': len(result.failures) + len(result.errors),");
             sb.AppendLine("        'success': result.wasSuccessful(),");
             sb.AppendLine("        'details': details");
             sb.AppendLine("    }");
             sb.AppendLine();
-            sb.AppendLine("    # Output JSON marker and results");
             sb.AppendLine("    print('===MOCK_TEST_RESULTS===')");
             sb.AppendLine("    print(json.dumps(results))");
 
@@ -222,162 +272,159 @@ namespace BusinessLogic.Services.Contests
             return string.Join("\n", dedented);
         }
 
-        private async Task<MockTestResultDTO> ExecuteViaPistonAsync(
+        private async Task<JudgeSubmissionResultDTO> ExecuteViaJudge0Async(
             string script,
             int timeLimitSec,
             int memoryLimitMb)
         {
             try
             {
-                // Prepare Piston request
-                var pistonRequest = new PistonExecuteRequest
+                _logger?.LogInformation("Executing mock test via Judge0");
+
+                JudgeSubmissionRequestDTO request = new JudgeSubmissionRequestDTO
                 {
-                    Language = PROGRAMMING_LANGUAGE,
-                    Version = PYTHON_VERSION,
-                    Files = new[]
+                    LanguageId = PYTHON_LANGUAGE_ID,
+                    Code = script,
+                    Problem = new JudgeProblemDTO
                     {
-                        new PistonFile { Content = script }
+                        Id = "mock-test",
+                        Title = "Mock Test Execution"
                     },
-                    CompileTimeout = 10000, // 10 seconds
-                    RunTimeout = timeLimitSec * 1000, // Convert to milliseconds
-                    CompileMemoryLimit = memoryLimitMb * 1024 * 1024, // Convert to bytes
-                    RunMemoryLimit = memoryLimitMb * 1024 * 1024
+                    TestCases = new List<JudgeTestCaseDTO>
+                    {
+                        new JudgeTestCaseDTO
+                        {
+                            Id = "mock-test-case",
+                            Stdin = "",
+                            ExpectedOutput = ""
+                        }
+                    },
+                    TimeLimitSec = timeLimitSec,
+                    MemoryLimitKb = memoryLimitMb * 1024
                 };
 
-                // Send request to Piston
-                var response = await _httpClient.PostAsJsonAsync(PISTON_URL, pistonRequest);
+                // Execute and return Judge0 result directly
+                JudgeSubmissionResultDTO result = await _judge0Service.AutoEvaluateSubmissionAsync(request);
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    string errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Piston API error: {StatusCode} - {Content}", response.StatusCode, errorContent);
-                    throw new ErrorException(
-                        StatusCodes.Status502BadGateway,
-                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                        $"Piston API failed with status {response.StatusCode}");
-                }
-
-                var pistonResult = await response.Content.ReadFromJsonAsync<PistonExecuteResponse>();
-
-                if (pistonResult == null)
-                {
-                    throw new ErrorException(
-                        StatusCodes.Status500InternalServerError,
-                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                        "Failed to parse Piston response");
-                }
-
-                // Parse and return results
-                return ParsePistonResult(pistonResult);
+                // Parse the JSON from stdout and update the result
+                return ParseJudge0Result(result);
             }
-            catch (HttpRequestException ex)
+            catch (Exception ex)
             {
-                _logger.LogError(ex, "Network error calling Piston API");
+                _logger?.LogError(ex, "Judge0 execution failed");
                 throw new ErrorException(
-                    StatusCodes.Status503ServiceUnavailable,
+                    StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    "Code execution service is temporarily unavailable");
-            }
-            catch (TaskCanceledException ex)
-            {
-                _logger.LogError(ex, "Piston API request timeout");
-                throw new ErrorException(
-                    StatusCodes.Status408RequestTimeout,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    "Code execution timed out");
+                    $"Judge0 execution failed: {ex.Message}");
             }
         }
 
-        private MockTestResultDTO ParsePistonResult(PistonExecuteResponse pistonResult)
+        private JudgeSubmissionResultDTO ParseJudge0Result(JudgeSubmissionResultDTO judge0Result)
         {
-            string output = pistonResult.Run?.Output ?? string.Empty;
-            string stderr = pistonResult.Run?.Stderr ?? string.Empty;
-
-            // Look for JSON results marker
-            int markerIndex = output.IndexOf("===MOCK_TEST_RESULTS===");
-
-            if (markerIndex < 0)
-            {
-                _logger.LogWarning("Failed to find test results marker in output. Output: {Output}", output);
-                return new MockTestResultDTO
-                {
-                    SubmissionId = Guid.NewGuid(),
-                    ProblemId = string.Empty,
-                    Summary = new MockTestSummaryDTO
-                    {
-                        Total = 0,
-                        Passed = 0,
-                        Failed = 0,
-                        rawScore = 0,
-                        penaltyScore = 0
-                    },
-                    Language = PROGRAMMING_LANGUAGE,
-                    ErrorMessage = "Failed to parse test results. " + (string.IsNullOrEmpty(stderr) ? output : stderr),
-                    Details = new List<MockTestDetail>()
-                };
-            }
-
-            // Extract JSON part
-            string jsonPart = output.Substring(markerIndex + "===MOCK_TEST_RESULTS===".Length).Trim();
-
             try
             {
-                // Configure JsonSerializer to be case-insensitive
-                var options = new JsonSerializerOptions
+                var firstCase = judge0Result.Cases.FirstOrDefault();
+                if (firstCase == null)
                 {
-                    PropertyNameCaseInsensitive = true
-                };
+                    throw new InvalidOperationException("No test case results returned from Judge0");
+                }
 
-                MockTestRawResult? rawResult = JsonSerializer.Deserialize<MockTestRawResult>(jsonPart, options);
+                // ✅ Use Stdout (added in previous step)
+                string output = firstCase.Stdout ?? string.Empty;
+                string stderr = firstCase.Stderr ?? string.Empty;
+
+                // Look for JSON marker
+                int markerIndex = output.IndexOf("===MOCK_TEST_RESULTS===");
+
+                if (markerIndex < 0)
+                {
+                    _logger?.LogWarning("Failed to find mock test results marker");
+
+                    // Return error case with Judge0 structure
+                    judge0Result.Summary.Total = 1;
+                    judge0Result.Summary.Passed = 0;
+                    judge0Result.Summary.Failed = 1;
+                    judge0Result.Summary.rawScore = 0;
+                    judge0Result.Summary.penaltyScore = 0;
+
+                    firstCase.Id = "mock-test-error";
+                    firstCase.Status = MOCK_TEST_ERROR_VALUE;
+                    firstCase.Expected = "";
+                    firstCase.Actual = "Execution failed";
+                    firstCase.Stderr = string.IsNullOrEmpty(stderr) ? "Failed to find test results" : stderr;
+
+                    return judge0Result;
+                }
+
+                // Extract JSON
+                string jsonPart = output.Substring(markerIndex + "===MOCK_TEST_RESULTS===".Length).Trim();
+
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+                // Deserialize JSON
+                var rawResult = JsonSerializer.Deserialize<MockTestRawResultJson>(jsonPart, options);
 
                 if (rawResult == null)
                 {
-                    throw new JsonException("Deserialization returned null");
+                    throw new JsonException("Failed to parse mock test results");
                 }
 
-                var details = rawResult.Details?.Select(d => new MockTestDetail
-                {
-                    TestName = d.Test ?? "Unknown",
-                    Status = d.Status ?? "error",
-                    Message = d.Message ?? ""
-                }).ToList() ?? new List<MockTestDetail>();
+                // Update summary
+                judge0Result.Summary.Total = rawResult.Total;
+                judge0Result.Summary.Passed = rawResult.Passed;
+                judge0Result.Summary.Failed = rawResult.Failed;
 
-                return new MockTestResultDTO
+                // Replace single case with multiple mock test cases
+                judge0Result.Cases.Clear();
+
+                foreach (var detail in rawResult.Details ?? new List<MockTestDetailJson>())
                 {
-                    SubmissionId = Guid.NewGuid(),
-                    ProblemId = string.Empty,
-                    Summary = new MockTestSummaryDTO
+                    judge0Result.Cases.Add(new JudgeCaseResultDTO
                     {
-                        Total = rawResult.Total,
-                        Passed = rawResult.Passed,
-                        Failed = rawResult.Failed + rawResult.Errors,
-                        rawScore = 0,
-                        penaltyScore = 0
-                    },
-                    Language = PROGRAMMING_LANGUAGE,
-                    ErrorMessage = (rawResult.Failed + rawResult.Errors) > 0 ? stderr : null,
-                    Details = details
-                };
+                        Id = detail.Test ?? MOCK_TEST_UNKNOW_VALUE,
+                        Status = detail.Status ?? MOCK_TEST_ERROR_VALUE,
+                        Judge0StatusId = detail.Status == MOCK_TEST_SUCCESS_VALUE ? (int) Judge0StatusEnum.Accepted : (int) Judge0StatusEnum.Error,
+                        Judge0Status = detail.Status == MOCK_TEST_SUCCESS_VALUE ? Judge0StatusEnum.Accepted.ToString() : Judge0StatusEnum.Error.ToString(),
+                        Expected = detail.Expected ?? "",
+                        Actual = detail.Actual ?? "",
+                        Stdout = detail.Actual,
+                        Stderr = detail.Stderr,
+                        CompileOutput = null,
+                        Time = firstCase.Time,
+                        MemoryKb = firstCase.MemoryKb,
+                        Token = firstCase.Token
+                    });
+                }
+
+                return judge0Result;
             }
             catch (JsonException ex)
             {
-                _logger.LogError(ex, "Failed to parse JSON results: {Json}", jsonPart);
-                return new MockTestResultDTO
+                _logger?.LogError(ex, "Failed to parse mock test JSON");
+
+                // Return error case
+                judge0Result.Summary.Total = 1;
+                judge0Result.Summary.Passed = 0;
+                judge0Result.Summary.Failed = 1;
+                judge0Result.Summary.rawScore = 0;
+                judge0Result.Summary.penaltyScore = 0;
+
+                judge0Result.Cases.Clear();
+                judge0Result.Cases.Add(new JudgeCaseResultDTO
                 {
-                    SubmissionId = Guid.NewGuid(),
-                    ProblemId = string.Empty,
-                    Summary = new MockTestSummaryDTO
-                    {
-                        Total = 0,
-                        Passed = 0,
-                        Failed = 0,
-                        rawScore = 0,
-                        penaltyScore = 0
-                    },
-                    Language = PROGRAMMING_LANGUAGE,
-                    ErrorMessage = $"JSON parse error: {ex.Message}",
-                    Details = new List<MockTestDetail>()
-                };
+                    Id = "parse-error",
+                    Status = MOCK_TEST_ERROR_VALUE,
+                    Judge0StatusId = 4,
+                    Judge0Status = Judge0StatusEnum.Error.ToString(),
+                    Expected = "",
+                    Actual = "",
+                    Stderr = $"JSON parse error: {ex.Message}",
+                    Time = null,
+                    MemoryKb = null,
+                    Token = string.Empty
+                });
+
+                return judge0Result;
             }
         }
     }

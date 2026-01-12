@@ -307,9 +307,9 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             [FromForm] CreateSubmissionDTO submissionDTO,
             [FromForm] TestCaseEvaluationTypeEnum type)
         {
-            MockTestResultDTO result = await _submissionService.EvaluateMockTestSubmissionAsync(roundId, submissionDTO, type);
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateMockTestSubmissionAsync(roundId, submissionDTO, type);
 
-            return Ok(new BaseResponseModel<MockTestResultDTO>(
+            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,

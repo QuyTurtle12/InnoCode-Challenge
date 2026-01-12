@@ -77,8 +77,8 @@ namespace BusinessLogic.Services.Submissions
         private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
         private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
         private const int MAX_PY_FILES = 50;
-        private const int MOCK_TEST_EXECUTION_TIME_LIMIT_SECONDS = 30;
-        private const int MOCK_TEST_EXECUTION_MEMORY_LIMIT = 2048;
+        private const int MOCK_TEST_EXECUTION_TIME_LIMIT_SECONDS = 20;
+        private const int MOCK_TEST_EXECUTION_MEMORY_LIMIT = 2000;
 
         private const string EXTENSION_PY = ".py";
         private const string EXTENSION_PYTHON = ".python";
@@ -1236,7 +1236,7 @@ namespace BusinessLogic.Services.Submissions
                         .ToList();
 
                     // Get judge email from lookup dictionary, fallback to JudgedBy value if not found
-                    string judgeEmail = submission.JudgedBy != null && judgeEmailsLookup.TryGetValue(submission.JudgedBy, out string? email)
+                    string judgeEmail = submission.JudgedBy != null && judgeEmailsLookup.TryGetValue(submission.JudgedBy.ToLower(), out string? email)
                         ? email
                         : submission.JudgedBy ?? "Unknown";
 
@@ -2619,7 +2619,7 @@ namespace BusinessLogic.Services.Submissions
             }
         }
 
-        public async Task<MockTestResultDTO> EvaluateMockTestSubmissionAsync(
+        public async Task<JudgeSubmissionResultDTO> EvaluateMockTestSubmissionAsync(
             Guid roundId,
             CreateSubmissionDTO submissionDTO,
             TestCaseEvaluationTypeEnum evaluationType)
@@ -2652,34 +2652,38 @@ namespace BusinessLogic.Services.Submissions
                     teamId, problem.ProblemId, studentId, artifactType, artifactUrl);
 
                 // Execute mock tests
-                MockTestResultDTO mockResult = await _mockTestExecutor.ExecuteMockTestAsync(
+                JudgeSubmissionResultDTO mockResult = await _mockTestExecutor.ExecuteMockTestAsync(
                     sourceCode,
                     problem.MockTestUrl!,
                     timeLimitSec: MOCK_TEST_EXECUTION_TIME_LIMIT_SECONDS,
                     memoryLimitMb: MOCK_TEST_EXECUTION_MEMORY_LIMIT
                 );
 
-                // Populate result metadata
-                mockResult.SubmissionId = submission.SubmissionId;
+                // Populate metadata
+                mockResult.SubmissionId = submission.SubmissionId.ToString();
                 mockResult.ProblemId = problem.ProblemId.ToString();
                 mockResult.Language = problem.Language;
 
-                // Handle execution failure
-                if (!string.IsNullOrEmpty(mockResult.ErrorMessage))
+                // Check for critical errors
+                bool hasCriticalError = mockResult.Summary.Total == 0 ||
+                                        mockResult.Cases.All(c => c.Status == "error");
+
+                if (hasCriticalError)
                 {
-                    MockTestResultDTO failedResult = await HandleFailedMockTestAsync(submission, mockResult);
+                    // Handle failed mock test
+                    JudgeSubmissionResultDTO failedResult = await HandleFailedMockTestAsync(submission, mockResult);
                     _unitOfWork.CommitTransaction();
                     return failedResult;
                 }
 
-                // Apply penalty and save results
+                // Apply penalty and save
                 await SaveMockTestResultAsync(
                     submission.SubmissionId,
                     mockResult,
                     previousSubmissionsCount,
                     problem.PenaltyRate);
 
-                // Check for plagiarism
+                // Check plagiarism
                 await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
 
                 _unitOfWork.CommitTransaction();
@@ -2698,7 +2702,7 @@ namespace BusinessLogic.Services.Submissions
 
         private async Task SaveMockTestResultAsync(
             Guid submissionId,
-            MockTestResultDTO mockResult,
+            JudgeSubmissionResultDTO mockResult,
             int previousSubmissionsCount,
             double? penaltyRate)
         {
@@ -2755,7 +2759,7 @@ namespace BusinessLogic.Services.Submissions
             IGenericRepository<SubmissionDetail> detailRepo = _unitOfWork.GetRepository<SubmissionDetail>();
             double weightPerTest = totalTests > 0 ? (maxPossibleScore / totalTests) : 0;
 
-            foreach (var detail in mockResult.Details)
+            foreach (JudgeCaseResultDTO testCase in mockResult.Cases)
             {
                 SubmissionDetail submissionDetail = new SubmissionDetail
                 {
@@ -2763,9 +2767,11 @@ namespace BusinessLogic.Services.Submissions
                     SubmissionId = submissionId,
                     TestcaseId = null,
                     Weight = weightPerTest,
-                    Note = $"{detail.TestName}: {detail.Status}",
+                    Note = string.IsNullOrEmpty(testCase.Stderr)
+                        ? $"{testCase.Id}: {testCase.Status}"
+                        : $"{testCase.Id}: {testCase.Status} - {testCase.Stderr}",
                     RuntimeMs = 0,
-                    MemoryKb = 0,
+                    MemoryKb = testCase.MemoryKb ?? 0,
                     CreatedAt = DateTime.UtcNow
                 };
 
@@ -4164,9 +4170,9 @@ namespace BusinessLogic.Services.Submissions
         /// <summary>
         /// Handles failed mock test execution
         /// </summary>
-        private async Task<MockTestResultDTO> HandleFailedMockTestAsync(
+        private async Task<JudgeSubmissionResultDTO> HandleFailedMockTestAsync(
             Submission submission,
-            MockTestResultDTO mockResult)
+            JudgeSubmissionResultDTO mockResult)
         {
             IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
 
@@ -4175,6 +4181,7 @@ namespace BusinessLogic.Services.Submissions
             await submissionRepo.UpdateAsync(submission);
             await _unitOfWork.SaveAsync();
 
+            // Update summary to reflect failure
             mockResult.Summary.rawScore = 0;
             mockResult.Summary.penaltyScore = 0;
 

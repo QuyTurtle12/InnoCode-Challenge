@@ -1,8 +1,9 @@
-﻿using System.Net.Http.Json;
-using BusinessLogic.IServices.Contests;
+﻿using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Repository.DTOs.JudgeDTOs;
+using System.Net.Http.Json;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -15,9 +16,15 @@ namespace BusinessLogic.Services.Contests
         private readonly HttpClient _httpClient;
         private readonly string _judge0BaseUrl;
         private readonly string _apiKey;
+
+        private readonly ILogger<Judge0Service> _logger;
+
         private const int POLLING_INTERVAL_MS = 2000;
         private const int MAX_ATTEMPT = 15;
         private const int BATCH_SIZE = 20;
+
+        private const double MAX_CPU_TIME_LIMIT_SEC = 20.0;
+        private const int MAX_MEMORY_LIMIT_KB = 2048000;
 
         public Judge0Service(IConfiguration configuration, HttpClient httpClient)
         {
@@ -85,6 +92,11 @@ namespace BusinessLogic.Services.Contests
 
         private async Task ProcessBatchSubmissions(JudgeSubmissionRequestDTO request, JudgeSubmissionResultDTO result)
         {
+            // Clamp time and memory limits to Judge0 maximums
+            var (clampedTime, clampedMemory) = ClampToJudge0Limits(
+            request.TimeLimitSec,
+            request.MemoryLimitKb);
+
             // Split test cases into batches
             for (int i = 0; i < request.TestCases.Count; i += BATCH_SIZE)
             {
@@ -95,8 +107,8 @@ namespace BusinessLogic.Services.Contests
                     request.LanguageId,
                     request.Code,
                     batch,
-                    request.TimeLimitSec,
-                    request.MemoryLimitKb);
+                    clampedTime,
+                    clampedMemory);
 
                 // Add delay between batches to avoid rate limiting
                 if (i + BATCH_SIZE < request.TestCases.Count)
@@ -112,6 +124,11 @@ namespace BusinessLogic.Services.Contests
 
         private async Task ProcessSingleSubmissions(JudgeSubmissionRequestDTO request, JudgeSubmissionResultDTO result)
         {
+            // Clamp time and memory limits to Judge0 maximums
+            var (clampedTime, clampedMemory) = ClampToJudge0Limits(
+            request.TimeLimitSec,
+            request.MemoryLimitKb);
+
             // Process each test case with delay
             foreach (JudgeTestCaseDTO testCase in request.TestCases)
             {
@@ -121,8 +138,8 @@ namespace BusinessLogic.Services.Contests
                     request.Code,
                     testCase.Stdin,
                     testCase.ExpectedOutput,
-                    request.TimeLimitSec,
-                    request.MemoryLimitKb);
+                    clampedTime,
+                    clampedMemory);
 
                 // Wait for results and check status
                 JudgeCaseResultDTO judgeCaseResult = await PollSubmissionResult(submissionResponse.Token, testCase);
@@ -131,7 +148,7 @@ namespace BusinessLogic.Services.Contests
                 // Add delay between submissions to avoid rate limiting
                 if (request.TestCases.IndexOf(testCase) < request.TestCases.Count - 1)
                 {
-                    await Task.Delay(500); // 500ms delay between submissions
+                    await Task.Delay(500);
                 }
             }
         }
@@ -217,6 +234,7 @@ namespace BusinessLogic.Services.Contests
                                 Judge0Status = Judge0Helpers.ConvertToJudge0StatusString(submission.Status?.Id),
                                 Expected = testCase.ExpectedOutput.Trim(),
                                 Actual = (submission.Stdout ?? "").Trim(),
+                                Stdout = submission.Stdout?.Trim(),
                                 Stderr = submission.Stderr?.Trim(),
                                 CompileOutput = submission.CompileOutput?.Trim(),
                                 Time = submission.Time,
@@ -341,6 +359,7 @@ namespace BusinessLogic.Services.Contests
                             Judge0Status = Judge0Helpers.ConvertToJudge0StatusString(result?.Status?.Id),
                             Expected = testCase.ExpectedOutput.Trim(),
                             Actual = (result?.Stdout ?? "").Trim(),
+                            Stdout = result?.Stdout?.Trim(),
                             Stderr = result?.Stderr?.Trim(),
                             CompileOutput = result?.CompileOutput?.Trim(),
                             Time = result?.Time,
@@ -368,10 +387,33 @@ namespace BusinessLogic.Services.Contests
             };
         }
 
-        // Helper class for batch response deserialization
+        /// <summary>
+        /// Helper class for batch response deserialization
+        /// </summary>
         private class BatchSubmissionsResponse
         {
             public List<JudgeResponseDTO> Submissions { get; set; } = new();
+        }
+
+        /// <summary>
+        /// Clamp time and memory limits to Judge0 maximum allowed limits
+        /// </summary>
+        private (double clampedTime, int clampedMemory) ClampToJudge0Limits(
+            double timeLimitSec,
+            int memoryLimitKb)
+        {
+            double clampedTime = Math.Min(timeLimitSec, MAX_CPU_TIME_LIMIT_SEC);
+            int clampedMemory = Math.Min(memoryLimitKb, MAX_MEMORY_LIMIT_KB);
+
+            if (clampedTime != timeLimitSec || clampedMemory != memoryLimitKb)
+            {
+                _logger?.LogWarning(
+                    "Judge0 limits exceeded. Original: time={OriginalTime}s, memory={OriginalMemory}KB. " +
+                    "Clamped to: time={ClampedTime}s, memory={ClampedMemory}KB",
+                    timeLimitSec, memoryLimitKb, clampedTime, clampedMemory);
+            }
+
+            return (clampedTime, clampedMemory);
         }
 
     }
