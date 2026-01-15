@@ -743,7 +743,7 @@ namespace BusinessLogic.Services.Contests
                     return;
                 }
 
-                // Distribute submissions equally using round-robin algorithm
+                // Distribute submissions equally
                 int judgeIndex = 0;
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
