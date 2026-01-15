@@ -5,6 +5,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 USER $APP_UID
 WORKDIR /app
 EXPOSE 8080
+EXPOSE 8081
 
 
 # This stage is used to build the service project
@@ -16,7 +17,9 @@ COPY ["BusinessLogic/BusinessLogic.csproj", "BusinessLogic/"]
 COPY ["Repository/Repository.csproj", "Repository/"]
 COPY ["DataAccess/DataAccess.csproj", "DataAccess/"]
 COPY ["Utility/Utility.csproj", "Utility/"]
-RUN dotnet restore "./InnoCode_Challenge_API/InnoCode_Challenge_API.csproj"
+ENV DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTPREQUESTTIMEOUT=600
+RUN dotnet restore "./InnoCode_Challenge_API/InnoCode_Challenge_API.csproj" \
+    --disable-parallel
 COPY . .
 WORKDIR "/src/InnoCode_Challenge_API"
 RUN dotnet build "./InnoCode_Challenge_API.csproj" -c $BUILD_CONFIGURATION -o /app/build

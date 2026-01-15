@@ -9,9 +9,9 @@ public partial class SubmissionDetail
 
     public Guid SubmissionId { get; set; }
 
-    public Guid TestcaseId { get; set; }
+    public Guid? TestcaseId { get; set; }
 
-    public int? Weight { get; set; }
+    public double? Weight { get; set; }
 
     public string? Note { get; set; }
 
@@ -25,5 +25,5 @@ public partial class SubmissionDetail
 
     public virtual Submission Submission { get; set; } = null!;
 
-    public virtual TestCase Testcase { get; set; } = null!;
+    public virtual TestCase? Testcase { get; set; }
 }

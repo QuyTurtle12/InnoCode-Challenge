@@ -19,7 +19,17 @@ public partial class Problem
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? Description { get; set; }
+
+    public string? TemplateUrl { get; set; }
+
+    public string? MockTestUrl { get; set; }
+
+    public string? TestType { get; set; }
+
     public virtual Round Round { get; set; } = null!;
+
+    public virtual ICollection<SubmissionFingerprint> SubmissionFingerprints { get; set; } = new List<SubmissionFingerprint>();
 
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();
 

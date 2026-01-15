@@ -1,0 +1,425 @@
+﻿using AutoMapper;
+using BusinessLogic.IServices;
+using BusinessLogic.IServices.NotificationsAndLogs;
+using DataAccess.Entities;
+using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
+using Repository.DTOs.ConfigDTOs;
+using Repository.IRepositories;
+using Utility.Constant;
+using Utility.Enums;
+using Utility.ExceptionCustom;
+using Utility.PaginatedList;
+using System.Security.Claims;
+
+namespace BusinessLogic.Services
+{
+    public class ConfigService : IConfigService
+    {
+        private readonly IUOW _uow;
+        private readonly IMapper _mapper;
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IActivityLogWriter _logWriter;
+
+        public ConfigService(IUOW uow, IMapper mapper, IHttpContextAccessor httpContextAccessor, IActivityLogWriter logWriter)
+        {
+            _uow = uow;
+            _mapper = mapper;
+            _httpContextAccessor = httpContextAccessor;
+            _logWriter = logWriter;
+        }
+
+        public async Task<PaginatedList<ConfigDTO>> GetAsync(ConfigQueryParams query)
+        {
+            var repo = _uow.GetRepository<Config>();
+            var list = repo.Entities.Where(c => c.DeletedAt == null).AsNoTracking();
+
+            if (!string.IsNullOrWhiteSpace(query.KeyPrefix))
+            {
+                var prefix = query.KeyPrefix.Trim();
+                list = list.Where(c => c.Key.StartsWith(prefix));
+            }
+
+            if (!string.IsNullOrWhiteSpace(query.Scope))
+            {
+                var scope = query.Scope.Trim();
+                list = list.Where(c => c.Scope == scope);
+            }
+
+            if (!string.IsNullOrWhiteSpace(query.Search))
+            {
+                var k = query.Search.Trim().ToLower();
+                list = list.Where(c => c.Key.ToLower().Contains(k) || (c.Value != null && c.Value.ToLower().Contains(k)));
+            }
+
+            list = (query.SortBy?.ToLowerInvariant()) switch
+            {
+                "key" => query.Desc ? list.OrderByDescending(c => c.Key) : list.OrderBy(c => c.Key),
+                "updatedat" => query.Desc ? list.OrderByDescending(c => c.UpdatedAt) : list.OrderBy(c => c.UpdatedAt),
+                _ => query.Desc ? list.OrderByDescending(c => c.UpdatedAt) : list.OrderBy(c => c.UpdatedAt),
+            };
+
+            var page = await repo.GetPagingAsync(list, query.Page, query.PageSize);
+            var items = page.Items.Select(_mapper.Map<ConfigDTO>).ToList();
+            return new PaginatedList<ConfigDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
+        }
+
+        public async Task<ConfigDTO> GetByKeyAsync(string key)
+        {
+            var repo = _uow.GetRepository<Config>();
+            var config = await repo.Entities.AsNoTracking().FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+            if (config == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CONFIG_NOT_FOUND", $"No config with key '{key}'.");
+            return _mapper.Map<ConfigDTO>(config);
+        }
+
+        public async Task<ConfigDTO> CreateAsync(CreateConfigDTO dto, string performedByRole)
+        {
+            EnsureStaffOrAdmin(performedByRole);
+
+            ValidateKey(dto.Key);
+
+            var repo = _uow.GetRepository<Config>();
+            var exists = await repo.Entities.AnyAsync(c => c.Key == dto.Key && c.DeletedAt == null);
+            if (exists)
+                throw new ErrorException(StatusCodes.Status409Conflict, "CONFIG_EXISTS", $"Config '{dto.Key}' already exists.");
+
+            var resurrect = await repo.Entities.FirstOrDefaultAsync(c => c.Key == dto.Key && c.DeletedAt != null);
+            if (resurrect != null)
+            {
+                resurrect.Value = dto.Value;
+                resurrect.Scope = dto.Scope;
+                resurrect.DeletedAt = null;
+                resurrect.UpdatedAt = DateTime.UtcNow;
+                repo.Update(resurrect);
+                await _uow.SaveAsync();
+                await TryLogConfigChangeAsync(resurrect.Key);
+                return _mapper.Map<ConfigDTO>(resurrect);
+            }
+
+            var entity = _mapper.Map<Config>(dto);
+            await repo.InsertAsync(entity);
+            await _uow.SaveAsync();
+            await TryLogConfigChangeAsync(entity.Key);
+            return _mapper.Map<ConfigDTO>(entity);
+        }
+
+        public async Task<ConfigDTO> UpdateAsync(string key, UpdateConfigDTO dto, string performedByRole)
+        {
+            EnsureStaffOrAdmin(performedByRole);
+
+            var repo = _uow.GetRepository<Config>();
+            var entity = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+            if (entity == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CONFIG_NOT_FOUND", $"No config with key '{key}'.");
+
+            _mapper.Map(dto, entity);
+            entity.UpdatedAt = DateTime.UtcNow;
+
+            repo.Update(entity);
+            await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(entity.Key);
+            return _mapper.Map<ConfigDTO>(entity);
+        }
+
+        public async Task DeleteAsync(string key, string performedByRole)
+        {
+            EnsureStaffOrAdmin(performedByRole);
+
+            var repo = _uow.GetRepository<Config>();
+            var entity = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key && c.DeletedAt == null);
+            if (entity == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "CONFIG_NOT_FOUND", $"No config with key '{key}'.");
+
+            entity.DeletedAt = DateTime.UtcNow;
+            repo.Update(entity);
+            await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(entity.Key);
+        }
+
+        public async Task SetRegistrationWindowAsync(Guid contestId, SetRegistrationWindowDTO dto, string performedByRole)
+        {
+            EnsureStaffOrAdmin(performedByRole);
+
+            if (dto.RegistrationEndUtc <= dto.RegistrationStartUtc)
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_WINDOW", "End must be after Start.");
+
+            var repo = _uow.GetRepository<Config>();
+            var startKey = $"contest:{contestId}:registration_start";
+            var endKey = $"contest:{contestId}:registration_end";
+
+            await UpsertAsync(repo, startKey, dto.RegistrationStartUtc.ToString("o"), "contest");
+            await UpsertAsync(repo, endKey, dto.RegistrationEndUtc.ToString("o"), "contest");
+            await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(contestId.ToString());
+        }
+
+        public async Task SetContestPolicyAsync(Guid contestId, SetContestPolicyDTO dto, string performedByRole)
+        {
+            EnsureStaffOrAdmin(performedByRole);
+
+            var repo = _uow.GetRepository<Config>();
+
+            if (dto.TeamMembersMax.HasValue)
+                await UpsertAsync(repo, $"contest:{contestId}:team_members_max", dto.TeamMembersMax.Value.ToString(), "contest");
+
+            if (dto.TeamInviteTtlDays.HasValue)
+                await UpsertAsync(repo, "team_invite_ttl_days", dto.TeamInviteTtlDays.Value.ToString(), "global");
+
+            await _uow.SaveAsync();
+
+            await TryLogConfigChangeAsync(contestId.ToString());
+        }
+
+        private static void ValidateKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_KEY", "Key is required.");
+
+            if (!System.Text.RegularExpressions.Regex.IsMatch(key, @"^[a-z0-9:_\.\-]+$"))
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_KEY",
+                    "Key must be lowercase and may contain a-z, 0-9, :, ., - and _.");
+        }
+
+        private static void EnsureStaffOrAdmin(string role)
+        {
+            if (role != RoleConstants.Admin && role != RoleConstants.Staff)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN", "Staff or Admin required.");
+        }
+
+        private static async Task UpsertAsync(IGenericRepository<Config> repo, string key, string? value, string? scope)
+        {
+            var item = await repo.Entities.FirstOrDefaultAsync(c => c.Key == key);
+            if (item == null)
+            {
+                await repo.InsertAsync(new Config
+                {
+                    Key = key,
+                    Value = value,
+                    Scope = scope,
+                    UpdatedAt = DateTime.UtcNow,
+                    DeletedAt = null
+                });
+            }
+            else
+            {
+                item.Value = value;
+                item.Scope = scope;
+                item.UpdatedAt = DateTime.UtcNow;
+                item.DeletedAt = null;
+                repo.Update(item);
+            }
+        }
+
+        private async Task TryLogConfigChangeAsync(string targetId)
+        {
+            string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (!Guid.TryParse(userId, out var actorId)) return;
+
+            await _logWriter.TryWriteAsync(
+                actorId,
+                ActivityActions.AdminConfigChange,
+                TargetTypes.SystemConfig,
+                targetId);
+        }
+
+        public async Task<bool> AreSubmissionsDistributedAsync(Guid roundId)
+        {
+            string key = ConfigKeys.RoundSubmissionsDistributed(roundId);
+
+            var config = await _uow.GetRepository<Config>()
+                .Entities
+                .FirstOrDefaultAsync(c => c.Key == key && !c.DeletedAt.HasValue);
+
+            return config != null && config.Value?.ToLower() == "true";
+        }
+
+        public async Task MarkSubmissionsAsDistributedAsync(Guid roundId)
+        {
+            string key = ConfigKeys.RoundSubmissionsDistributed(roundId);
+            await SetConfigValueAsync(key, "true", "round");
+        }
+
+        public async Task ResetDistributionStatusAsync(Guid roundId)
+        {
+            string key = ConfigKeys.RoundSubmissionsDistributed(roundId);
+            await SetConfigValueAsync(key, "false", "round");
+        }
+
+        public async Task SetConfigValueAsync(string key, string value, string? scope = null)
+        {
+            var configRepo = _uow.GetRepository<Config>();
+
+            var existingConfig = await configRepo.Entities
+                .FirstOrDefaultAsync(c => c.Key == key && !c.DeletedAt.HasValue);
+
+            if (existingConfig != null)
+            {
+                existingConfig.Value = value;
+                existingConfig.UpdatedAt = DateTime.UtcNow;
+                if (!string.IsNullOrEmpty(scope))
+                {
+                    existingConfig.Scope = scope;
+                }
+                await configRepo.UpdateAsync(existingConfig);
+            }
+            else
+            {
+                var newConfig = new Config
+                {
+                    Key = key,
+                    Value = value,
+                    Scope = scope,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                await configRepo.InsertAsync(newConfig);
+            }
+
+            await _uow.SaveAsync();
+        }
+
+        public async Task<string> DownloadImportTemplate(ImportTemplateEnum template)
+        {
+            // Get repository for Config entities
+            IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+
+            // Get template key
+            string templateKey = string.Empty;
+            switch (template)
+            {
+                case ImportTemplateEnum.McqTemplate:
+                    templateKey = ConfigKeys.McqTestImportTemplate();
+                    break;
+                case ImportTemplateEnum.TestCaseTemplate:
+                    templateKey = ConfigKeys.AutoTestImportTemplate();
+                    break;
+                case ImportTemplateEnum.RubricTemplate:
+                    templateKey = ConfigKeys.ManualTestImportTemplate();
+                    break;
+                default:
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.INVALID_INPUT,
+                        "Invalid import template type."
+                    );
+            }
+            
+
+            // Retrieve template value
+            Config? config = await configRepo.Entities
+                .Where(c => c.Key == templateKey)
+                .FirstOrDefaultAsync();
+
+            // Validate template existence
+            if (config == null || string.IsNullOrWhiteSpace(config.Value))
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "MCQ import template not found."
+                );
+            }
+
+            // Return template content
+            IGenericRepository<Attachment> attachmentRepo = _uow.GetRepository<Attachment>();
+            Attachment? attachment = await attachmentRepo.Entities
+                .Where(a => a.AttachmentId == Guid.Parse(config.Value))
+                .FirstOrDefaultAsync();
+
+            // Validate attachment existence
+            if (attachment == null || string.IsNullOrWhiteSpace(attachment.Url))
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "MCQ import template attachment not found."
+                );
+            }
+
+            return attachment.Url;
+        }
+
+        public async Task<bool> IsStudentFinishedRoundAsync(Guid roundId, Guid studentId)
+        {
+            // Get repository
+            IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+
+            // Get key
+            string key = ConfigKeys.RoundStudent(roundId, studentId);
+
+            Config? config = await configRepo.GetByIdAsync(key);
+
+            // Config not exist
+            if (config == null)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public async Task MarkFinishedSubmissionAsync(Guid roundId, Guid studentId)
+        {
+            string key = ConfigKeys.RoundStudent(roundId, studentId);
+            await SetConfigValueAsync(key, "true", "round");
+        }
+
+        public async Task<bool> HasStudentInputtedOpenCodeAsync(Guid roundId, Guid studentId)
+        {
+            string key = ConfigKeys.RoundStudentOpenCodeInputted(roundId, studentId);
+
+            Config? config = await _uow.GetRepository<Config>()
+                .Entities
+                .FirstOrDefaultAsync(c => c.Key == key && !c.DeletedAt.HasValue);
+
+            return config != null && config.Value?.ToLower() == "true";
+        }
+
+        public async Task MarkStudentOpenCodeInputtedAsync(Guid roundId, Guid studentId)
+        {
+            string key = ConfigKeys.RoundStudentOpenCodeInputted(roundId, studentId);
+            await SetConfigValueAsync(key, "true", "round");
+        }
+
+        public async Task<List<Guid>> GetDistributedRoundIdsAsync()
+        {
+            try
+            {
+                IGenericRepository<Config> configRepo = _uow.GetRepository<Config>();
+
+                // Query all configs with the distribution marker pattern
+                List<Config> distributedConfigs = await configRepo.Entities
+                    .Where(c => c.Key.StartsWith("round:")
+                                && c.Key.EndsWith(":submissions_distributed")
+                                && c.Value == "true"
+                                && c.DeletedAt == null)
+                    .ToListAsync();
+
+                // Extract round IDs from config keys
+                List<Guid> distributedRoundIds = new List<Guid>();
+
+                foreach (Config config in distributedConfigs)
+                {
+                    // Key format: "round:{roundId}:submissions_distributed"
+                    string[] parts = config.Key.Split(':');
+                    if (parts.Length >= 2 && Guid.TryParse(parts[1], out Guid roundId))
+                    {
+                        distributedRoundIds.Add(roundId);
+                    }
+                }
+
+                return distributedRoundIds;
+            }
+            catch (Exception ex)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving distributed round IDs: {ex.Message}");
+            }
+        }
+    }
+}

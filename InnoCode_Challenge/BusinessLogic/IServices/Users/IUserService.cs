@@ -1,0 +1,18 @@
+﻿using Repository.DTOs.UserDTOs;
+using Utility.PaginatedList;
+
+namespace BusinessLogic.IServices.Users
+{
+    public interface IUserService
+    {
+        Task<PaginatedList<UserDTO>> GetUsersAsync(UserQueryParams query);
+        Task<UserDTO> GetUserByIdAsync(Guid id);
+        Task<UserDTO> CreateUserAsync(CreateUserDTO dto);
+        Task<UserDTO> UpdateUserAsync(Guid id, UpdateUserDTO dto, string performedByRole);
+        Task DeleteUserAsync(Guid id, string deletedBy);
+
+        Task<CurrentProfileDTO> GetCurrentProfileAsync(Guid userId);
+        Task<CurrentProfileDTO> UpdateCurrentProfileAsync(Guid userId, UpdateCurrentProfileDTO dto);
+
+    }
+}

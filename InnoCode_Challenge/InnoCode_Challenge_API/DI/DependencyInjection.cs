@@ -1,17 +1,44 @@
-﻿using System.Reflection;
-using System.Text;
-using BusinessLogic.MappingProfiles;
-using Repository.DTOs.AuthDTOs;
-using Repository.IRepositories;
-using Repository.Repositories;
+using BusinessLogic.IServices;
+using BusinessLogic.IServices.Appeals;
+using BusinessLogic.IServices.Certificates;
+using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
+using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.Mcqs;
+using BusinessLogic.IServices.Mentors;
+using BusinessLogic.IServices.NotificationsAndLogs;
+using BusinessLogic.IServices.Schools;
+using BusinessLogic.IServices.Students;
+using BusinessLogic.IServices.Submissions;
+using BusinessLogic.IServices.Users;
+using BusinessLogic.MappingProfiles.Users;
+using BusinessLogic.Services;
+using BusinessLogic.Services.Appeals;
+using BusinessLogic.Services.Certificates;
+using BusinessLogic.Services.Contests;
+using BusinessLogic.Services.Dashboards;
+using BusinessLogic.Services.FileStorages;
+using BusinessLogic.Services.Mcqs;
+using BusinessLogic.Services.Mentors;
+using BusinessLogic.Services.NotificationsAndLogs;
+using BusinessLogic.Services.Schools;
+using BusinessLogic.Services.Students;
+using BusinessLogic.Services.Submissions;
+using BusinessLogic.Services.Users;
+using DataAccess.Entities;
+using Hangfire;
+using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using DataAccess.Entities;
+using Repository.IRepositories;
+using Repository.Repositories;
+using System.Reflection;
+using System.Text;
+using Utility.ConfigDTOs;
 using Utility.Constant;
-using BusinessLogic.IServices;
-using BusinessLogic.Services;
+using Utility.Helpers;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -27,12 +54,13 @@ namespace InnoCode_Challenge_API.DI
             services.ConfigCors();
             services.AddRepository();
             services.AddAutoMapper();
+            services.AddCloudinary(configuration);
+            services.AddSignalR();
             services.AddServices();
+            services.AddHangfireJobs(configuration);
+            services.AddMemoryCache();
         }
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="services"></param>
+
         public static void ConfigCors(this IServiceCollection services)
         {
             services.AddCors(options =>
@@ -40,9 +68,14 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("AllowAllOrigins",
                     builder =>
                     {
-                        builder.AllowAnyOrigin()
+                        builder.WithOrigins(
+                                   "http://localhost:5173",
+                                   "https://localhost:5173",
+                                   "https://innocode-challenge-api.onrender.com",
+                                   "https://innocode-fe.vercel.app")
                                .AllowAnyHeader()
-                               .AllowAnyMethod();
+                               .AllowAnyMethod()
+                               .AllowCredentials();
                     });
             });
         }
@@ -84,26 +117,91 @@ namespace InnoCode_Challenge_API.DI
                     IssuerSigningKey = new SymmetricSecurityKey(
                     Encoding.UTF8.GetBytes(jwtConfig.Key))
                 };
-            });
+
+                // Enable JWT authentication for SignalR
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+
+                        if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    }
+                };
+            })
+            .AddCookie("HangfireCookie", options =>
+            {
+                options.Cookie.Name = "HangfireAuth";
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SameSite = SameSiteMode.Lax;
+                options.ExpireTimeSpan = TimeSpan.FromHours(8);
+                options.SlidingExpiration = true;
+                options.LoginPath = "/api/auth/login";
+            }); ;
         }
 
         public static void AddAuthor(this IServiceCollection services, IConfiguration configuration)
         {
-            // Configure role‐based policies
             services.AddAuthorization(options =>
             {
-                // Only Admin can do certain things
-                options.AddPolicy("RequireAdminRole", policy =>
-                  policy.RequireRole(RoleConstants.Admin));
+                options.AddPolicy("RequireAdminRole",
+                    policy => policy.RequireRole(RoleConstants.Admin));
 
-                // Staff OR Admin
-                options.AddPolicy("RequireStaffOrAdmin", policy =>
-                  policy.RequireRole(RoleConstants.Staff, RoleConstants.Admin));
+                options.AddPolicy("RequireStaffRole",
+                    policy => policy.RequireRole(RoleConstants.Staff));
 
-                // Any authenticated User (including Staff/Admin)
-                options.AddPolicy("RequireAnyUserRole", policy =>
-                  policy.RequireRole(RoleConstants.Student, RoleConstants.Staff, RoleConstants.Admin));
+                options.AddPolicy("RequireStaffOrAdmin",
+                    policy => policy.RequireRole(RoleConstants.Staff, RoleConstants.Admin));
+
+                options.AddPolicy("RequireStudentOrMentor",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor));
+
+                options.AddPolicy("RequireStudentOrOrganizer",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.ContestOrganizer));
+
+                options.AddPolicy("RequireStudentOrMentorOrJudge",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor, RoleConstants.Judge));
+
+                options.AddPolicy("RequireAdminOrStaffOrOrganizer",
+                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Staff, RoleConstants.ContestOrganizer));
+
+                options.AddPolicy("RequireAdminOrStaffOrMentor",
+                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Staff, RoleConstants.Mentor));
+
+                options.AddPolicy("RequireAnyUserRole",
+                    policy => policy.RequireRole(
+                        RoleConstants.Student,
+                        RoleConstants.Mentor,
+                        RoleConstants.Judge,
+                        RoleConstants.Staff,
+                        RoleConstants.ContestOrganizer,
+                        RoleConstants.Admin));
+
+                options.AddPolicy("RequireMentorRole",
+                    policy => policy.RequireRole(RoleConstants.Mentor));
+
+                options.AddPolicy("RequireStudentRole",
+                    policy => policy.RequireRole(RoleConstants.Student));
+
+                options.AddPolicy("RequireMentorOrStudent",
+                    policy => policy.RequireRole(RoleConstants.Mentor, RoleConstants.Student));
+
+                options.AddPolicy("RequireJudgeRole",
+                    policy => policy.RequireRole(RoleConstants.Judge));
+
+                options.AddPolicy("RequireOrganizerRole",
+                    policy => policy.RequireRole(RoleConstants.ContestOrganizer));
+
+                options.AddPolicy("RequireOrganizerOrAdmin",
+                    policy => policy.RequireRole(RoleConstants.ContestOrganizer, RoleConstants.Admin));
             });
+        
         }
 
         public static void ConfigSwagger(this IServiceCollection services, IConfiguration configuration)
@@ -170,10 +268,57 @@ namespace InnoCode_Challenge_API.DI
 
         }
 
-        private static void AddAutoMapper(this IServiceCollection services)
+        public static void AddAutoMapper(this IServiceCollection services)
         {
             // Register AutoMapper
             services.AddAutoMapper(typeof(UserProfile).Assembly);
+        }
+
+        public static void AddCloudinary(this IServiceCollection services, IConfiguration configuration)
+        {
+            services.Configure<CloudinarySettings>(
+                configuration.GetSection("CloudinarySettings"));
+        }
+
+        public static void AddSignalR(this IServiceCollection services)
+        {
+            services.AddSignalR(options =>
+            {
+                options.EnableDetailedErrors = true;
+                options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+                options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+            });
+        }
+
+        public static void AddHangfireJobs(this IServiceCollection services, IConfiguration configuration)
+        {
+            // Configure Hangfire to use SQL Server storage
+            services.AddHangfire(config => config
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UseSqlServerStorage(configuration.GetConnectionString("MyCnn"),
+                    new SqlServerStorageOptions
+                    {
+                        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+                        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+                        QueuePollInterval = TimeSpan.Zero,
+                        UseRecommendedIsolationLevel = true,
+                        DisableGlobalLocks = true,
+                        SchemaName = "Hangfire"
+                    }));
+
+
+            // Add Hangfire server with specific configuration
+            services.AddHangfireServer(options =>
+            {
+                options.WorkerCount = 1; // Single worker to prevent race conditions
+                options.SchedulePollingInterval = TimeSpan.FromSeconds(1);
+            });
+
+            // Register Hangfire job classes
+            services.AddScoped<ContestStateJob>();
+            services.AddScoped<RoundStateJob>();
         }
 
         public static void AddServices(this IServiceCollection services)
@@ -181,7 +326,50 @@ namespace InnoCode_Challenge_API.DI
             services.AddLogging();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserService, UserService>();
+            services.AddScoped<INotificationService, NotificationService>();
+            services.AddScoped<IContestService, ContestService>();
+            services.AddScoped<IRoundService, RoundService>();
+            services.AddScoped<IMcqQuestionService, McqQuestionService>();
+            services.AddScoped<IMcqOptionService, McqOptionService>();
+            services.AddScoped<IMcqTestService, McqTestService>();
+            services.AddScoped<IMcqTestQuestionService, McqTestQuestionService>();
+            services.AddScoped<IMcqAttemptService, McqAttemptService>();
+            services.AddScoped<IMcqAttemptItemService, McqAttemptItemService>();
+            services.AddScoped<ILeaderboardEntryService, LeaderboardEntryService>();
+            services.AddScoped<ICertificateTemplateService, CertificateTemplateService>();
+            services.AddScoped<ICertificateService, CertificateService>();
+            services.AddScoped<IAppealService, AppealService>();
+            services.AddScoped<IProblemService, ProblemService>();
+            services.AddScoped<ITestCaseService, TestCaseService>();
+            services.AddScoped<IProvinceService, ProvinceService>();
+            services.AddScoped<ISchoolService, SchoolService>();
+            services.AddScoped<IStudentService, StudentService>();
+            services.AddScoped<ITeamService, TeamService>();
+            services.AddScoped<IMentorService, MentorService>();
+            services.AddScoped<ISubmissionService, SubmissionService>();
+            services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
+            services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
+            services.AddScoped<IJudge0Service, Judge0Service>();
+            services.AddScoped<IQuizService, QuizService>();
+            services.AddScoped<ICloudinaryService, CloudinaryService>();
+            services.AddScoped<IConfigService, ConfigService>();
+            services.AddScoped<IAttachmentService, AttachmentService>();
+            services.AddScoped<IActivityLogService, ActivityLogService>();
+            services.AddScoped<ITeamInviteService, TeamInviteService>();
+            services.AddScoped<ILeaderboardEntryService, LeaderboardEntryService>();
+            services.AddScoped<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
+            services.AddScoped<IContestJudgeService, ContestJudgeService>();
+            services.AddScoped<IJudgeInviteService, JudgeInviteService>();
+            services.AddScoped<IActivityLogWriter, ActivityLogWriter>();
+            services.AddScoped<IRoleRegistrationService, RoleRegistrationService>();
+            services.AddScoped<ISchoolCreationRequestService, SchoolCreationRequestService>();
+            services.AddScoped<IMentorManagementService, MentorManagementService>();
+            services.AddScoped<IMockTestService, MockTestService>();
+            services.AddScoped<IDashboardService, DashboardService>();
+            services.AddScoped<IMentorDashboardService, MentorDashboardService>();
+            services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
+            services.AddSingleton<IDashboardNotifierService, DashboardNotifierService>();
         }
-
     }
 }
+

@@ -19,6 +19,8 @@ public partial class Team
 
     public DateTime? DeletedAt { get; set; }
 
+    public string? Status { get; set; }
+
     public virtual ICollection<Appeal> Appeals { get; set; } = new List<Appeal>();
 
     public virtual ICollection<Certificate> Certificates { get; set; } = new List<Certificate>();
@@ -31,7 +33,11 @@ public partial class Team
 
     public virtual School School { get; set; } = null!;
 
+    public virtual ICollection<SubmissionFingerprint> SubmissionFingerprints { get; set; } = new List<SubmissionFingerprint>();
+
     public virtual ICollection<Submission> Submissions { get; set; } = new List<Submission>();
+
+    public virtual ICollection<TeamInvite> TeamInvites { get; set; } = new List<TeamInvite>();
 
     public virtual ICollection<TeamMember> TeamMembers { get; set; } = new List<TeamMember>();
 }

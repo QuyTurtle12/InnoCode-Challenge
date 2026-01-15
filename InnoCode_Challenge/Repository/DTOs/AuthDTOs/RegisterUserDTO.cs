@@ -8,9 +8,6 @@ namespace Repository.DTOs.AuthDTOs
         public string FullName { get; set; } = null!;
 
         [Required, EmailAddress]
-        [RegularExpression(
-          @"^[a-zA-Z0-9._%+-]+@gmail\.com$", ErrorMessage = "Email must be a valid Gmail address."
-        )]
         public string Email { get; set; } = null!;
 
         [Required]

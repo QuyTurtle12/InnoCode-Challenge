@@ -1,0 +1,16 @@
+﻿using Microsoft.AspNetCore.Http;
+using Repository.DTOs.CertificateTemplateDTOs;
+using Utility.PaginatedList;
+
+namespace BusinessLogic.IServices.Certificates
+{
+    public interface ICertificateTemplateService
+    {
+        Task<CertificateTemplateDTO> CreateAsync(CreateCertificateTemplateDTO dto);
+        Task<CertificateTemplateDTO?> GetByIdAsync(Guid id);
+        Task<PaginatedList<CertificateTemplateDTO>> GetAsync(Guid? contestId, string? search, int page, int pageSize);
+        Task<CertificateTemplateDTO> UpdateAsync(Guid templateId, UpdateCertificateTemplateDTO dto);
+        Task SoftDeleteAsync(Guid templateId);
+
+    }
+}

@@ -11,7 +11,7 @@ public partial class Contest
 
     public string Name { get; set; } = null!;
 
-    public string Description { get; set; } = null!;
+    public string? Description { get; set; }
 
     public string ImgUrl { get; set; } = null!;
 
@@ -21,7 +21,15 @@ public partial class Contest
 
     public DateTime? DeletedAt { get; set; }
 
+    public DateTime? Start { get; set; }
+
+    public DateTime? End { get; set; }
+
+    public string? CreatedBy { get; set; }
+
     public virtual ICollection<CertificateTemplate> CertificateTemplates { get; set; } = new List<CertificateTemplate>();
+
+    public virtual ICollection<JudgeInvite> JudgeInvites { get; set; } = new List<JudgeInvite>();
 
     public virtual ICollection<LeaderboardEntry> LeaderboardEntries { get; set; } = new List<LeaderboardEntry>();
 

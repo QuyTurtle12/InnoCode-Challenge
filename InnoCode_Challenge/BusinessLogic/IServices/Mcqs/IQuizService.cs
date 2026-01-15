@@ -1,0 +1,21 @@
+﻿using Microsoft.AspNetCore.Http;
+using Repository.DTOs.BankDTOs;
+using Repository.DTOs.QuizDTOs;
+using Utility.PaginatedList;
+
+namespace BusinessLogic.IServices.Mcqs
+{
+    public interface IQuizService
+    {
+        Task<QuizResultDTO> ProcessQuizSubmissionAsync(Guid roundId, CreateQuizSubmissionDTO quizSubmissionDTO);
+        Task<QuizResultDTO> SubmitNullQuizAsync(Guid roundId);
+        Task<QuizResultDTO> GetQuizAttemptResultAsync(Guid attemptId);
+        Task<PaginatedList<QuizAttemptSummaryDTO>> GetStudentQuizAttemptsAsync(int pageNumber, int pageSize, Guid? studentId, Guid? testId, Guid roundId, bool IsForCurrentLoggedInStudent = false);
+        Task<PaginatedList<GetBankWithQuestionsDTO>> GetPaginatedBanksAsync(int pageNumber, int pageSize, Guid? bankId, string? nameSearch);
+        Task<McqTestDTO> GetQuizByRoundIdAsync(int pageNumber, int pageSize, Guid roundId, string? openCode);
+        Task<GetBankWithQuestionsDTO> ImportMcqQuestionsFromCsvAsync(IFormFile csvFile, Guid TestId);
+        Task<McqStartDTO> GetMcqStartDetailsAsync(Guid roundId);
+        Task SaveAnswerAsync(string key, List<CurrentAnswerDTO> saveAnswerDTO);
+        Task<SaveAnswerDTO> GetCurrentAnswerAsync(string key, Guid roundId);
+    }
+}

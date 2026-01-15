@@ -1,0 +1,399 @@
+﻿using BusinessLogic.IServices.Contests;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Repository.DTOs.ContestDTOs;
+using Repository.DTOs.RoundDTOs;
+using Repository.ResponseModel;
+using Utility.Constant;
+using Utility.PaginatedList;
+
+namespace InnoCode_Challenge_API.Controllers.Contests
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class ContestsController : ControllerBase
+    {
+        private readonly IContestService _contestService;
+
+        // Constructor
+        public ContestsController(IContestService contestService)
+        {
+            _contestService = contestService;
+        }
+
+        /// <summary>
+        /// Get All Contests with Pagination and Optional Filters
+        /// </summary>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="idSearch"></param>
+        /// <param name="creatorIdSearch"></param>
+        /// <param name="roundIdSearch"></param>
+        /// <param name="nameSearch"></param>
+        /// <param name="yearSearch"></param>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <returns></returns>
+        [HttpGet]
+        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetContests(int pageNumber = 1,
+                                                                                 int pageSize = 10,
+                                                                                 Guid? idSearch = null,
+                                                                                 Guid? creatorIdSearch = null,
+                                                                                 Guid? roundIdSearch = null,
+                                                                                 string? nameSearch = null,
+                                                                                 int? yearSearch = null,
+                                                                                 DateTime? startDate = null,
+                                                                                 DateTime? endDate = null)
+        {
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch, roundIdSearch,
+                                                                  nameSearch, yearSearch, startDate, endDate);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: result.Items,
+                        additionalData: paging,
+                        message: "Contests retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Get Contest by contest ID
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetContestById(Guid id)
+        {
+            GetContestDTO contest = await _contestService.GetContestByIdAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: contest,
+                        message: "Contest retrieved successfully."
+                    ));
+        }
+
+        [HttpGet("{id}/timeline")]
+        public async Task<IActionResult> GetContestTimeline(Guid id)
+        {
+            var timeline = await _contestService.GetContestTimelineAsync(id);
+            return Ok(new BaseResponseModel<ContestTimelineDTO>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: timeline,
+                        message: "Contest timeline retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Get Contests that this logged-in student is participated with Pagination and Optional Filters
+        /// </summary>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="idSearch"></param>
+        /// <param name="creatorIdSearch"></param>
+        /// <param name="roundIdSearch"></param>
+        /// <param name="nameSearch"></param>
+        /// <param name="yearSearch"></param>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <returns></returns>
+        [HttpGet("participation")]
+        [Authorize(Policy = "RequireStudentOrMentorOrJudge")]
+        public async Task<ActionResult<PaginatedList<GetContestDTO>>> GetParticipatedContests(
+                                                                                int pageNumber = 1,
+                                                                                int pageSize = 10,
+                                                                                Guid? idSearch = null,
+                                                                                Guid? creatorIdSearch = null,
+                                                                                Guid? roundIdSearch = null,
+                                                                                string? nameSearch = null,
+                                                                                int? yearSearch = null,
+                                                                                DateTime? startDate = null,
+                                                                                DateTime? endDate = null)
+        {
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, creatorIdSearch, roundIdSearch,
+                                                                  nameSearch, yearSearch, startDate, endDate, true, false);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: result.Items,
+                        additionalData: paging,
+                        message: "Contests retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Get Contests that this logged-in organizer created with Pagination and Optional Filters
+        /// </summary>
+        /// <param name="pageNumber"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="idSearch"></param>
+        /// <param name="roundIdSearch">round ID</param>
+        /// <param name="nameSearch"></param>
+        /// <param name="yearSearch"></param>
+        /// <param name="startDate"></param>
+        /// <param name="endDate"></param>
+        /// <returns></returns>
+        [HttpGet("my-contests")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetAllContestsOfOrganizer(
+                                                                    int pageNumber = 1,
+                                                                    int pageSize = 10,
+                                                                    Guid? idSearch = null,
+                                                                    Guid? roundIdSearch = null,
+                                                                    string? nameSearch = null,
+                                                                    int? yearSearch = null,
+                                                                    DateTime? startDate = null,
+                                                                    DateTime? endDate = null)
+        {
+            var result = await _contestService.GetPaginatedContestAsync(pageNumber, pageSize, idSearch, null, roundIdSearch,
+                                                                  nameSearch, yearSearch, startDate, endDate, false, true);
+
+            var paging = new
+            {
+                result.PageNumber,
+                result.PageSize,
+                result.TotalPages,
+                result.TotalCount,
+                result.HasPreviousPage,
+                result.HasNextPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
+                        data: result.Items,
+                        additionalData: paging,
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Contests retrieved successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Update an Existing Contest
+        /// </summary>
+        /// <param name="id"></param>
+        /// <param name="contestDTO"></param>
+        /// <returns></returns>
+        [HttpPut("{id}")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UpdateContest(Guid id,[FromForm] UpdateContestDTO contestDTO)
+        {
+            GetContestDTO result = await _contestService.UpdateContestAsync(id, contestDTO);
+            return Ok(new BaseResponseModel<object>(
+                        data: result,
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Update contest successfully."
+                    ));
+        }
+
+        /// <summary>
+        /// Delete a Contest
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteContest(Guid id)
+        {
+            await _contestService.DeleteContestAsync(id);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Delete contest successfully."
+                    ));
+        }
+
+        [HttpPost("advanced")]
+        [Consumes("multipart/form-data")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> CreateAdvanced([FromForm] CreateContestAdvancedDTO dto)
+        {
+            var created = await _contestService.CreateContestAsync(dto);
+            return CreatedAtAction(nameof(CheckPublishReadiness), new { id = created.ContestId },
+                new BaseResponseModel<object>(
+                    statusCode: StatusCodes.Status201Created,
+                    code: ResponseCodeConstants.SUCCESS,
+                    data: created,
+                    message: "Contest created (draft)."
+                    ));
+        }
+
+        [HttpGet("{id}/check")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> CheckPublishReadiness(Guid id)
+        {
+            var check = await _contestService.CheckPublishReadinessAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        data: check,
+                        message: check.IsReady ? "Contest is ready to publish." : "Contest is NOT ready to publish."
+                    ));
+        }
+         
+        [HttpPut("{id}/publish")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> PublishIfReady(Guid id)
+        {
+            await _contestService.PublishIfReadyAsync(id);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Contest published."
+                    ));
+        }
+
+        [HttpPut("{id}/cancel")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> CancelContest(Guid id)
+        {
+            await _contestService.CancelContestAsync(id);
+            return Ok(new BaseResponseModel(
+                        statusCode: StatusCodes.Status200OK,
+                        code: ResponseCodeConstants.SUCCESS,
+                        message: "Cancel contest successfully."
+                    ));
+        }
+        [HttpGet("{id}/policies")]
+        public async Task<IActionResult> GetPolicies(Guid id)
+        {
+            var policies = await _contestService.GetContestPoliciesAsync(id);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: policies,
+                message: "Policies retrieved successfully."
+            ));
+        }
+
+        [HttpPut("{id}/policies")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> SetPolicies(Guid id, [FromBody] IList<ContestPolicyDTO> policies)
+        {
+            await _contestService.SetContestPoliciesAsync(id, policies);
+
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Policies updated successfully."
+            ));
+        }
+
+        [HttpDelete("{id}/policies/{policyKey}")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> DeletePolicy(Guid id, string policyKey)
+        {
+            await _contestService.DeleteContestPolicyAsync(id, policyKey);
+
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Policy deleted successfully."
+            ));
+        }
+        [HttpPut("{id}/start-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> StartContestNow(Guid id)
+        {
+            var result = await _contestService.StartContestNowAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Contest start time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/end-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> EndContestNow(Guid id)
+        {
+            var result = await _contestService.EndContestNowAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: result,
+                message: "Contest end time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/start-registration-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> StartRegistrationNow(Guid id)
+        {
+            await _contestService.SetRegistrationStartNowAsync(id);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Contest registration start time updated to now."
+            ));
+        }
+
+        [HttpPut("{id}/end-registration-now")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> EndRegistrationNow(Guid id)
+        {
+            await _contestService.SetRegistrationEndNowAsync(id);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Contest registration end time updated to now."
+            ));
+        }
+
+        /// <summary>
+        /// Download contest report (ZIP of CSVs) for organizer
+        /// </summary>
+        /// <param name="id">Contest ID</param>
+        /// <returns>Report URL</returns>
+        [HttpGet("{id}/report")]
+        [Authorize(Policy = "RequireOrganizerOrAdmin")]
+        public async Task<IActionResult> DownloadContestReport(Guid id)
+        {
+            string url = await _contestService.DownloadContestReportZipAsync(id);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: new { url },
+                message: "Contest report URL retrieved successfully."
+            ));
+        }
+
+        [HttpGet("{id}/mentor-report")]
+        [Authorize(Policy = "RequireMentorRole")]
+        public async Task<IActionResult> DownloadMentorContestReport(Guid id)
+        {
+            string url = await _contestService.DownloadMentorContestReportAsync(id);
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: new { url },
+                message: "Mentor contest report URL retrieved successfully."
+            ));
+        }
+    }
+}
