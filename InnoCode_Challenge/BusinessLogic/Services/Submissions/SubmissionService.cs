@@ -1,14 +1,17 @@
 ﻿using AutoMapper;
-using BusinessLogic.IServices;
 using BusinessLogic.Helpers;
+using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Submissions;
+using BusinessLogic.Services.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.JudgeDTOs;
 using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.PlagiarismDTOs;
@@ -26,7 +29,6 @@ using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace BusinessLogic.Services.Submissions
 {
@@ -44,6 +46,8 @@ namespace BusinessLogic.Services.Submissions
         private readonly IActivityLogWriter _logWriter;
         private readonly ILogger<SubmissionService> _logger;
         private readonly IRoundService _roundService;
+        private readonly IContestJudgeService _contestJudgeService;
+
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
         private const double DEFAULT_TIMELIMIT = 10.0;
@@ -69,7 +73,7 @@ namespace BusinessLogic.Services.Submissions
         private static readonly string TESTCASE_TYPE_TESTCASE = TestCaseTypeEnum.TestCase.ToString();
         private static readonly string TESTCASE_TYPE_MANUAL = TestCaseTypeEnum.Manual.ToString();
 
-
+        private const string JUDGE_STATUS_ACTIVE = "active";
         private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
         private const string STATUS_PLAGIARISM_CONFIRMED = "PlagiarismConfirmed";
         private const string FP_ALGORITHM = "sha256_py_v1";
@@ -105,7 +109,8 @@ namespace BusinessLogic.Services.Submissions
             INotificationService notificationService,
             IActivityLogWriter logWriter,
             IRoundService roundService,
-            ILogger<SubmissionService> logger)
+            ILogger<SubmissionService> logger,
+            IContestJudgeService contestJudgeService)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -119,6 +124,7 @@ namespace BusinessLogic.Services.Submissions
             _logWriter = logWriter;
             _roundService = roundService;
             _logger = logger;
+            _contestJudgeService = contestJudgeService;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
@@ -4186,6 +4192,185 @@ namespace BusinessLogic.Services.Submissions
             mockResult.Summary.penaltyScore = 0;
 
             return mockResult;
+        }
+
+        public async Task TransferSubmissionsToOtherJudge(Guid roundId, Guid judgeId)
+        {
+            try
+            {
+                // Begin transaction
+                _unitOfWork.BeginTransaction();
+
+                // Validate round exists and get contest information
+                Round? round = await _unitOfWork.GetRepository<Round>()
+                    .Entities
+                    .Include(r => r.Contest)
+                    .Include(r => r.Problem)
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+                if (round == null)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "Round not found"
+                    );
+                }
+
+                // Verify current user is the organizer
+                string currentUserId = GetCurrentUserIdOrThrow();
+                if (round.Contest.CreatedBy != currentUserId)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Only the contest organizer can transfer submissions"
+                    );
+                }
+
+                // Check if round has a manual problem
+                if (round.Problem == null || round.Problem.Type != ProblemTypeEnum.Manual.ToString())
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "This round does not have a manual problem type"
+                    );
+                }
+
+                // Get all judges for this contest
+                IList<JudgeInContestDTO> allJudges = await _contestJudgeService.GetJudgesByContestAsync(round.ContestId);
+
+                if (allJudges == null || !allJudges.Any())
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status404NotFound,
+                        ResponseCodeConstants.NOT_FOUND,
+                        "No judges available for this contest"
+                    );
+                }
+
+                // Filter only active judges, excluding the transferring judge
+                List<JudgeInContestDTO> activeJudges = allJudges
+                    .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE && j.UserId != judgeId)
+                    .ToList();
+
+                if (!activeJudges.Any())
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status400BadRequest,
+                        ResponseCodeConstants.BADREQUEST,
+                        "No other active judges available to transfer submissions to"
+                    );
+                }
+
+                // Get submissions assigned to the specified judge in this round
+                List<Submission> submissionsToTransfer = await _unitOfWork.GetRepository<Submission>()
+                    .Entities
+                    .Include(s => s.Team)
+                    .Where(s => s.Problem.RoundId == roundId
+                                && !s.DeletedAt.HasValue
+                                && s.JudgedBy == judgeId.ToString()
+                                && s.Status == SUBMISSION_STATUS_PENDING)
+                    .OrderBy(s => s.CreatedAt)
+                    .ToListAsync();
+
+                if (!submissionsToTransfer.Any())
+                {
+                    // No submissions to transfer, commit and return
+                    _unitOfWork.CommitTransaction();
+                    return;
+                }
+
+                // Distribute submissions equally using round-robin
+                int judgeIndex = 0;
+                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Calculate default deadline
+                int judgeDays = await GetContestPolicyDaysAsync(
+                    round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
+                DateTime defaultJudgeDeadline = round.End.AddDays(judgeDays);
+
+                // Assign submissions to other judges
+                foreach (Submission submission in submissionsToTransfer)
+                {
+                    JudgeInContestDTO assignedJudge = activeJudges[judgeIndex];
+
+                    // Retrieve old judge deadline config to preserve the deadline
+                    string oldKey = ConfigKeys.JudgeSubmissionDeadline(judgeId, submission.SubmissionId);
+                    Config? oldConfig = await configRepo.Entities
+                        .Where(c => c.Key == oldKey && c.DeletedAt == null)
+                        .FirstOrDefaultAsync();
+
+                    // Preserve the old deadline, or use default if not found
+                    DateTime judgeDeadline = defaultJudgeDeadline;
+                    if (oldConfig != null && DateTime.TryParse(oldConfig.Value, out DateTime parsedDeadline))
+                    {
+                        judgeDeadline = parsedDeadline;
+                    }
+
+                    // Update submission's judge
+                    submission.JudgedBy = assignedJudge.UserId.ToString();
+                    submissionRepo.Update(submission);
+
+                    // Soft delete old judge deadline config
+                    if (oldConfig != null)
+                    {
+                        oldConfig.DeletedAt = DateTime.UtcNow;
+                        await configRepo.UpdateAsync(oldConfig);
+                    }
+
+                    // Set new judge deadline for this submission
+                    string newKey = ConfigKeys.JudgeSubmissionDeadline(assignedJudge.UserId, submission.SubmissionId);
+                    Config? existing = await configRepo.Entities
+                        .Where(c => c.Key == newKey && c.DeletedAt == null)
+                        .FirstOrDefaultAsync();
+
+                    if (existing == null)
+                    {
+                        await configRepo.InsertAsync(new Config
+                        {
+                            Key = newKey,
+                            Value = judgeDeadline.ToString("o"),
+                            Scope = SCOPE_CONTEST,
+                            UpdatedAt = DateTime.UtcNow
+                        });
+                    }
+                    else
+                    {
+                        existing.Value = judgeDeadline.ToString("o");
+                        existing.Scope = SCOPE_CONTEST;
+                        existing.UpdatedAt = DateTime.UtcNow;
+                        await configRepo.UpdateAsync(existing);
+                    }
+
+                    // Move to next judge
+                    judgeIndex = (judgeIndex + 1) % activeJudges.Count;
+                }
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+
+                // Commit transaction
+                _unitOfWork.CommitTransaction();
+            }
+            catch (Exception ex)
+            {
+                // Rollback on error
+                _unitOfWork.RollBack();
+
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error transferring submissions: {ex.Message}"
+                );
+            }
         }
     }
 }
