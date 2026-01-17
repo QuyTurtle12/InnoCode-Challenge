@@ -270,8 +270,6 @@ namespace BusinessLogic.Services.Students
 
             EnsureContestNotStarted(team.Contest);
 
-            // Only allow changing team name via this endpoint.
-
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
                 string newName = dto.Name.Trim();
@@ -306,6 +304,18 @@ namespace BusinessLogic.Services.Students
                 .Include(t => t.Mentor).ThenInclude(m => m.User)
                 .AsNoTracking()
                 .FirstAsync(t => t.TeamId == id);
+
+            // Notify mentor dashboard
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+
+            IGenericRepository<Contest> _contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard
+            Contest? contest = await _contestRepo.GetByIdAsync(team.ContestId);
+            if (Guid.TryParse(contest?.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
 
             return _mapper.Map<TeamDTO>(updated);
         }
@@ -344,6 +354,18 @@ namespace BusinessLogic.Services.Students
             team.DeletedAt = DateTime.UtcNow;
             teamRepository.Update(team);
             await _unitOfWork.SaveAsync();
+
+            // Notify mentor dashboard
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+
+            IGenericRepository<Contest> _contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard
+            Contest? contest = await _contestRepo.GetByIdAsync(team.ContestId);
+            if (Guid.TryParse(contest?.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         public async Task RemoveMemberAsync(Guid teamId, Guid studentId)
@@ -373,6 +395,18 @@ namespace BusinessLogic.Services.Students
 
             memberRepository.Delete(member);
             await _unitOfWork.SaveAsync();
+
+            // Notify mentor dashboard
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+
+            IGenericRepository<Contest> _contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard
+            Contest? contest = await _contestRepo.GetByIdAsync(team.ContestId);
+            if (Guid.TryParse(contest?.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         public async Task<IReadOnlyList<TeamWithMembersDTO>> GetMyTeamsAsync()

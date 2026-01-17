@@ -145,6 +145,13 @@ namespace BusinessLogic.Services.Contests
 
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
+                // Get current user
+                string currentUserId = GetCurrentUserIdOrThrow();
+
+                Guid organizerId = Guid.Parse(currentUserId);
+
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
             }
             catch (Exception ex)
             {
@@ -308,6 +315,13 @@ namespace BusinessLogic.Services.Contests
                 // Post-update operations (logging, notifications, scheduling)
                 await PerformPostUpdateOperationsAsync(existingContest, oldValues);
 
+                // Notify organizer dashboard
+                Guid organizerId = Guid.Parse(GetCurrentUserIdOrThrow());
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors dashboard
+                await NotifiMentorDashboardContestUpdated(existingContest.ContestId);
+
                 // Return updated contest
                 PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(
                     1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
@@ -372,6 +386,10 @@ namespace BusinessLogic.Services.Contests
 
                 // Notify dashboard
                 await _dashboardNotifier.NotifyContestCreatedAsync();
+
+                Guid organizerId = Guid.Parse(currentUserId);
+
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
 
                 // Map and return result
                 return MapToContestCreatedDTO(entity, dto, imageUrl, configValues, policyValues);
@@ -856,6 +874,11 @@ namespace BusinessLogic.Services.Contests
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
+                // Notify organizer dashboard
+                string currentUserId = GetCurrentUserIdOrThrow();
+                Guid organizerId = Guid.Parse(currentUserId);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
                 // Schedule state transitions only if not moving to Delayed status
                 if (newStatus != ContestStatusEnum.Delayed.ToString())
                 {
@@ -1267,6 +1290,14 @@ namespace BusinessLogic.Services.Contests
                 // Notify all mentors with teams in the contest
                 await NotifiMentorDashboardContestUpdated(contestId);
 
+                // Notify organizer dashboard
+                string currentUserId = GetCurrentUserIdOrThrow();
+                Guid organizerId = Guid.Parse(currentUserId);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors dashboard
+                await NotifiMentorDashboardContestUpdated(existingContest.ContestId);
+
                 // Notify activity log
                 var actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, existingContest.ContestId.ToString());
@@ -1335,8 +1366,15 @@ namespace BusinessLogic.Services.Contests
                 // Notify all mentors with teams in the contest
                 await NotifiMentorDashboardContestUpdated(contestId);
 
-                // Notify all mentors with teams in the contest
-                await NotifiMentorDashboardContestUpdated(contestId);
+                // Notify organizer dashboard
+                Guid organizerId = Guid.Parse(contest.CreatedBy!);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors
+                if (ShouldNotifyParticipants(contest.Status))
+                {
+                    await NotifiMentorDashboardContestUpdated(contest.ContestId);
+                }
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -1414,8 +1452,12 @@ namespace BusinessLogic.Services.Contests
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
-                // Notify all mentors with teams in the contest
-                await NotifiMentorDashboardContestUpdated(contestId);
+                // Notify organizer dashboard
+                Guid organizerId = Guid.Parse(contest.CreatedBy!);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors dashboard
+                await NotifiMentorDashboardContestUpdated(contest.ContestId);
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -2331,6 +2373,11 @@ namespace BusinessLogic.Services.Contests
 
             // Notify dashboard
             await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+            // Notify organizer dashboard
+            string currentUserId = GetCurrentUserIdOrThrow();
+            Guid organizerId = Guid.Parse(currentUserId);
+            await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
         }
 
         public async Task SetRegistrationEndNowAsync(Guid contestId)
@@ -2363,6 +2410,13 @@ namespace BusinessLogic.Services.Contests
             IGenericRepository<Team> _teamRepo = _unitOfWork.GetRepository<Team>();
 
             // Notify all mentors with teams in the contest
+            await NotifiMentorDashboardContestUpdated(contestId);
+
+            // Notify organizer dashboard
+            string currentUserId = GetCurrentUserIdOrThrow();
+            Guid organizerId = Guid.Parse(currentUserId);
+            await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
             await NotifiMentorDashboardContestUpdated(contestId);
         }
 
@@ -3433,7 +3487,8 @@ namespace BusinessLogic.Services.Contests
             return status == ContestStatusEnum.Published.ToString()
                 || status == ContestStatusEnum.RegistrationOpen.ToString()
                 || status == ContestStatusEnum.RegistrationClosed.ToString()
-                || status == ContestStatusEnum.Ongoing.ToString();
+                || status == ContestStatusEnum.Ongoing.ToString()
+                || status == ContestStatusEnum.Cancelled.ToString();
         }
 
         /// <summary>

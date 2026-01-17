@@ -1,19 +1,16 @@
 ﻿using AutoMapper;
-using BusinessLogic.Helpers;
 using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Submissions;
-using BusinessLogic.Services.Contests;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.JudgeDTOs;
-using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionArtifactDTOs;
@@ -47,6 +44,7 @@ namespace BusinessLogic.Services.Submissions
         private readonly ILogger<SubmissionService> _logger;
         private readonly IRoundService _roundService;
         private readonly IContestJudgeService _contestJudgeService;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
@@ -110,7 +108,8 @@ namespace BusinessLogic.Services.Submissions
             IActivityLogWriter logWriter,
             IRoundService roundService,
             ILogger<SubmissionService> logger,
-            IContestJudgeService contestJudgeService)
+            IContestJudgeService contestJudgeService,
+            IDashboardNotifierService dashboardNotifier)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -125,6 +124,7 @@ namespace BusinessLogic.Services.Submissions
             _roundService = roundService;
             _logger = logger;
             _contestJudgeService = contestJudgeService;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
@@ -2342,6 +2342,12 @@ namespace BusinessLogic.Services.Submissions
 
             // Update leaderboard ranks
             await _leaderboardService.UpdateContestLeaderboardAsync(contestId);
+
+            // Notify mentor about dashboard update
+            if (team?.MentorId != null)
+            {
+                await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+            }
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)

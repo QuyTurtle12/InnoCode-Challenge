@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -20,14 +21,16 @@ namespace BusinessLogic.Services.Contests
         private readonly IUOW _unitOfWork;
         private readonly ILeaderboardRealtimeService _realtimeService;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         // Constructor
-        public LeaderboardEntryService(IMapper mapper, IUOW uow, ILeaderboardRealtimeService realtimeService, IHttpContextAccessor httpContextAccessor)
+        public LeaderboardEntryService(IMapper mapper, IUOW uow, ILeaderboardRealtimeService realtimeService, IHttpContextAccessor httpContextAccessor, IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = uow;
             _realtimeService = realtimeService;
             _httpContextAccessor = httpContextAccessor;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task<string> ToggleLeaderboardFreezeAsync(Guid contestId)
@@ -250,6 +253,23 @@ namespace BusinessLogic.Services.Contests
 
                 await _unitOfWork.SaveAsync();
                 _unitOfWork.CommitTransaction();
+
+
+                // Get all mentor IDs
+                List<Guid>? mentorIds = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                    .Select(t => t.MentorId)
+                    .Distinct()
+                    .ToListAsync();
+
+                // Notify each mentor about dashboard update
+                foreach (Guid mentorId in mentorIds)
+                {
+                    if (mentorId != Guid.Empty)
+                    {
+                        await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(mentorId);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -973,6 +993,22 @@ namespace BusinessLogic.Services.Contests
 
                 // Notify clients about the updated leaderboard
                 await _realtimeService.NotifyLeaderboardUpdatedAsync(contestId);
+
+                // Get all mentor IDs
+                List<Guid>? mentorIds = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                    .Select(t => t.MentorId)
+                    .Distinct()
+                    .ToListAsync();
+
+                // Notify each mentor about dashboard update
+                foreach (Guid mentorId in mentorIds)
+                {
+                    if (mentorId != Guid.Empty)
+                    {
+                        await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(mentorId);
+                    }
+                }
             }
             catch (Exception ex)
             {

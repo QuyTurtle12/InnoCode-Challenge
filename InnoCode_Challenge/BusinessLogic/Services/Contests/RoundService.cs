@@ -22,6 +22,7 @@ using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
+using BusinessLogic.IServices.Dashboards;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -35,6 +36,7 @@ namespace BusinessLogic.Services.Contests
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IConfigService _configService;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         private readonly INotificationService _notificationService;   
         private readonly IActivityLogWriter _activityLogWriter;       
@@ -75,9 +77,10 @@ namespace BusinessLogic.Services.Contests
             IHttpContextAccessor httpContextAccessor,
             IConfigService configService,
             ICloudinaryService cloudinaryService,
-            INotificationService notificationService,               
-            IActivityLogWriter activityLogWriter,                     
-            ILogger<RoundService> logger)                             
+            INotificationService notificationService,
+            IActivityLogWriter activityLogWriter,
+            ILogger<RoundService> logger,
+            IDashboardNotifierService dashboardNotifier)
         {
 
             _mapper = mapper;
@@ -88,9 +91,10 @@ namespace BusinessLogic.Services.Contests
             _httpContextAccessor = httpContextAccessor;
             _configService = configService;
             _cloudinaryService = cloudinaryService;
-            _notificationService = notificationService;               
-            _activityLogWriter = activityLogWriter;                   
-            _logger = logger;                                         
+            _notificationService = notificationService;
+            _activityLogWriter = activityLogWriter;
+            _logger = logger;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
@@ -146,6 +150,15 @@ namespace BusinessLogic.Services.Contests
 
             // Post-creation operations (logging, scheduling)
             await PerformPostCreateRoundOperationsAsync(createdRound!);
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(createdRound.ContestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound, ProblemTypeEnum? retakeRoundType = null)
@@ -282,6 +295,15 @@ namespace BusinessLogic.Services.Contests
 
             // Post-deletion operations
             await PerformPostDeleteRoundOperationsAsync(roundId, contestId, roundName);
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         private async Task<bool> HasApprovedRetakeAppealAsync(Guid studentUserId, Guid mainRoundId)
@@ -431,6 +453,15 @@ namespace BusinessLogic.Services.Contests
 
                 // Post-update operations
                 await PerformPostUpdateRoundOperationsAsync(round);
+
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                // Notify organizer dashboard update
+                Contest? contest = await contestRepo.GetByIdAsync(round.ContestId);
+                if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+                {
+                    await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+                }
             }
             catch (Exception ex)
             {
@@ -1136,6 +1167,15 @@ namespace BusinessLogic.Services.Contests
                     message = $"Round '{roundName}' has started."
                 });
 
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
+
             // Schedule background job to handle state transitions
             SafeEnqueue(() =>
                 BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
@@ -1227,6 +1267,15 @@ namespace BusinessLogic.Services.Contests
                     targetId = persistedRoundId.ToString(),
                     message = $"Round '{roundName}' has ended."
                 });
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
 
             // Schedule background job to handle state transitions
             SafeEnqueue(() =>
