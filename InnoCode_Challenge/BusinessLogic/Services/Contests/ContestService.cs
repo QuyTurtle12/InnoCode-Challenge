@@ -143,6 +143,8 @@ namespace BusinessLogic.Services.Contests
                     message = "This contest has been cancelled."
                 });
 
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
             }
             catch (Exception ex)
             {
