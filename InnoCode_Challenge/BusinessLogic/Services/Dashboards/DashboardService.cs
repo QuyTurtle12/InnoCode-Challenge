@@ -1,5 +1,6 @@
 ﻿using BusinessLogic.IServices.Dashboards;
 using DataAccess.Entities;
+using Humanizer;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.DashboardDTOs;
 using Repository.IRepositories;
@@ -195,18 +196,17 @@ namespace BusinessLogic.Services.Dashboards
                     break;
 
                 case TimeRangePredefinedEnum.Last3Months:
-                    startDate = now.AddMonths(-2);
+                    startDate = now.Date.AddMonths(-2);
                     break;
 
                 case TimeRangePredefinedEnum.Last6Months:
-                    startDate = now.AddMonths(-5);
+                    startDate = now.Date.AddMonths(-5);
                     break;
 
                 case TimeRangePredefinedEnum.CurrentYear:
                     startDate = new DateTime(now.Year, 1, 1);
                     break;
 
-                case TimeRangePredefinedEnum.AllTime:
                 default:
                     startDate = DateTime.MinValue;
                     endDate = DateTime.MaxValue;
@@ -238,7 +238,7 @@ namespace BusinessLogic.Services.Dashboards
             {
                 // End date: end of the day (23:59:59)
                 DateTime endOfDay = endDate.Value.Date.AddDays(1);
-                query = query.Where(c => c.CreatedAt <= endDate.Value);
+                query = query.Where(c => c.CreatedAt <= endOfDay);
             }
 
             return query;

@@ -82,7 +82,8 @@ namespace BusinessLogic.Services.Dashboards
 
                     if (endDate.HasValue)
                     {
-                        teamsQuery = teamsQuery.Where(t => t.Contest.End <= endDate.Value);
+                        DateTime endOfDay = endDate.Value.Date.AddDays(1);
+                        teamsQuery = teamsQuery.Where(t => t.Contest.End <= endOfDay);
                     }
                 }
 
@@ -214,18 +215,17 @@ namespace BusinessLogic.Services.Dashboards
                     break;
 
                 case TimeRangePredefinedEnum.Last3Months:
-                    startDate = now.AddMonths(-3);
+                    startDate = now.Date.AddMonths(-3);
                     break;
 
                 case TimeRangePredefinedEnum.Last6Months:
-                    startDate = now.AddMonths(-6);
+                    startDate = now.Date.AddMonths(-6);
                     break;
 
                 case TimeRangePredefinedEnum.CurrentYear:
                     startDate = new DateTime(now.Year, 1, 1);
                     break;
 
-                case TimeRangePredefinedEnum.AllTime:
                 default:
                     startDate = DateTime.MinValue;
                     endDate = DateTime.MaxValue;

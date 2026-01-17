@@ -43,7 +43,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
                 endDate,
                 predefined);
 
-            return Ok(new BaseResponseModel<OrganizerDashboardDTO>(
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: dashboard,
@@ -85,10 +85,21 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
                 startDate,
                 endDate);
 
-            return Ok(new BaseResponseModel<PaginatedList<ContestSummaryDTO>>(
+            var paging = new
+            {
+                contests.PageNumber,
+                contests.PageSize,
+                contests.TotalCount,
+                contests.TotalPages,
+                contests.HasNextPage,
+                contests.HasPreviousPage
+            };
+
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                data: contests,
+                data: contests.Items,
+                additionalData: paging,
                 message: "Contests retrieved successfully."
             ));
         }
@@ -104,7 +115,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
         {
             ContestSummaryDTO summary = await _organizerDashboardService.GetContestSummaryAsync(contestId);
 
-            return Ok(new BaseResponseModel<ContestSummaryDTO>(
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: summary,
