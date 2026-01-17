@@ -7,6 +7,7 @@ using System;
 using System.Security.Claims;
 using System.Threading.Tasks;
 using Utility.Constant;
+using Utility.ExceptionCustom;
 
 namespace InnoCode_Challenge_API.Controllers.Users
 {
@@ -105,6 +106,25 @@ namespace InnoCode_Challenge_API.Controllers.Users
             var deletedBy = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system";
             await _userService.DeleteUserAsync(id, deletedBy);
             return NoContent();
+        }
+
+        [HttpPost("{id:guid}/toggle-status")]
+        [Authorize(Roles = RoleConstants.Admin)]
+        public async Task<IActionResult> ToggleStatus(Guid id)
+        {
+            var performedById = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(performedById) || !Guid.TryParse(performedById, out var performedByUserId))
+                throw new ErrorException(StatusCodes.Status401Unauthorized, ResponseCodeConstants.UNAUTHORIZED, "Unauthorized");
+
+            var performedByRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+            var updated = await _userService.ToggleUserStatusAsync(id, performedByUserId, performedByRole);
+
+            return Ok(new BaseResponseModel<object>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: updated,
+                message: "User status toggled successfully."
+            ));
         }
 
         [Authorize]
