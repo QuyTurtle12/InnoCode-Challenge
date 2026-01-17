@@ -37,7 +37,7 @@ namespace BusinessLogic.IServices.Submissions
         Task<PlagiarismSubmissionDetailDTO> GetPlagiarismSubmissionDetailAsync(Guid submissionId);
         Task<JudgeSubmissionResultDTO> CreateNullAutoSubmissionAsync(Guid roundId);
         Task<Guid> CreateNullManualSubmissionAsync(Guid roundId);
-        Task<MockTestResultDTO> EvaluateMockTestSubmissionAsync(
+        Task<JudgeSubmissionResultDTO> EvaluateMockTestSubmissionAsync(
             Guid roundId,
             CreateSubmissionDTO submissionDTO,
             TestCaseEvaluationTypeEnum evaluationType);

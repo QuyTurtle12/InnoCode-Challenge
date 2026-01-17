@@ -1,7 +1,6 @@
 ﻿using BusinessLogic.Hubs;
 using BusinessLogic.IServices.Contests;
 using Microsoft.AspNetCore.SignalR;
-using Repository.DTOs.LeaderboardEntryDTOs;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -14,14 +13,14 @@ namespace BusinessLogic.Services.Contests
             _hubContext = hubContext;
         }
 
-        public async Task BroadcastLeaderboardUpdateAsync(Guid contestId, IList<TeamInfo> leaderboard)
+        public async Task NotifyLeaderboardUpdatedAsync(Guid contestId)
         {
             await _hubContext.Clients
                 .Group($"leaderboard_{contestId}")
                 .SendAsync("LeaderboardUpdated", new
                 {
                     ContestId = contestId,
-                    Leaderboard = leaderboard,
+                    Message = "Leaderboard has been updated",
                     Timestamp = DateTime.UtcNow
                 });
         }

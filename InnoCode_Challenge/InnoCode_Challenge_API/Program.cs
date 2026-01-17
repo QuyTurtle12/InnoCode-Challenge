@@ -147,6 +147,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 app.MapHub<LeaderboardHub>("/hubs/leaderboard");
 app.MapHub<NotificationsHub>("/hubs/notifications");
 app.MapHub<ActivityLogsHub>("/hubs/activity-logs");
+app.MapHub<DashboardHub>("/hubs/dashboard");
 
 app.MapControllers();
 app.Run();

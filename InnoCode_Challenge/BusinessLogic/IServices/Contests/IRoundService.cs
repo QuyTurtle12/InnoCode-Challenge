@@ -26,6 +26,9 @@ namespace BusinessLogic.IServices.Contests
         Task FastForwardAppealReviewDeadlineAsync(Guid roundId);
         Task FastForwardJudgeDeadlineAsync(Guid roundId);
         Task TryFinalizeRoundAsync(Guid roundId);
+        Task RegenerateOpenCodeAsync(Guid roundId);
+        Task<string?> GetOrganizerMockTestTemplateUrl();
+        Task<string?> GetStudentMockTestTemplateUrl();
 
     }
 }

@@ -42,6 +42,7 @@ namespace BusinessLogic.Services.Contests
 
         private const string CODE_TEMPLATE_FOLDER = "code_template";
         private const string SCOPE_CONTEST = "contest";
+        private const string SCOPE_ROUND = "round";
         private const string JUDGE_STATUS_ACTIVE = "active";
         private const int OPEN_CODE_MIN = 1000;
         private const int OPEN_CODE_MAX = 10000;
@@ -60,6 +61,10 @@ namespace BusinessLogic.Services.Contests
         private static readonly string APPEAL_STATE_CLOSED = AppealStateEnum.Closed.ToString();
         private static readonly string APPEAL_DECISION_APPROVED = AppealDecisionEnum.Approved.ToString();
         private static readonly string APPEAL_RESOLUTION_RETAKE = AppealResolutionEnum.Retake.ToString();
+
+        // Auto test types values
+        private const string AUTO_MOCK_TEST_TEST_TYPE = nameof(TestTypeEnum.MockTest);
+        private const string AUTO_INPUT_OUTPUT_TEST_TYPE = nameof(TestTypeEnum.InputOutput);
 
         public RoundService(
             IMapper mapper,
@@ -305,10 +310,10 @@ namespace BusinessLogic.Services.Contests
                 Round round = await FetchRoundWithIncludesAsync(id);
 
                 // Load configurations
-                var (timeLimitSeconds, rankCutoff) = await LoadRoundConfigurationsAsync(id);
+                var (timeLimitSeconds, rankCutoff, mockTestRoundWeight) = await LoadRoundConfigurationsAsync(id);
 
                 // Map to DTO
-                GetRoundDTO roundDTO = MapRoundToDTO(round, timeLimitSeconds, rankCutoff);
+                GetRoundDTO roundDTO = MapRoundToDTO(round, timeLimitSeconds, rankCutoff, mockTestRoundWeight);
 
                 // Apply student-specific validations if user is a student
                 await ApplyStudentValidationsAsync(round, openCode);
@@ -358,8 +363,11 @@ namespace BusinessLogic.Services.Contests
                 // Load time limit configurations
                 Dictionary<string, Config> timeLimitLookup = await LoadTimeLimitConfigurationsAsync(resultQuery.Items);
 
+                // Load mock test weight configurations
+                Dictionary<string, Config> mockTestWeightLookup = await LoadMockTestWeightConfigurationsAsync(resultQuery.Items);
+
                 // Map to DTOs
-                IReadOnlyCollection<GetRoundDTO> result = MapRoundsToDTO(resultQuery.Items, timeLimitLookup);
+                IReadOnlyCollection<GetRoundDTO> result = MapRoundsToDTO(resultQuery.Items, timeLimitLookup, mockTestWeightLookup);
 
                 // Return paginated result
                 return new PaginatedList<GetRoundDTO>(
@@ -735,7 +743,7 @@ namespace BusinessLogic.Services.Contests
                     return;
                 }
 
-                // Distribute submissions equally using round-robin algorithm
+                // Distribute submissions equally
                 int judgeIndex = 0;
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -1024,6 +1032,7 @@ namespace BusinessLogic.Services.Contests
 
             return config.Value;
         }
+
         public async Task<GetRoundDTO> StartRoundNowAsync(Guid roundId)
         {
             bool committed = false;
@@ -1055,11 +1064,6 @@ namespace BusinessLogic.Services.Contests
                 if (round.Contest?.End.HasValue == true && now >= round.Contest.End.Value)
                     throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Cannot start round because contest already ended.");
 
-                // Time limit must fit inside remaining duration
-                //int? tl = await GetRoundTimeLimitSecondsAsync(roundId);
-                //if (tl.HasValue && tl.Value > (round.End - now).TotalSeconds)
-                //    throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "TimeLimitSeconds exceeds remaining round duration.");
-
                 // Prevent overlap with other rounds
                 var roundRepo = _unitOfWork.GetRepository<Round>();
                 var otherRounds = await roundRepo.Entities
@@ -1069,8 +1073,8 @@ namespace BusinessLogic.Services.Contests
                 foreach (var other in otherRounds)
                 {
                     if (now <= other.End && round.End >= other.Start)
-                            throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
-                            $"New round time conflicts with existing round '{other.Name}' ({DateTimeHelpers.ToIso8601String(other.Start)} - {DateTimeHelpers.ToIso8601String(other.End)}).");
+                        throw new ErrorException(StatusCodes.Status409Conflict, "DATE_CONFLICT",
+                        $"New round time conflicts with existing round '{other.Name}' ({DateTimeHelpers.ToIso8601String(other.Start)} - {DateTimeHelpers.ToIso8601String(other.End)}).");
                 }
 
                 round.Start = now;
@@ -1092,6 +1096,24 @@ namespace BusinessLogic.Services.Contests
                 if (!committed) _unitOfWork.RollBack();
                 throw;
             }
+
+            // Generate initial open code immediately
+            try
+            {
+                await GenerateOpenCode(persistedRoundId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate initial open code for round {RoundId}", persistedRoundId);
+            }
+
+            // Schedule recurring open code regeneration every 1 minute
+            SafeEnqueue(() =>
+                RecurringJob.AddOrUpdate(
+                    $"regenerate-open-code-{persistedRoundId}",
+                    () => RegenerateOpenCodeAsync(persistedRoundId),
+                    Cron.Minutely),
+                "ScheduleOpenCodeRegeneration");
 
             // Activity log
             var actorId = GetCurrentUserGuidOrThrow();
@@ -1119,9 +1141,9 @@ namespace BusinessLogic.Services.Contests
                 BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
                 "ScheduleRoundStateTransitionsAsync");
 
-            return await GetRoundByIdAsync( persistedRoundId, null);
-
+            return await GetRoundByIdAsync(persistedRoundId, null);
         }
+
         public async Task<GetRoundDTO> EndRoundNowAsync(Guid roundId)
         {
 
@@ -1156,8 +1178,11 @@ namespace BusinessLogic.Services.Contests
                 _unitOfWork.CommitTransaction();
                 committed = true;
 
-                // cancel any pending open code regeneration jobs
-                RecurringJob.RemoveIfExists($"regenerate-open-code-{persistedRoundId}");
+                // Define the recurring job ID
+                string recurringJobId = $"regenerate-open-code-{persistedRoundId}";
+
+                // Cancel any pending open code regeneration jobs
+                RecurringJob.RemoveIfExists(recurringJobId);
 
                 // capture for later use
                 contestId = round.ContestId;
@@ -1171,7 +1196,7 @@ namespace BusinessLogic.Services.Contests
                 throw;
             }
 
-            // If manual round, distribute pending submissions immediately (idempotent)
+            // If manual round, distribute pending submissions immediately
             if (isManual)
                 try
                 {
@@ -1209,7 +1234,151 @@ namespace BusinessLogic.Services.Contests
                 "ScheduleRoundStateTransitionsAsync");
 
             return await GetRoundByIdAsync(persistedRoundId, null);
+        }
 
+
+        public async Task<string?> GetOrganizerMockTestTemplateUrl()
+        {
+            try
+            {
+                // Get config repository
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Get config key
+                string key = ConfigKeys.OrganizerMockTestTemplate();
+
+                // Retrieve attachment ID from config
+                Config? config = await configRepo.Entities
+                    .Where(c => c.Key == key && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                if (config == null || string.IsNullOrWhiteSpace(config.Value))
+                {
+                    return null;
+                }
+
+                // Parse attachment ID
+                if (!Guid.TryParse(config.Value, out Guid attachmentId))
+                {
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                        "Invalid attachment ID in configuration.");
+                }
+
+                // Get attachment repository
+                IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
+
+                // Retrieve attachment
+                Attachment? attachment = await attachmentRepo.Entities
+                    .Where(a => a.AttachmentId == attachmentId && !a.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (attachment == null)
+                {
+                    return null;
+                }
+
+                return attachment.Url;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving organizer mock test template: {ex.Message}");
+            }
+        }
+
+        public async Task<string?> GetStudentMockTestTemplateUrl()
+        {
+            try
+            {
+                // Get config repository
+                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+                // Get config key
+                string key = ConfigKeys.StudentMockTestTemplateForOrganizer();
+
+                // Retrieve attachment ID from config
+                Config? config = await configRepo.Entities
+                    .Where(c => c.Key == key && c.DeletedAt == null)
+                    .FirstOrDefaultAsync();
+
+                if (config == null || string.IsNullOrWhiteSpace(config.Value))
+                {
+                    return null;
+                }
+
+                // Parse attachment ID
+                if (!Guid.TryParse(config.Value, out Guid attachmentId))
+                {
+                    throw new ErrorException(StatusCodes.Status500InternalServerError,
+                        ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                        "Invalid attachment ID in configuration.");
+                }
+
+                // Get attachment repository
+                IGenericRepository<Attachment> attachmentRepo = _unitOfWork.GetRepository<Attachment>();
+
+                // Retrieve attachment
+                Attachment? attachment = await attachmentRepo.Entities
+                    .Where(a => a.AttachmentId == attachmentId && !a.DeletedAt.HasValue)
+                    .FirstOrDefaultAsync();
+
+                if (attachment == null)
+                {
+                    return null;
+                }
+
+                return attachment.Url;
+            }
+            catch (Exception ex)
+            {
+                if (ex is ErrorException)
+                {
+                    throw;
+                }
+
+                throw new ErrorException(StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error retrieving student mock test template: {ex.Message}");
+            }
+        }
+
+
+        public async Task RegenerateOpenCodeAsync(Guid roundId)
+        {
+            try
+            {
+                // Check if round is still in Opened status
+                IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
+                Round? round = await roundRepo.Entities
+                    .FirstOrDefaultAsync(r => r.RoundId == roundId && !r.DeletedAt.HasValue);
+
+                // Define the recurring job ID
+                string recurringJobId = $"regenerate-open-code-{roundId}";
+
+                // If round not found, is closed, or has ended, remove the recurring job
+                if (round == null || round.Status != RoundStatusEnum.Opened.ToString() || DateTime.UtcNow >= round.End)
+                {
+                    RecurringJob.RemoveIfExists(recurringJobId);
+                    _logger.LogInformation("Removed open code regeneration job for round {RoundId} (round ended or closed)", roundId);
+                    return;
+                }
+
+                // Generate new open code
+                string newOpenCode = await GenerateOpenCode(roundId);
+
+                _logger.LogInformation("Successfully regenerated open code for round {RoundId}: {OpenCode}", roundId, newOpenCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to regenerate open code for round {RoundId}", roundId);
+            }
         }
 
         private async Task EnsurePreviousRoundFinalizedAsync(Round round)
@@ -1741,10 +1910,16 @@ namespace BusinessLogic.Services.Contests
 
             await _problemService.CreateProblemAsync(roundId, config);
 
-            // Upload template file if provided
+            // Upload template file
             if (config.TemplateFile != null)
             {
                 await UploadProblemTemplateAsync(roundId, config.TemplateFile);
+            }
+
+            // Set mock test weight
+            if (config.MockTestWeight != null) 
+            {
+                await AssignWeightToRoundAsync(roundId, config.MockTestWeight.Value);
             }
         }
 
@@ -1755,11 +1930,21 @@ namespace BusinessLogic.Services.Contests
         {
             await _problemService.CreateProblemAsync(roundId, config);
 
-            // Upload template file if provided
+            // Upload template file
             if (config.TemplateFile != null)
             {
                 await UploadProblemTemplateAsync(roundId, config.TemplateFile);
             }
+        }
+
+        /// <summary>
+        /// Assign weight to round
+        /// </summary>
+        private async Task AssignWeightToRoundAsync(Guid roundId, double weight)
+        {
+            string roundWeightKey = ConfigKeys.RoundWeight(roundId);
+
+            await _configService.SetConfigValueAsync(roundWeightKey, weight.ToString(), SCOPE_ROUND);
         }
 
         /// <summary>
@@ -1883,8 +2068,10 @@ namespace BusinessLogic.Services.Contests
                     break;
 
                 case ProblemTypeEnum.AutoEvaluation:
+                    await UpdateProblemAsync(round.Problem!, roundDTO.ProblemConfig!);
+                    break;
                 case ProblemTypeEnum.Manual:
-                    await UpdateProblemWithTemplateAsync(round.Problem!, roundDTO.ProblemConfig!);
+                    await UpdateProblemAsync(round.Problem!, roundDTO.ProblemConfig!);
                     break;
 
                 default:
@@ -1894,9 +2081,9 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Updates problem and handles template file upload
+        /// Updates problem
         /// </summary>
-        private async Task UpdateProblemWithTemplateAsync(Problem problem, UpdateProblemDTO config)
+        private async Task UpdateProblemAsync(Problem problem, UpdateProblemDTO config)
         {
             // Update problem configuration
             await _problemService.UpdateProblemAsync(problem.ProblemId, config);
@@ -1915,6 +2102,12 @@ namespace BusinessLogic.Services.Contests
 
                 // Delete old file if exists and is different
                 await DeleteOldTemplateFileAsync(oldUrl, uploadedUrl);
+            }
+
+            // Set mock test weight
+            if (config.MockTestWeight != null)
+            {
+                await AssignWeightToRoundAsync(problem.RoundId, config.MockTestWeight.Value);
             }
         }
 
@@ -2091,9 +2284,9 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Loads round configurations (time limit and rank cutoff)
+        /// Loads round configurations
         /// </summary>
-        private async Task<(int? TimeLimitSeconds, int RankCutoff)> LoadRoundConfigurationsAsync(Guid roundId)
+        private async Task<(int? timeLimitSeconds, int rankCutoff, double? mockTestRoundWeight)> LoadRoundConfigurationsAsync(Guid roundId)
         {
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
 
@@ -2121,13 +2314,25 @@ namespace BusinessLogic.Services.Contests
                 rankCutoff = cutoff;
             }
 
-            return (timeLimitSeconds, rankCutoff);
+            // Load mock test round weight
+            string rwKey = ConfigKeys.RoundWeight(roundId);
+            Config? rwConfig = await configRepo.Entities
+                .Where(c => c.Key == rwKey && c.Scope == SCOPE_ROUND && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            double? mockTestRoundWeight = null;
+            if (rwConfig != null && double.TryParse(rwConfig.Value, out double weight))
+            {
+                mockTestRoundWeight = weight;
+            }
+
+            return (timeLimitSeconds, rankCutoff, mockTestRoundWeight);
         }
 
         /// <summary>
         /// Maps round entity to DTO
         /// </summary>
-        private GetRoundDTO MapRoundToDTO(Round round, int? timeLimitSeconds, int rankCutoff)
+        private GetRoundDTO MapRoundToDTO(Round round, int? timeLimitSeconds, int rankCutoff, double? mockTestRoundWeight)
         {
             GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
 
@@ -2136,7 +2341,7 @@ namespace BusinessLogic.Services.Contests
             roundDTO.RankCutoff = rankCutoff;
 
             // Map problem or MCQ test
-            MapRoundContent(roundDTO, round);
+            MapRoundContent(roundDTO, round, mockTestRoundWeight);
 
             return roundDTO;
         }
@@ -2144,13 +2349,14 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Maps problem or MCQ test content to DTO
         /// </summary>
-        private void MapRoundContent(GetRoundDTO roundDTO, Round round)
+        private void MapRoundContent(GetRoundDTO roundDTO, Round round, double? mockTestRoundWeight)
         {
             if (round.Problem != null && round.Problem.DeletedAt == null)
             {
                 roundDTO.ProblemType = round.Problem.Type;
                 roundDTO.Problem = _mapper.Map<GetProblemDTO>(round.Problem);
                 roundDTO.Problem.TemplateUrl = round.Problem.TemplateUrl;
+                roundDTO.Problem!.MockTestWeight = mockTestRoundWeight;
             }
             else if (round.McqTest != null && round.McqTest.DeletedAt == null)
             {
@@ -2175,20 +2381,8 @@ namespace BusinessLogic.Services.Contests
             Guid studentId = await GetCurrentStudentIdAsync();
             Guid studentUserId = await GetCurrentStudentUserIdAsync(studentId);
 
-            // Ensure student's team in this contest is active
-            var teamRepo = _unitOfWork.GetRepository<Team>();
-            var team = await teamRepo.Entities
-                .AsNoTracking()
-                .FirstOrDefaultAsync(t =>
-                    t.ContestId == round.ContestId &&
-                    t.DeletedAt == null &&
-                    t.TeamMembers.Any(tm => tm.StudentId == studentId));
-
-            if (team == null || !string.Equals(team.Status, TeamStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ErrorException(StatusCodes.Status403Forbidden, ResponseCodeConstants.FORBIDDEN,
-                    "Your team is not active for this contest.");
-            }
+            // Validate student is not in an eliminated or disqualified team
+            await ValidateStudentQualificationAsync(round.ContestId, studentId);
 
             // Validate retake round access
             if (round.IsRetakeRound && round.MainRoundId.HasValue)
@@ -2201,6 +2395,45 @@ namespace BusinessLogic.Services.Contests
 
             // Validate open code
             await ValidateAndMarkOpenCodeAsync(round.RoundId, studentId, openCode);
+        }
+
+        /// <summary>
+        /// Validates that student is not in an eliminated or disqualified team
+        /// </summary>
+        private async Task ValidateStudentQualificationAsync(Guid contestId, Guid studentId)
+        {
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Find the student's team in this contest
+            Team? studentTeam = await teamRepo.Entities
+                .Where(t => t.ContestId == contestId
+                           && t.DeletedAt == null
+                           && t.TeamMembers.Any(tm => tm.StudentId == studentId))
+                .FirstOrDefaultAsync();
+
+            // If student has no team, they cannot access the round
+            if (studentTeam == null)
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "You are not part of any team in this contest.");
+            }
+
+            // Check if the team is eliminated
+            if (string.Equals(studentTeam.Status, TeamStatusConstants.Eliminated, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Your team has been eliminated from this contest and cannot access round information.");
+            }
+
+            // Check if the team is disqualified
+            if (string.Equals(studentTeam.Status, TeamStatusConstants.Disqualified, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Your team is disqualified to participated in this contest and cannot access round information.");
+            }
         }
 
         /// <summary>
@@ -2385,7 +2618,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private IReadOnlyCollection<GetRoundDTO> MapRoundsToDTO(
             IReadOnlyCollection<Round> rounds,
-            Dictionary<string, Config> timeLimitLookup)
+            Dictionary<string, Config> timeLimitLookup,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             return rounds.Select(item =>
             {
@@ -2406,11 +2640,42 @@ namespace BusinessLogic.Services.Contests
                     roundDTO.TimeLimitSeconds = secs;
                 }
 
+                // Map mock test weight from config
+                double? mockTestWeight = null;
+                if (item.Problem != null
+                    && item.Problem.Type == ProblemTypeEnum.AutoEvaluation.ToString()
+                    && item.Problem.TestType == AUTO_MOCK_TEST_TEST_TYPE)
+                {
+                    string weightKey = ConfigKeys.RoundWeight(item.RoundId);
+                    if (mockTestWeightDict.TryGetValue(weightKey, out Config? weightConfig)
+                        && double.TryParse(weightConfig.Value, out double weight))
+                    {
+                        mockTestWeight = weight;
+                    }
+                }
+
                 // Map problem or MCQ test
-                MapRoundContent(roundDTO, item);
+                MapRoundContent(roundDTO, item, mockTestWeight);
 
                 return roundDTO;
             }).ToList();
+        }
+
+        /// <summary>
+        /// Loads mock test weight configurations for rounds
+        /// </summary>
+        private async Task<Dictionary<string, Config>> LoadMockTestWeightConfigurationsAsync(IReadOnlyCollection<Round> rounds)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            List<Guid> roundIds = rounds.Select(r => r.RoundId).ToList();
+            List<string> weightKeys = roundIds.Select(ConfigKeys.RoundWeight).ToList();
+
+            List<Config> weightConfigs = await configRepo.Entities
+                .Where(c => weightKeys.Contains(c.Key) && c.Scope == SCOPE_ROUND && c.DeletedAt == null)
+                .ToListAsync();
+
+            return weightConfigs.ToDictionary(c => c.Key);
         }
 
         /// <summary>

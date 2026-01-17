@@ -1,13 +1,13 @@
-﻿using Repository.DTOs.MockTestDTOs;
+﻿using Repository.DTOs.JudgeDTOs;
 
 namespace BusinessLogic.IServices.Contests
 {
     public interface IMockTestService
     {
-        Task<MockTestResultDTO> ExecuteMockTestAsync(
+        Task<JudgeSubmissionResultDTO> ExecuteMockTestAsync(
             string studentCode,
             string mockTestUrl,
-            int timeLimitSec = 30,
+            int timeLimitSec = 20,
             int memoryLimitMb = 512);
     }
 }

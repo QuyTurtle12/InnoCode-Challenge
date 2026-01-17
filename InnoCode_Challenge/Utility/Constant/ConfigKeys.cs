@@ -6,7 +6,7 @@
         public const string Defaults_TeamInviteTtlDays = "defaults:team_invite_ttl_days";   
         public const string Defaults_TeamLimitMax = "defaults:team_limit_max";
         public const string Defaults_TeamMembersMin = "defaults:team_members_min";
-        public const string Defaults_RoundRankCutoff = "defaults:round_rank_cutoff"; // default = 0
+        public const string Defaults_RoundRankCutoff = "defaults:round_rank_cutoff";
         public static string ContestTeamMembersMin(Guid contestId) => $"contest:{contestId}:team_members_min";
         public static string ContestTeamMembersMax(Guid contestId) => $"contest:{contestId}:team_members_max";
         public static string ContestTeamLimitMax(Guid contestId) => $"contest:{contestId}:team_limit_max";
@@ -30,9 +30,12 @@
         public static string McqTestImportTemplate() => $"template:McqImportTemplate:mcq_test";
         public static string AutoTestImportTemplate() => $"template:TestCaseImportTemplate:auto_evaluation_test";
         public static string ManualTestImportTemplate() => $"template:RubricImportTemplate:manual_test";
+        public static string OrganizerMockTestTemplate() => $"template:MockTestTemplate:organizer";
+        public static string StudentMockTestTemplateForOrganizer() => $"template:MockTestTemplate:student";
         public static string RoundStudent(Guid roundId, Guid studentId) => $"round:{roundId}:student:{studentId}";
         public static string RoundOpenCode(Guid roundId) => $"round:{roundId}:open_code";
         public static string RoundRankCutoff(Guid roundId) => $"round:{roundId}:rank_cutoff";
         public static string RoundStudentOpenCodeInputted(Guid studentId, Guid roundId) => $"student:{studentId}:round:{roundId}";
+        public static string RoundWeight(Guid roundId) => $"round:{roundId}:weight";
     }
 }

@@ -70,7 +70,7 @@ namespace InnoCode_Challenge_API.Controllers.Certificates
         }
 
         [HttpGet("my-certificate")]
-        [Authorize(Policy = "RequireStudentRole")]
+        [Authorize(Policy = "RequireStudentOrMentor")]
         public async Task<IActionResult> GetMyCertificate(
             Guid? contestId,
             Guid? templateId,

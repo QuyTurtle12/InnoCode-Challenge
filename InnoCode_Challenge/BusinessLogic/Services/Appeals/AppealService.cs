@@ -1,9 +1,10 @@
 using AutoMapper;
+using BusinessLogic.Helpers;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
-using BusinessLogic.Helpers;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +28,7 @@ namespace BusinessLogic.Services.Appeals
         private readonly ILeaderboardEntryService _leaderboardEntryService;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         private const string APPEAL_EVIDENCE_FOLDER = "appeal_evidences";
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
@@ -41,7 +43,8 @@ namespace BusinessLogic.Services.Appeals
             ICloudinaryService cloudinaryService,
             ILeaderboardEntryService leaderboardEntryService,
             INotificationService notificationService,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = uow;
@@ -50,6 +53,7 @@ namespace BusinessLogic.Services.Appeals
             _leaderboardEntryService = leaderboardEntryService;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task<GetAppealDTO> CreateAppealAsync(CreateAppealDTO dto)
@@ -299,6 +303,9 @@ namespace BusinessLogic.Services.Appeals
 
                     if (Guid.TryParse(organizerId, out var organizerUserId))
                     {
+                        // Notify organizer dashboard
+                        await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerUserId);
+
                         await _notificationService.CreateInAppToUserAsync(
                             organizerUserId,
                             NotificationTypes.AppealCreated,
@@ -867,30 +874,58 @@ namespace BusinessLogic.Services.Appeals
             // Get current judge ID
             string? currentJudgeId = submission.JudgedBy;
 
-            // Get available judges for this contest (excluding current judge)
+            // Get all available judges for this contest
             IGenericRepository<JudgeInvite> judgeInviteRepo = _unitOfWork.GetRepository<JudgeInvite>();
 
-            List<string> availableJudges = await judgeInviteRepo.Entities
+            List<string> allJudges = await judgeInviteRepo.Entities
                 .Where(ji => ji.ContestId == appeal.Target.ContestId
-                    && ji.Status == JudgeInviteStatusEnum.Accepted.ToString().ToLower()
-                    && ji.JudgeId.ToString() != currentJudgeId)
+                    && ji.Status == JudgeInviteStatusEnum.Accepted.ToString().ToLower())
                 .Select(ji => ji.JudgeId.ToString())
                 .ToListAsync();
 
-            if (availableJudges.Any())
+            // Determine the new judge
+            string newJudgeId;
+
+            if (allJudges.Count < 2)
             {
-                // Assign to a random different judge
-                Random random = new Random();
-                string newJudgeId = availableJudges[random.Next(availableJudges.Count)];
+                // If there's only one judge, assign to the current judge
+                newJudgeId = currentJudgeId ?? (allJudges.FirstOrDefault() ?? string.Empty);
 
-                submission.JudgedBy = newJudgeId;
-                submission.Status = SubmissionStatusEnum.Pending.ToString();
-                submission.Score = 0;
-
-                await submissionRepo.UpdateAsync(submission);
-
-                await UpsertJudgeRescoreDeadlineAsync(appeal.Target.ContestId, newJudgeId, submission.SubmissionId, configRepo);
+                // If no judges available at all, return without reassigning
+                if (string.IsNullOrEmpty(newJudgeId))
+                {
+                    return;
+                }
             }
+            else
+            {
+                // If there are multiple judges, exclude the current judge
+                List<string> otherJudges = allJudges
+                    .Where(j => j != currentJudgeId)
+                    .ToList();
+
+                if (otherJudges.Any())
+                {
+                    // Assign to a random different judge
+                    Random random = new Random();
+                    newJudgeId = otherJudges[random.Next(otherJudges.Count)];
+                }
+                else
+                {
+                    // Use current judge if filtering resulted in empty list
+                    newJudgeId = currentJudgeId ?? allJudges.First();
+                }
+            }
+
+            // Update submission
+            submission.JudgedBy = newJudgeId;
+            submission.Status = SubmissionStatusEnum.Pending.ToString();
+            submission.Score = 0;
+
+            await submissionRepo.UpdateAsync(submission);
+
+            // Update judge deadline
+            await UpsertJudgeRescoreDeadlineAsync(appeal.Target.ContestId, newJudgeId, submission.SubmissionId, configRepo);
         }
 
         private string GetCurrentUserIdOrThrow()

@@ -2,6 +2,7 @@ using BusinessLogic.IServices;
 using BusinessLogic.IServices.Appeals;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.Mcqs;
 using BusinessLogic.IServices.Mentors;
@@ -15,6 +16,7 @@ using BusinessLogic.Services;
 using BusinessLogic.Services.Appeals;
 using BusinessLogic.Services.Certificates;
 using BusinessLogic.Services.Contests;
+using BusinessLogic.Services.Dashboards;
 using BusinessLogic.Services.FileStorages;
 using BusinessLogic.Services.Mcqs;
 using BusinessLogic.Services.Mentors;
@@ -34,9 +36,9 @@ using Repository.IRepositories;
 using Repository.Repositories;
 using System.Reflection;
 using System.Text;
+using Utility.ConfigDTOs;
 using Utility.Constant;
 using Utility.Helpers;
-using Utility.ConfigDTOs;
 
 namespace InnoCode_Challenge_API.DI
 {
@@ -160,6 +162,18 @@ namespace InnoCode_Challenge_API.DI
                 options.AddPolicy("RequireStudentOrMentor",
                     policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor));
 
+                options.AddPolicy("RequireStudentOrOrganizer",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.ContestOrganizer));
+
+                options.AddPolicy("RequireStudentOrMentorOrJudge",
+                    policy => policy.RequireRole(RoleConstants.Student, RoleConstants.Mentor, RoleConstants.Judge));
+
+                options.AddPolicy("RequireAdminOrStaffOrOrganizer",
+                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Staff, RoleConstants.ContestOrganizer));
+
+                options.AddPolicy("RequireAdminOrStaffOrMentor",
+                    policy => policy.RequireRole(RoleConstants.Admin, RoleConstants.Staff, RoleConstants.Mentor));
+
                 options.AddPolicy("RequireAnyUserRole",
                     policy => policy.RequireRole(
                         RoleConstants.Student,
@@ -271,7 +285,7 @@ namespace InnoCode_Challenge_API.DI
             services.AddSignalR(options =>
             {
                 options.EnableDetailedErrors = true;
-                options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+                options.KeepAliveInterval = TimeSpan.FromSeconds(15);
                 options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
             });
         }
@@ -351,6 +365,10 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISchoolCreationRequestService, SchoolCreationRequestService>();
             services.AddScoped<IMentorManagementService, MentorManagementService>();
             services.AddScoped<IMockTestService, MockTestService>();
+            services.AddScoped<IDashboardService, DashboardService>();
+            services.AddScoped<IMentorDashboardService, MentorDashboardService>();
+            services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
+            services.AddSingleton<IDashboardNotifierService, DashboardNotifierService>();
         }
     }
 }

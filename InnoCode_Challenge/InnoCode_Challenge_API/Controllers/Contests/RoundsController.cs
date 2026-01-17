@@ -73,6 +73,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
         /// <param name="openCode"></param>
         /// <returns></returns>
         [HttpGet("{id}")]
+        [Authorize(Policy = "RequireStudentOrOrganizer")]
         public async Task<IActionResult> GetRoundById(Guid id, string? openCode = null)
         {
             GetRoundDTO round = await _roundService.GetRoundByIdAsync(id, openCode);
@@ -306,13 +307,69 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             [FromForm] CreateSubmissionDTO submissionDTO,
             [FromForm] TestCaseEvaluationTypeEnum type)
         {
-            MockTestResultDTO result = await _submissionService.EvaluateMockTestSubmissionAsync(roundId, submissionDTO, type);
+            JudgeSubmissionResultDTO result = await _submissionService.EvaluateMockTestSubmissionAsync(roundId, submissionDTO, type);
 
-            return Ok(new BaseResponseModel<MockTestResultDTO>(
+            return Ok(new BaseResponseModel<JudgeSubmissionResultDTO>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: result,
                 message: "Submission evaluated successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get organizer mock test template URL
+        /// </summary>
+        /// <returns>Template URL</returns>
+        [HttpGet("/api/auto-test/mock-test/organizer-template")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetOrganizerMockTestTemplateUrl()
+        {
+            string? templateUrl = await _roundService.GetOrganizerMockTestTemplateUrl();
+
+            if (templateUrl == null)
+            {
+                return Ok(new BaseResponseModel<string>(
+                    statusCode: StatusCodes.Status404NotFound,
+                    code: ResponseCodeConstants.NOT_FOUND,
+                    data: null,
+                    message: "Organizer mock test template not found."
+                ));
+            }
+
+            return Ok(new BaseResponseModel<string>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: templateUrl,
+                message: "Organizer mock test template URL retrieved successfully."
+            ));
+        }
+
+        /// <summary>
+        /// Get student mock test template URL for organizer viewing
+        /// </summary>
+        /// <returns>Template URL</returns>
+        [HttpGet("/api/auto-test/mock-test/student-template")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> GetStudentMockTestTemplateUrl()
+        {
+            string? templateUrl = await _roundService.GetStudentMockTestTemplateUrl();
+
+            if (templateUrl == null)
+            {
+                return Ok(new BaseResponseModel<string>(
+                    statusCode: StatusCodes.Status404NotFound,
+                    code: ResponseCodeConstants.NOT_FOUND,
+                    data: null,
+                    message: "Student mock test template not found."
+                ));
+            }
+
+            return Ok(new BaseResponseModel<string>(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                data: templateUrl,
+                message: "Student mock test template URL retrieved successfully."
             ));
         }
 
@@ -495,6 +552,9 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                     ));
         }
 
+
+        // ---- Time travel endpoints for fast testing/demo (Organizer only) ----
+
         [HttpPut("{id}/start-now")]
         [Authorize(Policy = "RequireOrganizerRole")]
         public async Task<IActionResult> StartRoundNow(Guid id)
@@ -520,8 +580,6 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 message: "Round end time updated to now."
             ));
         }
-
-        // ---- Time travel endpoints for fast testing/demo (Organizer only) ----
 
         [HttpPost("{roundId}/time-travel/appeal-submit-end")]
         [Authorize(Policy = "RequireOrganizerRole")]

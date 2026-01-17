@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Certificates;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
@@ -11,6 +12,7 @@ using Repository.DTOs.CertificateTemplateDTOs;
 using Repository.IRepositories;
 using System.Security.Claims;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -26,6 +28,7 @@ namespace BusinessLogic.Services.Certificates
         private readonly ILogger<CertificateService> _logger;
         private readonly INotificationService _notificationService;
         private readonly IActivityLogWriter _logWriter;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         public CertificateService(
             IMapper mapper,
@@ -35,7 +38,8 @@ namespace BusinessLogic.Services.Certificates
             ILogger<CertificateService> logger,
             IHttpContextAccessor httpContextAccessor,
             INotificationService notificationService,
-            IActivityLogWriter logWriter)
+            IActivityLogWriter logWriter,
+            IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
@@ -45,6 +49,7 @@ namespace BusinessLogic.Services.Certificates
             _httpContextAccessor = httpContextAccessor;
             _notificationService = notificationService;
             _logWriter = logWriter;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task<IReadOnlyList<IssuedCertificateDTO>> IssueAsync(IssueCertificatesDTO dto)
@@ -272,7 +277,7 @@ namespace BusinessLogic.Services.Certificates
 
 
                             // Create or update the certificate record
-                            Certificate entity;
+                            Certificate? entity;
                             if (dto.Reissue)
                             {
                                 _logger.LogDebug("Reissue mode: checking for existing certificate");
@@ -338,6 +343,21 @@ namespace BusinessLogic.Services.Certificates
                                 await _unitOfWork.SaveAsync();
                                 _logger.LogInformation("Certificate saved successfully. CertificateId={CertificateId}, Recipient={RecipientName}", 
                                     entity.CertificateId, recipientName);
+
+                                // Notify dashboard about new certificate
+                                await _dashboardNotifier.NotifyCertificateIssuedAsync();
+
+                                // Notify mentor if team certificate
+                                if (entity.TeamId.HasValue)
+                                {
+                                    Guid contestId = tpl.ContestId;
+                                    await NotifiMentorDashboardContestUpdated(contestId);
+
+                                    if (Guid.TryParse(tpl.Contest.CreatedBy, out Guid organizerId))
+                                    {
+                                        await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+                                    }
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -534,8 +554,9 @@ namespace BusinessLogic.Services.Certificates
             // Filter by current user's certificates
             if (myCertificate)
             {
-                // Get current user ID from HTTP context
+                // Get current user ID and role from HTTP context
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+                string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
 
                 // If user ID is not found, throw an unauthorized error
                 if (string.IsNullOrWhiteSpace(userId))
@@ -545,32 +566,78 @@ namespace BusinessLogic.Services.Certificates
                         "User ID not found.");
                 }
 
-                // Parse user ID to GUID
-                Guid.TryParse(userId, out Guid userGuid);
+                // If user role is not found, throw an unauthorized error
+                if (string.IsNullOrWhiteSpace(userRole))
+                {
+                    throw new ErrorException(StatusCodes.Status401Unauthorized,
+                        ResponseCodeConstants.UNAUTHORIZED,
+                        "User role not found.");
+                }
 
-                // Get the current student's ID
-                IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
+                // If the user is a student, filter certificates accordingly
+                if (userRole.Equals(RoleConstants.Student))
+                {
+                    // Parse user ID to GUID
+                    Guid.TryParse(userId, out Guid userGuid);
 
-                // Find the student associated with the current user
-                Guid? currentStudentId = await studentRepo.Entities
-                    .Where(s => s.UserId == userGuid && s.DeletedAt == null)
-                    .Select(s => (Guid?)s.StudentId)
-                    .FirstOrDefaultAsync();
-                if (currentStudentId == null)
-                    throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", "Student profile not found.");
+                    // Get the current student's ID
+                    IGenericRepository<Student> studentRepo = _unitOfWork.GetRepository<Student>();
 
-                IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
-                // Get team IDs for the current student
-                List<Guid> myTeamIds = await teamMemberRepo.Entities
-                    .Where(tm => tm.StudentId == currentStudentId.Value)
-                    .Select(tm => tm.TeamId)
-                    .Distinct()
-                    .ToListAsync();
+                    // Find the student associated with the current user
+                    Guid? currentStudentId = await studentRepo.Entities
+                        .Where(s => s.UserId == userGuid && s.DeletedAt == null)
+                        .Select(s => (Guid?)s.StudentId)
+                        .FirstOrDefaultAsync();
+                    if (currentStudentId == null)
+                        throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", "Student profile not found.");
 
-                // Filter certificates for the current student or their teams
-                q = q.Where(c =>
-                    c.StudentId == currentStudentId.Value ||
-                    (c.TeamId != null && myTeamIds.Contains(c.TeamId.Value)));
+                    IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
+                    // Get team IDs for the current student
+                    List<Guid> myTeamIds = await teamMemberRepo.Entities
+                        .Where(tm => tm.StudentId == currentStudentId.Value)
+                        .Select(tm => tm.TeamId)
+                        .Distinct()
+                        .ToListAsync();
+
+                    // Filter certificates for the current student or their teams
+                    q = q.Where(c =>
+                        c.StudentId == currentStudentId.Value ||
+                        (c.TeamId != null && myTeamIds.Contains(c.TeamId.Value)));
+                }
+
+                if (userRole.Equals(RoleConstants.Mentor))
+                {
+                    // Parse user ID to GUID
+                    Guid.TryParse(userId, out Guid userGuid);
+
+                    // Get the current mentor's ID
+                    IGenericRepository<Mentor> mentorRepo = _unitOfWork.GetRepository<Mentor>();
+
+                    // Find the mentor associated with the current user
+                    Guid? currentMentorId = await mentorRepo.Entities
+                        .Where(m => m.UserId == userGuid && m.DeletedAt == null)
+                        .Select(m => (Guid?)m.MentorId)
+                        .FirstOrDefaultAsync();
+
+                    if (currentMentorId == null)
+                        throw new ErrorException(StatusCodes.Status404NotFound, "MENTOR_NOT_FOUND", "Mentor profile not found.");
+
+                    // Get team IDs managed by the current mentor
+                    IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+                    List<Guid> managedTeamIds = await teamRepo.Entities
+                        .Where(t => t.MentorId == currentMentorId.Value && t.DeletedAt == null)
+                        .Select(t => t.TeamId)
+                        .Distinct()
+                        .ToListAsync();
+
+                    // Filter certificates for teams managed by this mentor
+                    q = q.Where(c =>
+                        c.TeamId != null &&
+                        managedTeamIds.Contains(c.TeamId.Value) &&
+                        (c.CertificateType == CertificateTypeConstants.Team ||
+                         (c.CertificateType == null && c.TeamId != null)));
+                }
+
             }
             else
             {
@@ -768,6 +835,28 @@ namespace BusinessLogic.Services.Certificates
                 throw new ErrorException(StatusCodes.Status403Forbidden,
                     ResponseCodeConstants.FORBIDDEN,
                     "Only the organizer who created this contest can manage certificates.");
+        }
+
+        private async Task NotifiMentorDashboardContestUpdated(Guid contestId)
+        {
+            // Notify all mentors with teams in the contest
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Get distinct mentor IDs from teams in the contest
+            List<Guid> mentorIds = teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .Select(t => t.MentorId)
+                .Distinct()
+                .ToList();
+
+            foreach (Guid mentorId in mentorIds)
+            {
+                if (mentorId == Guid.Empty)
+                    continue;
+
+                // Notify mentor dashboard about contest update
+                await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(mentorId);
+            }
         }
 
     }

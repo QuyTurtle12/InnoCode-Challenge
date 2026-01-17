@@ -348,6 +348,9 @@ namespace BusinessLogic.Services.Mcqs
                     .Select(tm => tm.TeamId)
                     .FirstOrDefaultAsync();
 
+                // Mark as finished for the round
+                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+
                 // Update team score in leaderboard if team exists
                 if (teamId.HasValue && contestId != Guid.Empty)
                 {
@@ -379,9 +382,6 @@ namespace BusinessLogic.Services.Mcqs
                     Score = 0,
                     AnswerResults = new List<QuizAnswerResultDTO>()
                 };
-
-                // Mark as finished for the round
-                await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();

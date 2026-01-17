@@ -1,7 +1,6 @@
 ﻿using BusinessLogic.IServices;
 using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.NotificationsAndLogs;
-using BusinessLogic.IServices.Contests;
 using DataAccess.Entities;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
@@ -19,13 +18,16 @@ namespace BusinessLogic.Services.Contests
     {
         private readonly ILogger<RoundStateJob> _logger;
         private readonly IServiceProvider _serviceProvider;
+        private readonly IConfigService _configService;
 
         public RoundStateJob(
             ILogger<RoundStateJob> logger,
-            IServiceProvider serviceProvider)
+            IServiceProvider serviceProvider,
+            IConfigService configService)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _configService = configService;
         }
 
         [DisableConcurrentExecution(timeoutInSeconds: 60)]
@@ -448,57 +450,10 @@ namespace BusinessLogic.Services.Contests
                     roundId, DateTime.UtcNow);
 
                 using IServiceScope scope = _serviceProvider.CreateScope();
-                IUOW unitOfWork = scope.ServiceProvider.GetRequiredService<IUOW>();
                 IRoundService roundService = scope.ServiceProvider.GetRequiredService<IRoundService>();
 
-                IGenericRepository<Round> roundRepo = unitOfWork.GetRepository<Round>();
-
-                // Check if round is still in Opened status
-                Round? round = await roundRepo.Entities
-                    .Where(r => r.RoundId == roundId && r.DeletedAt == null)
-                    .FirstOrDefaultAsync();
-
-                if (round == null)
-                {
-                    _logger.LogWarning("Round {RoundId} not found, stopping open code generation", roundId);
-
-                    // Remove the recurring job
-                    string recurringJobId = $"regenerate-open-code-{roundId}";
-                    RecurringJob.RemoveIfExists(recurringJobId);
-                    return;
-                }
-
-                // Only regenerate if round is still open
-                if (round.Status != RoundStatusEnum.Opened.ToString())
-                {
-                    _logger.LogInformation(
-                        "Round {RoundId} is no longer open (status: {Status}), stopping open code generation",
-                        roundId, round.Status);
-
-                    // Remove the recurring job
-                    string recurringJobId = $"regenerate-open-code-{roundId}";
-                    RecurringJob.RemoveIfExists(recurringJobId);
-                    return;
-                }
-
-                // Check if round has ended
-                DateTime now = DateTime.UtcNow;
-                if (now >= round.End)
-                {
-                    _logger.LogInformation(
-                        "Round {RoundId} has ended, stopping open code generation",
-                        roundId);
-
-                    // Remove the recurring job
-                    string recurringJobId = $"regenerate-open-code-{roundId}";
-                    RecurringJob.RemoveIfExists(recurringJobId);
-                    return;
-                }
-
-                // Regenerate the open code
-                await roundService.GenerateOpenCode(round.RoundId);
-
-                _logger.LogDebug("Successfully regenerated open code for round {RoundId}", roundId);
+                // Regenerate open code
+                await roundService.RegenerateOpenCodeAsync(roundId);
             }
             catch (Exception ex)
             {
@@ -705,6 +660,9 @@ namespace BusinessLogic.Services.Contests
 
                 foreach (var sub in overdue)
                 {
+                    // Mark as finished for the round
+                    await _configService.MarkFinishedSubmissionAsync(roundId, sub.SubmittedByStudentId);
+
                     await leaderboardService.UpdateTeamScoreAsync(round.ContestId, sub.TeamId);
 
                     var recipients = new HashSet<Guid>();

@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using BusinessLogic.IServices.Contests;
-using DataAccess.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.LeaderboardEntryDTOs;
@@ -130,7 +129,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             return Ok(new BaseResponseModel(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
-                message: "Team score updated and broadcasted successfully."
+                message: "Team score updated"
             ));
         }
     }

@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
@@ -17,6 +18,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.Tasks;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -35,6 +37,7 @@ namespace BusinessLogic.Services.Contests
         private readonly IActivityLogWriter _activityLogWriter;
         private readonly ILogger<ContestService> _logger;
         private readonly IRoundService _roundService;
+        private readonly IDashboardNotifierService _dashboardNotifier;
 
         private const int MIN_YEAR = 10;
         private const string CONTEST_IMAGE_FOLDER = "contest_images";
@@ -48,10 +51,15 @@ namespace BusinessLogic.Services.Contests
         private const string PROBLEM_TYPE_AUTO_EVALUATION = nameof(ProblemTypeEnum.AutoEvaluation);
         private const string PROBLEM_TYPE_MANUAL = nameof(ProblemTypeEnum.Manual);
         private const string PROBLEM_TYPE_MCQ_TEST = nameof(ProblemTypeEnum.McqTest);
+        private const string AUTO_MOCK_TEST_TEST_TYPE = nameof(TestTypeEnum.MockTest);
+        private const string AUTO_INPUT_OUTPUT_TEST_TYPE = nameof(TestTypeEnum.InputOutput);
+
         private const string ROUND_TYPE_MCQ_TEST = "MCQ Test";
         private const string ROUND_TYPE_AUTO_EVALUATION = "Auto Evaluation";
         private const string UNKNOWN_ORGANIZER = "Unknown Organizer";
         private const string UNKNOWN_ROUND = "Unknown Round";
+        private const string TIME_LIMIT_SECONDS_KEY_SUFFIX = "time_limit_seconds";
+        private const string MOCK_TEST_WEIGHT_KEY_SUFFIX = "weight";
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
         private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
         private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
@@ -64,7 +72,8 @@ namespace BusinessLogic.Services.Contests
             INotificationService notificationService,
             IActivityLogWriter activityLogWriter,
             ILogger<ContestService> logger,
-            IRoundService roundService)
+            IRoundService roundService,
+            IDashboardNotifierService dashboardNotifier)
         {
             _mapper = mapper;
             _unitOfWork = uow;
@@ -74,6 +83,7 @@ namespace BusinessLogic.Services.Contests
             _activityLogWriter = activityLogWriter;
             _logger = logger;
             _roundService = roundService;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task DeleteContestAsync(Guid id)
@@ -203,11 +213,11 @@ namespace BusinessLogic.Services.Contests
                 PaginatedList<Contest> resultQuery = await contestRepo.GetPagingAsync(query, pageNumber, pageSize);
 
                 // Load related data efficiently
-                var (configLookup, organizerNames, timeLimitDict) = await LoadRelatedDataAsync(resultQuery.Items);
+                var (configLookup, organizerNames, timeLimitDict, mockTestWeightDict) = await LoadRelatedDataAsync(resultQuery.Items);
 
                 // Map entities to DTOs
                 IReadOnlyCollection<GetContestDTO> result = resultQuery.Items
-                    .Select(item => MapContestEntityToDTO(item, configLookup, organizerNames, timeLimitDict))
+                    .Select(item => MapContestEntityToDTO(item, configLookup, organizerNames, timeLimitDict, mockTestWeightDict))
                     .ToList();
 
                 // Return paginated result
@@ -245,10 +255,10 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Load related data
-                var (configLookup, organizerName, timeLimitDict) = await LoadContestRelatedDataAsync(contest);
+                var (configLookup, organizerName, timeLimitDict, mockTestWeightDict) = await LoadContestRelatedDataAsync(contest);
 
                 // Map to DTO
-                return MapSingleContestToDTO(contest, configLookup, organizerName, timeLimitDict);
+                return MapSingleContestToDTO(contest, configLookup, organizerName, timeLimitDict, mockTestWeightDict);
             }
             catch (Exception ex)
             {
@@ -357,6 +367,9 @@ namespace BusinessLogic.Services.Contests
 
                 // Post-create operations
                 await PerformPostCreateOperationsAsync(entity);
+
+                // Notify dashboard
+                await _dashboardNotifier.NotifyContestCreatedAsync();
 
                 // Map and return result
                 return MapToContestCreatedDTO(entity, dto, imageUrl, configValues, policyValues);
@@ -681,6 +694,17 @@ namespace BusinessLogic.Services.Contests
                 {
                     result.Missing.Add($"Auto-evaluation round '{roundName}' cannot have both mock test file and test cases. Please use only one evaluation method.");
                 }
+
+                // Check mock test round's weight
+                if (problem.TestType == AUTO_MOCK_TEST_TEST_TYPE)
+                {
+                    string mockTestRoundWeightKey = ConfigKeys.RoundWeight(round!.RoundId);
+
+                    if (string.IsNullOrWhiteSpace(mockTestRoundWeightKey))
+                    {
+                        result.Missing.Add($"Auto-evaluation round '{roundName}' with mock test type is missing weight.");
+                    }
+                }
             }
         }
 
@@ -806,74 +830,29 @@ namespace BusinessLogic.Services.Contests
                     .Where(c => c.Key == regEndKey && c.DeletedAt == null)
                     .FirstOrDefaultAsync();
 
-                DateTime? registrationStart = null;
-                DateTime? registrationEnd = null;
+                DateTime? registrationStart = ParseNullableUtc(regStartConfig?.Value);
+                DateTime? registrationEnd = ParseNullableUtc(regEndConfig?.Value);
 
-                if (regStartConfig != null && DateTime.TryParse(regStartConfig.Value, out DateTime regStart))
-                {
-                    registrationStart = regStart;
-                }
+                // Determine contest status using helper method
+                var (newStatus, shouldDeleteJobs) = await DetermineContestStatusAsync(
+                    contest,
+                    registrationStart,
+                    registrationEnd,
+                    now);
 
-                if (regEndConfig != null && DateTime.TryParse(regEndConfig.Value, out DateTime regEnd))
+                // Delete scheduled jobs if needed
+                if (shouldDeleteJobs)
                 {
-                    registrationEnd = regEnd;
-                }
-
-                // Determine contest status based on time and registration windows
-                string newStatus;
-
-                // Priority 1: Check if contest has ended (terminal state)
-                if (contest.End.HasValue && now >= contest.End.Value)
-                {
-                    newStatus = ContestStatusEnum.Completed.ToString();
-                }
-                // Priority 2: Check if contest is ongoing
-                else if (contest.Start.HasValue && contest.End.HasValue && now >= contest.Start.Value && now < contest.End.Value)
-                {
-                    newStatus = ContestStatusEnum.Ongoing.ToString();
-                }
-                // Priority 3: Check if registration has closed but contest hasn't started
-                else if (registrationEnd.HasValue && now >= registrationEnd.Value
-                    && contest.Start.HasValue && now < contest.Start.Value)
-                {
-                    // Check if contest has at least 1 team
-                    bool hasTeams = await CheckContestHasTeamsAsync(contestId);
-
-                    if (!hasTeams)
-                    {
-                        // Set status to Delayed if no teams registered
-                        newStatus = ContestStatusEnum.Delayed.ToString();
-
-                        // Delete all scheduled jobs for this contest and its rounds
-                        await DeleteContestScheduledJobsAsync(contestId);
-                    }
-                    else if (contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
-                    {
-                        newStatus = ContestStatusEnum.RegistrationClosed.ToString();
-                    }
-                    else
-                    {
-                        // Keep current status if already RegistrationClosed
-                        newStatus = contest.Status;
-                    }
-                }
-                // Priority 4: Check if registration is open
-                else if (registrationStart.HasValue && registrationEnd.HasValue
-                    && now >= registrationStart.Value && now < registrationEnd.Value
-                    && contest.Status == ContestStatusEnum.Published.ToString())
-                {
-                    newStatus = ContestStatusEnum.RegistrationOpen.ToString();
-                }
-                // Default: Published (before registration starts)
-                else
-                {
-                    newStatus = ContestStatusEnum.Published.ToString();
+                    await DeleteContestScheduledJobsAsync(contestId);
                 }
 
                 // Update contest status only if not already Delayed
                 contest.Status = newStatus;
                 await contestRepo.UpdateAsync(contest);
                 await _unitOfWork.SaveAsync();
+
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
                 // Schedule state transitions only if not moving to Delayed status
                 if (newStatus != ContestStatusEnum.Delayed.ToString())
@@ -915,6 +894,63 @@ namespace BusinessLogic.Services.Contests
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error publishing Contest: {ex.Message}");
             }
+        }
+
+        private async Task<(string NewStatus, bool ShouldDeleteJobs)> DetermineContestStatusAsync(
+            Contest contest,
+            DateTime? registrationStart,
+            DateTime? registrationEnd,
+            DateTime now)
+        {
+            string newStatus;
+            bool shouldDeleteJobs = false;
+
+            // Priority 1: Check if contest has ended
+            if (contest.End.HasValue && now >= contest.End.Value)
+            {
+                newStatus = ContestStatusEnum.Completed.ToString();
+            }
+            // Priority 2: Check if contest is ongoing
+            else if (contest.Start.HasValue && contest.End.HasValue && now >= contest.Start.Value && now < contest.End.Value)
+            {
+                newStatus = ContestStatusEnum.Ongoing.ToString();
+            }
+            // Priority 3: Check if registration has closed but contest hasn't started
+            else if (registrationEnd.HasValue && now >= registrationEnd.Value
+                && contest.Start.HasValue && now < contest.Start.Value)
+            {
+                // Check if contest has at least 1 team
+                bool hasTeams = await CheckContestHasTeamsAsync(contest.ContestId);
+
+                if (!hasTeams)
+                {
+                    // Set status to Delayed if no teams registered
+                    newStatus = ContestStatusEnum.Delayed.ToString();
+                    shouldDeleteJobs = true;
+                }
+                else if (contest.Status != ContestStatusEnum.RegistrationClosed.ToString())
+                {
+                    newStatus = ContestStatusEnum.RegistrationClosed.ToString();
+                }
+                else
+                {
+                    // Keep current status if already RegistrationClosed
+                    newStatus = contest.Status;
+                }
+            }
+            // Priority 4: Check if registration is open
+            else if (registrationStart.HasValue && registrationEnd.HasValue
+                && now >= registrationStart.Value && now < registrationEnd.Value)
+            {
+                newStatus = ContestStatusEnum.RegistrationOpen.ToString();
+            }
+            // Default: Published (before registration starts)
+            else
+            {
+                newStatus = ContestStatusEnum.Published.ToString();
+            }
+
+            return (newStatus, shouldDeleteJobs);
         }
 
         private async Task<bool> CheckContestHasTeamsAsync(Guid contestId)
@@ -1223,6 +1259,12 @@ namespace BusinessLogic.Services.Contests
                 // Commit the transaction
                 _unitOfWork.CommitTransaction();
 
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
+
                 // Notify activity log
                 var actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, existingContest.ContestId.ToString());
@@ -1284,6 +1326,15 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -1357,6 +1408,12 @@ namespace BusinessLogic.Services.Contests
                 await _unitOfWork.SaveAsync();
 
                 _unitOfWork.CommitTransaction();
+
+                // Notify dashboard about status change
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Notify all mentors with teams in the contest
+                await NotifiMentorDashboardContestUpdated(contestId);
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -1574,7 +1631,7 @@ namespace BusinessLogic.Services.Contests
                     .ToList();
 
                 // Compute member latest scores per round
-                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores =
+                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores =
                     await GetLatestMemberRoundScoresAsync(contestId, teamsSorted);
 
                 // Compute the team average score per round
@@ -1644,7 +1701,7 @@ namespace BusinessLogic.Services.Contests
             return formFile;
         }
 
-        private async Task<Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double>> GetLatestMemberRoundScoresAsync(
+        private async Task<Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)>> GetLatestMemberRoundScoresAsync(
             Guid contestId,
             List<Team> teams)
         {
@@ -1695,18 +1752,19 @@ namespace BusinessLogic.Services.Contests
                 .GroupBy(x => x.StudentId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.TeamId).Distinct().ToList());
 
-            // Initialize result dictionary
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> result =
-                new Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double>();
+            // Initialize result dictionary with score and status
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> result =
+                new Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)>();
 
-            // Populate scores from submissions
+            // Populate scores and statuses from submissions
             foreach (Submission s in latestSubmissions)
             {
                 Guid roundId = s.Problem.RoundId;
-                result[(s.TeamId, roundId, s.SubmittedByStudentId)] = s.Score;
+                string status = s.Status ?? "Unknown";
+                result[(s.TeamId, roundId, s.SubmittedByStudentId)] = (s.Score, status);
             }
 
-            // Populate scores from MCQ attempts
+            // Populate scores and statuses from MCQ attempts
             foreach (McqAttempt a in latestAttempts)
             {
                 // Skip if student not found in team lookup
@@ -1717,11 +1775,12 @@ namespace BusinessLogic.Services.Contests
 
                 // Use 0 if score is null
                 double score = a.Score ?? 0;
+                string status = a.Status ?? "Unknown";
 
-                // Add score for each team the student belongs to
+                // Add score and status for each team the student belongs to
                 foreach (Guid teamId in memberTeamIds)
                 {
-                    result[(teamId, a.RoundId, a.StudentId)] = score;
+                    result[(teamId, a.RoundId, a.StudentId)] = (score, status);
                 }
             }
 
@@ -1731,7 +1790,7 @@ namespace BusinessLogic.Services.Contests
         private static Dictionary<(Guid TeamId, Guid RoundId), double> GetTeamRoundAverageScores(
             List<Round> rounds,
             List<Team> teams,
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores)
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores)
         {
             Dictionary<(Guid TeamId, Guid RoundId), double> result = new Dictionary<(Guid TeamId, Guid RoundId), double>();
 
@@ -1745,18 +1804,25 @@ namespace BusinessLogic.Services.Contests
                 foreach (Round round in rounds)
                 {
                     double sum = 0;
+                    int finishedCount = 0;
 
-                    // Sum up scores for all members in this round (missing scores = 0)
+                    // Sum up scores for all members in this round
                     foreach (Guid studentId in memberStudentIds)
                     {
-                        if (memberScores.TryGetValue((team.TeamId, round.RoundId, studentId), out double score))
+                        if (memberScores.TryGetValue((team.TeamId, round.RoundId, studentId), out (double Score, string Status) scoreData))
                         {
-                            sum += score;
+                            // Only add to sum if status is Finished
+                            if (string.Equals(scoreData.Status, SubmissionStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(scoreData.Status, McqAttemptStatusEnum.Finished.ToString(), StringComparison.OrdinalIgnoreCase))
+                            {
+                                sum += scoreData.Score;
+                                finishedCount++;
+                            }
                         }
                     }
 
-                    // Calculate average (avoid division by zero)
-                    double avg = memberCount > 0 ? sum / memberCount : 0;
+                    // Calculate average
+                    double avg = finishedCount > 0 ? sum / memberCount : 0;
                     result[(team.TeamId, round.RoundId)] = avg;
                 }
             }
@@ -1772,7 +1838,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;Rank;TeamName;SchoolName;MentorName;TotalScore").Append(CSV_NEW_LINE);
+            sb.Append("No.;Rank;Team Name;School Name;Mentor Name;Total Score").Append(CSV_NEW_LINE);
 
             // Sort teams by rank
             List<Team> sortedTeams = teamsSorted
@@ -1821,7 +1887,7 @@ namespace BusinessLogic.Services.Contests
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;RoundName;RoundType;TeamAverageScore").Append(CSV_NEW_LINE);
+            sb.Append("No.;Team Name;Round Name;Round Type;Team Average Score").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then descending by start
             List<Round> roundsSorted = rounds
@@ -1871,13 +1937,13 @@ namespace BusinessLogic.Services.Contests
         private static string BuildMemberRoundScoresCsv(
             List<Round> rounds,
             List<Team> teamsSorted,
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores,
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores,
             Dictionary<Guid, int> teamRank)
         {
             StringBuilder sb = new StringBuilder();
 
             // CSV header row
-            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CSV_NEW_LINE);
+            sb.Append("No.;Team Name;Student Name;Round Name;Round Type;Student Score;Submission Status").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
@@ -1886,8 +1952,8 @@ namespace BusinessLogic.Services.Contests
                 .ToList();
 
             // Create a list of all rows
-            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score)> rows =
-                new List<(string, string, string, string, double)>();
+            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score, string Status)> rows =
+                new List<(string, string, string, string, double, string)>();
 
             foreach (Team team in teamsSorted)
             {
@@ -1905,17 +1971,22 @@ namespace BusinessLogic.Services.Contests
                     {
                         // Determine round type and convert to readable format
                         string roundType = round.McqTest != null
-                            ? "MCQ Test"
+                            ? ROUND_TYPE_MCQ_TEST
                             : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                                ? "Auto Evaluation"
+                                ? ROUND_TYPE_AUTO_EVALUATION
                                 : round.Problem?.Type ?? string.Empty);
 
-                        // Get student score for this round
-                        double score = memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out double v)
-                            ? v
-                            : 0;
+                        // Get student score and status for this round
+                        double score = 0;
+                        string status = "Not Submitted";
 
-                        rows.Add((team.Name, studentName, round.Name, roundType, score));
+                        if (memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out (double Score, string Status) scoreData))
+                        {
+                            score = scoreData.Score;
+                            status = scoreData.Status;
+                        }
+
+                        rows.Add((team.Name, studentName, round.Name, roundType, score, status));
                     }
                 }
             }
@@ -1926,7 +1997,7 @@ namespace BusinessLogic.Services.Contests
                 .ThenBy(r => r.TeamName)
                 .ToList();
 
-            // Add rows with No. column
+            // Add rows
             int rowNumber = 1;
             foreach (var row in sortedRows)
             {
@@ -1935,7 +2006,8 @@ namespace BusinessLogic.Services.Contests
                   .Append(CsvField(row.StudentName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
-                  .Append(row.Score.ToString(CultureInfo.InvariantCulture))
+                  .Append(row.Score.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.Status))
                   .Append(CSV_NEW_LINE);
 
                 rowNumber++;
@@ -2098,7 +2170,7 @@ namespace BusinessLogic.Services.Contests
                     .ToListAsync();
 
                 // Compute member scores for mentor's team
-                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores =
+                Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores =
                     await GetLatestMemberRoundScoresAsync(contestId, new List<Team> { mentorTeam });
 
                 // Build CSV content
@@ -2254,6 +2326,9 @@ namespace BusinessLogic.Services.Contests
             contest.Status = ContestStatusEnum.RegistrationOpen.ToString();
             await contestRepo.UpdateAsync(contest);
             await _unitOfWork.SaveAsync();
+
+            // Notify dashboard
+            await _dashboardNotifier.NotifyContestStatusChangedAsync();
         }
 
         public async Task SetRegistrationEndNowAsync(Guid contestId)
@@ -2278,17 +2353,48 @@ namespace BusinessLogic.Services.Contests
             contest.Status = ContestStatusEnum.RegistrationClosed.ToString();
             await contestRepo.UpdateAsync(contest);
             await _unitOfWork.SaveAsync();
+
+            // Notify dashboard
+            await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+            // Notify mentors of teams in the contest
+            IGenericRepository<Team> _teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Notify all mentors with teams in the contest
+            await NotifiMentorDashboardContestUpdated(contestId);
+        }
+
+        private async Task NotifiMentorDashboardContestUpdated(Guid contestId)
+        {
+            // Notify all mentors with teams in the contest
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Get distinct mentor IDs from teams in the contest
+            List<Guid> mentorIds = teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .Select(t => t.MentorId)
+                .Distinct()
+                .ToList();
+
+            foreach (Guid mentorId in mentorIds)
+            {
+                if (mentorId == Guid.Empty)
+                    continue;
+
+                // Notify mentor dashboard about contest update
+                await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(mentorId);
+            }
         }
 
         private static string BuildMentorTeamReportCsv(
             List<Round> rounds,
             Team team,
-            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), double> memberScores)
+            Dictionary<(Guid TeamId, Guid RoundId, Guid StudentId), (double Score, string Status)> memberScores)
         {
             StringBuilder sb = new StringBuilder();
 
-            // CSV header row
-            sb.Append("No.;TeamName;StudentName;RoundName;RoundType;StudentScore").Append(CSV_NEW_LINE);
+            // CSV header row with Status column
+            sb.Append("No.;Team Name;Student Name;Round Name;Round Type;Student Score;Submission Status").Append(CSV_NEW_LINE);
 
             // Sort rounds ascending by name, then ascending by start
             List<Round> roundsSorted = rounds
@@ -2297,8 +2403,8 @@ namespace BusinessLogic.Services.Contests
                 .ToList();
 
             // Create a list of all rows
-            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score)> rows =
-                new List<(string, string, string, string, double)>();
+            List<(string TeamName, string StudentName, string RoundName, string RoundType, double Score, string Status)> rows =
+                new List<(string, string, string, string, double, string)>();
 
             // Sort members by student name
             List<TeamMember> membersSorted = team.TeamMembers
@@ -2314,17 +2420,22 @@ namespace BusinessLogic.Services.Contests
                 {
                     // Determine round type and convert to readable format
                     string roundType = round.McqTest != null
-                        ? "MCQ Test"
+                        ? ROUND_TYPE_MCQ_TEST
                         : (round.Problem?.Type == ProblemTypeEnum.AutoEvaluation.ToString()
-                            ? "Auto Evaluation"
+                            ? ROUND_TYPE_AUTO_EVALUATION
                             : round.Problem?.Type ?? string.Empty);
 
-                    // Get student score for this round
-                    double score = memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out double v)
-                        ? v
-                        : 0;
+                    // Get student score and status for this round
+                    double score = 0;
+                    string status = "Not Submitted";
 
-                    rows.Add((team.Name, studentName, round.Name, roundType, score));
+                    if (memberScores.TryGetValue((team.TeamId, round.RoundId, member.StudentId), out (double Score, string Status) scoreData))
+                    {
+                        score = scoreData.Score;
+                        status = scoreData.Status;
+                    }
+
+                    rows.Add((team.Name, studentName, round.Name, roundType, score, status));
                 }
             }
 
@@ -2334,7 +2445,7 @@ namespace BusinessLogic.Services.Contests
                 .ThenBy(r => r.StudentName)
                 .ToList();
 
-            // Add rows with No. column
+            // Add rows with No. column and Status column
             int rowNumber = 1;
             foreach (var row in sortedRows)
             {
@@ -2343,7 +2454,8 @@ namespace BusinessLogic.Services.Contests
                   .Append(CsvField(row.StudentName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundName)).Append(CSV_DELIMITER)
                   .Append(CsvField(row.RoundType)).Append(CSV_DELIMITER)
-                  .Append(row.Score.ToString(CultureInfo.InvariantCulture))
+                  .Append(row.Score.ToString(CultureInfo.InvariantCulture)).Append(CSV_DELIMITER)
+                  .Append(CsvField(row.Status))
                   .Append(CSV_NEW_LINE);
 
                 rowNumber++;
@@ -2426,6 +2538,11 @@ namespace BusinessLogic.Services.Contests
                 return await ApplyMentorFilterAsync(query, userId);
             }
 
+            if (userRole == RoleConstants.Judge)
+            {
+                return await ApplyJudgeFilterAsync(query, userId);
+            }
+
             return query;
         }
 
@@ -2483,17 +2600,62 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
+        /// Applies judge-specific contest filter
+        /// </summary>
+        private async Task<IQueryable<Contest>> ApplyJudgeFilterAsync(
+            IQueryable<Contest> query,
+            string userId)
+        {
+            IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+
+            // Get all contest IDs where this user is a judge
+            string judgeKeyPrefix = $"contest:";
+            string judgeKeySuffix = $":judge:{userId}";
+
+            List<string> judgeConfigs = await configRepo.Entities
+                .Where(c => c.Key.StartsWith(judgeKeyPrefix)
+                         && c.Key.EndsWith(judgeKeySuffix)
+                         && c.DeletedAt == null)
+                .Select(c => c.Key)
+                .ToListAsync();
+
+            // Extract contest IDs from config keys
+            List<Guid> contestIds = judgeConfigs
+                .Select(key => {
+                    // Extract contest ID from key format
+                    string[] parts = key.Split(':');
+                    if (parts.Length >= 2 && Guid.TryParse(parts[1], out Guid contestId))
+                    {
+                        return (Guid?)contestId;
+                    }
+                    return null;
+                })
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .ToList();
+
+            // Filter contests to only those where the user is a judge
+            if (contestIds.Any())
+            {
+                query = query.Where(c => contestIds.Contains(c.ContestId));
+            }
+
+            return query;
+        }
+
+        /// <summary>
         /// Maps a contest entity to GetContestDTO with all related data
         /// </summary>
         private GetContestDTO MapContestEntityToDTO(
             Contest contest,
             ILookup<string, Config> configLookup,
             Dictionary<Guid, string> organizerNames,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(contest);
 
-            contestDTO.rounds = MapContestRounds(contest, timeLimitDict);
+            contestDTO.rounds = MapContestRounds(contest, timeLimitDict, mockTestWeightDict);
             contestDTO.CreatedById = Guid.Parse(contest.CreatedBy!);
             contestDTO.CreatedByName = organizerNames.GetValueOrDefault(
                 contestDTO.CreatedById,
@@ -2510,11 +2672,12 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private List<GetRoundDTO> MapContestRounds(
             Contest contest,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             return contest.Rounds
                 .Where(r => !r.DeletedAt.HasValue)
-                .Select(r => MapRoundDTO(r, contest.Name, timeLimitDict))
+                .Select(r => MapRoundDTO(r, contest.Name, timeLimitDict, mockTestWeightDict))
                 .OrderBy(r => r.Start)
                 .ToList();
         }
@@ -2525,7 +2688,8 @@ namespace BusinessLogic.Services.Contests
         private GetRoundDTO MapRoundDTO(
             Round round,
             string contestName,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             GetRoundDTO roundDTO = _mapper.Map<GetRoundDTO>(round);
 
@@ -2536,6 +2700,7 @@ namespace BusinessLogic.Services.Contests
 
             ApplyTimeLimitConfig(roundDTO, round.RoundId, timeLimitDict);
             MapRoundProblemOrTest(roundDTO, round);
+            ApplyMockTestWeightConfig(roundDTO, round, mockTestWeightDict);
 
             return roundDTO;
         }
@@ -2553,6 +2718,28 @@ namespace BusinessLogic.Services.Contests
                 && int.TryParse(timeLimitConfig.Value, out int timeLimit))
             {
                 roundDTO.TimeLimitSeconds = timeLimit;
+            }
+        }
+
+        /// <summary>
+        /// Applies mock test weight configuration to round DTO for auto evaluation rounds with mock tests
+        /// </summary>
+        private void ApplyMockTestWeightConfig(
+            GetRoundDTO roundDTO,
+            Round round,
+            Dictionary<string, Config> mockTestWeightDict)
+        {
+            // Check if this is an auto evaluation round with mock test
+            if (round.Problem != null
+                && round.Problem.Type == PROBLEM_TYPE_AUTO_EVALUATION
+                && round.Problem.TestType == AUTO_MOCK_TEST_TEST_TYPE)
+            {
+                string weightKey = ConfigKeys.RoundWeight(round.RoundId);
+                if (mockTestWeightDict.TryGetValue(weightKey, out Config? weightConfig)
+                    && double.TryParse(weightConfig.Value, out double weight))
+                {
+                    roundDTO.Problem!.MockTestWeight = weight;
+                }
             }
         }
 
@@ -2803,7 +2990,8 @@ namespace BusinessLogic.Services.Contests
         private IQueryable<Contest> ApplyDraftFilterForRole(IQueryable<Contest> query, string? userRole)
         {
             // For non-organizers, don't show draft contests
-            if (userRole != RoleConstants.ContestOrganizer)
+            if (userRole != RoleConstants.ContestOrganizer &&
+                userRole != RoleConstants.Judge)
             {
                 query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }
@@ -2872,7 +3060,7 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Loads all related data efficiently (configs, organizers, time limits)
         /// </summary>
-        private async Task<(ILookup<string, Config> configLookup, Dictionary<Guid, string> organizerNames, Dictionary<string, Config> timeLimitDict)>
+        private async Task<(ILookup<string, Config> configLookup, Dictionary<Guid, string> organizerNames, Dictionary<string, Config> timeLimitDict, Dictionary<string, Config> mockTestWeightDict)>
             LoadRelatedDataAsync(IReadOnlyCollection<Contest> contests)
         {
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -2909,13 +3097,22 @@ namespace BusinessLogic.Services.Contests
 
             List<Config> timeLimitConfigs = await configRepo.Entities
                 .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
-                            && c.Key.Contains("time_limit_seconds")
+                            && c.Key.Contains(TIME_LIMIT_SECONDS_KEY_SUFFIX)
                             && c.DeletedAt == null)
                 .ToListAsync();
 
             Dictionary<string, Config> timeLimitDict = timeLimitConfigs.ToDictionary(c => c.Key);
 
-            return (configLookup, organizerNames, timeLimitDict);
+            // Load mock test weight configs
+            List<Config> mockTestWeightConfigs = await configRepo.Entities
+                .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                            && c.Key.Contains(MOCK_TEST_WEIGHT_KEY_SUFFIX)
+                            && c.DeletedAt == null)
+                .ToListAsync();
+
+            Dictionary<string, Config> mockTestWeightDict = mockTestWeightConfigs.ToDictionary(c => c.Key);
+
+            return (configLookup, organizerNames, timeLimitDict, mockTestWeightDict);
         }
 
         /// <summary>
@@ -2936,7 +3133,7 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Loads all related data for a single contest
         /// </summary>
-        private async Task<(ILookup<string, Config> configLookup, string organizerName, Dictionary<string, Config> timeLimitDict)>
+        private async Task<(ILookup<string, Config> configLookup, string organizerName, Dictionary<string, Config> timeLimitDict, Dictionary<string, Config> mockTestWeightDict)>
             LoadContestRelatedDataAsync(Contest contest)
         {
             IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
@@ -2960,13 +3157,22 @@ namespace BusinessLogic.Services.Contests
             List<Guid> roundIds = contest.Rounds.Select(r => r.RoundId).Distinct().ToList();
             List<Config> timeLimitConfigs = await configRepo.Entities
                 .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
-                            && c.Key.Contains("time_limit_seconds")
+                            && c.Key.Contains(TIME_LIMIT_SECONDS_KEY_SUFFIX)
                             && c.DeletedAt == null)
                 .ToListAsync();
 
             Dictionary<string, Config> timeLimitDict = timeLimitConfigs.ToDictionary(c => c.Key);
 
-            return (configLookup, organizerName, timeLimitDict);
+            // Load weights for mock test rounds
+            List<Config> mockTestWeightConfigs = await configRepo.Entities
+                .Where(c => roundIds.Any(rid => c.Key.Contains(rid.ToString()))
+                            && c.Key.Contains(MOCK_TEST_WEIGHT_KEY_SUFFIX)
+                            && c.DeletedAt == null)
+                .ToListAsync();
+
+            Dictionary<string, Config> mockTestWeightDict = mockTestWeightConfigs.ToDictionary(c => c.Key);
+
+            return (configLookup, organizerName, timeLimitDict, mockTestWeightDict);
         }
 
         /// <summary>
@@ -2976,12 +3182,13 @@ namespace BusinessLogic.Services.Contests
             Contest contest,
             ILookup<string, Config> configLookup,
             string organizerName,
-            Dictionary<string, Config> timeLimitDict)
+            Dictionary<string, Config> timeLimitDict,
+            Dictionary<string, Config> mockTestWeightDict)
         {
             GetContestDTO contestDTO = _mapper.Map<GetContestDTO>(contest);
 
             // Map rounds
-            contestDTO.rounds = MapContestRounds(contest, timeLimitDict);
+            contestDTO.rounds = MapContestRounds(contest, timeLimitDict, mockTestWeightDict);
 
             // Map creator info
             contestDTO.CreatedById = Guid.Parse(contest.CreatedBy!);
