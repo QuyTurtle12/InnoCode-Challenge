@@ -2803,6 +2803,8 @@ namespace BusinessLogic.Services.Contests
             string key = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
             await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
             await _unitOfWork.SaveAsync();
+
+            await AutoDenyPendingAppealsAsync(round);
         }
 
         public async Task FastForwardJudgeDeadlineAsync(Guid roundId)
@@ -2870,18 +2872,54 @@ namespace BusinessLogic.Services.Contests
         public async Task TryFinalizeRoundAsync(Guid roundId)
         {
             var roundRepo = _unitOfWork.GetRepository<Round>();
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
             Round? round = await roundRepo.Entities
                 .Include(r => r.Problem)
                 .Include(r => r.McqTest)
                 .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
 
-            if (round == null) return;
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            string finalized = RoundStatusEnum.Finalized.ToString();
+            string closed = RoundStatusEnum.Closed.ToString();
+
+            if (string.Equals(round.Status, finalized, StringComparison.OrdinalIgnoreCase))
+                return;
 
             DateTime finalizeNotBefore = await GetFinalizeNotBeforeAsync(roundId);
 
             // Finalize only when all deadlines and round end are in the past
             if (DateTime.UtcNow < finalizeNotBefore)
-                return;
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Finalize is only allowed after all deadlines are completed.");
+
+            bool roundEnded = string.Equals(round.Status, closed, StringComparison.OrdinalIgnoreCase)
+                              || DateTime.UtcNow >= round.End;
+            if (!roundEnded)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Round has not ended yet.");
+
+            bool hasPendingSubs = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s => s.DeletedAt == null
+                               && s.Problem != null
+                               && s.Problem.RoundId == roundId
+                               && s.Status == SubmissionStatusEnum.Pending.ToString());
+            if (hasPendingSubs)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Cannot finalize while there are pending submissions.");
+
+            bool hasOpenAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a => a.DeletedAt == null
+                               && a.TargetId == roundId
+                               && (a.State != AppealStateEnum.Closed.ToString()
+                                   || a.Decision == AppealDecisionEnum.Pending.ToString()));
+            if (hasOpenAppeals)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Cannot finalize while there are pending appeals.");
 
             await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
         }
@@ -3008,6 +3046,89 @@ namespace BusinessLogic.Services.Contests
                 out DateTime parsed)
                 ? parsed
                 : fallback;
+        }
+
+        private async Task AutoDenyPendingAppealsAsync(Round round)
+        {
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
+            var mentorRepo = _unitOfWork.GetRepository<Mentor>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            var pendingAppeals = await appealRepo.Entities
+                .Include(a => a.Team)
+                .Where(a => a.DeletedAt == null
+                            && a.TargetId == round.RoundId
+                            && (a.State != AppealStateEnum.Closed.ToString()
+                                || a.Decision == AppealDecisionEnum.Pending.ToString()))
+                .ToListAsync();
+
+            if (!pendingAppeals.Any()) return;
+
+            Guid organizerId = Guid.Empty;
+            string? organizerStr = await contestRepo.Entities
+                .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                .Select(c => c.CreatedBy)
+                .FirstOrDefaultAsync();
+            Guid.TryParse(organizerStr, out organizerId);
+
+            foreach (var appeal in pendingAppeals)
+            {
+                appeal.State = AppealStateEnum.Closed.ToString();
+                appeal.Decision = AppealDecisionEnum.Rejected.ToString();
+                if (string.IsNullOrWhiteSpace(appeal.DecisionReason))
+                {
+                    appeal.DecisionReason = "Auto-denied because the appeal review deadline passed.";
+                }
+
+                await appealRepo.UpdateAsync(appeal);
+            }
+
+            await _unitOfWork.SaveAsync();
+
+            foreach (var appeal in pendingAppeals)
+            {
+                var recipients = new HashSet<Guid>();
+                if (appeal.OwnerId != Guid.Empty) recipients.Add(appeal.OwnerId);
+
+                if (appeal.Team?.MentorId != null)
+                {
+                    Guid? mentorUserId = await mentorRepo.Entities
+                        .Where(m => m.MentorId == appeal.Team.MentorId && m.DeletedAt == null)
+                        .Select(m => (Guid?)m.UserId)
+                        .FirstOrDefaultAsync();
+                    if (mentorUserId.HasValue) recipients.Add(mentorUserId.Value);
+                }
+
+                if (organizerId != Guid.Empty) recipients.Add(organizerId);
+
+                if (recipients.Count > 0)
+                {
+                    await _notificationService.CreateInAppToUsersAsync(
+                        recipients,
+                        NotificationTypes.AppealUpdated,
+                        new
+                        {
+                            appealId = appeal.AppealId,
+                            teamId = appeal.TeamId,
+                            roundId = appeal.TargetId,
+                            contestId = round.ContestId,
+                            state = appeal.State,
+                            decision = appeal.Decision,
+                            targetType = TargetTypes.Appeal,
+                            targetId = appeal.AppealId.ToString(),
+                            message = "Appeal was auto-denied after the review deadline."
+                        });
+                }
+
+                if (organizerId != Guid.Empty)
+                {
+                    await _activityLogWriter.TryWriteAsync(
+                        organizerId,
+                        ActivityActions.AppealResolve,
+                        TargetTypes.Appeal,
+                        appeal.AppealId.ToString());
+                }
+            }
         }
 
         private static DateTime? TryParseUtc(string? isoString)
