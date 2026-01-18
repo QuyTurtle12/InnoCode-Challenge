@@ -2401,6 +2401,10 @@ namespace BusinessLogic.Services.Contests
             await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(contestId), now.ToString("o"));
             contest.Status = ContestStatusEnum.RegistrationClosed.ToString();
             await contestRepo.UpdateAsync(contest);
+
+            // Cancel pending invitations
+            await CancelPendingInvitationsForContestAsync(contestId);
+
             await _unitOfWork.SaveAsync();
 
             // Notify dashboard
@@ -3690,6 +3694,51 @@ namespace BusinessLogic.Services.Contests
             created.JudgeRescoreDays = policyValues.JudgeRescoreDays;
 
             return created;
+        }
+
+        /// <summary>
+        /// Make pending team invitations expired when contest registration time ends
+        /// </summary>
+        private async Task CancelPendingInvitationsForContestAsync(Guid contestId)
+        {
+            try
+            {
+                IGenericRepository<TeamInvite> inviteRepo = _unitOfWork.GetRepository<TeamInvite>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+                // Get all team IDs for the contest
+                List<Guid> contestTeamIds = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                    .Select(t => t.TeamId)
+                    .ToListAsync();
+
+                if (!contestTeamIds.Any())
+                {
+                    _logger.LogDebug("No teams found for contest {ContestId}, skipping invitation cancellation.", contestId);
+                    return;
+                }
+
+                List<TeamInvite> pendingInvitations = await inviteRepo.Entities
+                    .Where(inv => contestTeamIds.Contains(inv.TeamId)
+                               && inv.Status == TeamInviteStatusConstants.Pending)
+                    .ToListAsync();
+
+                if (pendingInvitations.Any())
+                {
+                    foreach (TeamInvite invitation in pendingInvitations)
+                    {
+                        invitation.Status = TeamInviteStatusConstants.Expired;
+                    }
+
+                    _logger.LogInformation(
+                        "Expired {Count} pending invitation(s) for contest {ContestId}",
+                        pendingInvitations.Count, contestId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to cancel pending invitations for contest {ContestId}", contestId);
+            }
         }
 
     }

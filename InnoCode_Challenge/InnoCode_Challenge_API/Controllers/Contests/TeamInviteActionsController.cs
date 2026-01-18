@@ -1,9 +1,6 @@
 ﻿using BusinessLogic.IServices;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Repository.ResponseModel;
-using System.Security.Claims;
-using Utility.Constant;
 
 namespace InnoCode_Challenge_API.Controllers
 {
