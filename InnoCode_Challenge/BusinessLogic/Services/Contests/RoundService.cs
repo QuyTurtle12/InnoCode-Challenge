@@ -35,6 +35,7 @@ namespace BusinessLogic.Services.Contests
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IConfigService _configService;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly ILeaderboardEntryService _leaderboardEntryService;
 
         private readonly INotificationService _notificationService;   
         private readonly IActivityLogWriter _activityLogWriter;       
@@ -75,6 +76,7 @@ namespace BusinessLogic.Services.Contests
             IHttpContextAccessor httpContextAccessor,
             IConfigService configService,
             ICloudinaryService cloudinaryService,
+            ILeaderboardEntryService leaderboardEntryService,
             INotificationService notificationService,               
             IActivityLogWriter activityLogWriter,                     
             ILogger<RoundService> logger)                             
@@ -88,6 +90,7 @@ namespace BusinessLogic.Services.Contests
             _httpContextAccessor = httpContextAccessor;
             _configService = configService;
             _cloudinaryService = cloudinaryService;
+            _leaderboardEntryService = leaderboardEntryService;
             _notificationService = notificationService;               
             _activityLogWriter = activityLogWriter;                   
             _logger = logger;                                         
@@ -2867,6 +2870,8 @@ namespace BusinessLogic.Services.Contests
             }
 
             await _unitOfWork.SaveAsync();
+
+            await AutoScorePendingSubmissionsAsync(round);
         }
 
         public async Task TryFinalizeRoundAsync(Guid roundId)
@@ -3127,6 +3132,124 @@ namespace BusinessLogic.Services.Contests
                         ActivityActions.AppealResolve,
                         TargetTypes.Appeal,
                         appeal.AppealId.ToString());
+                }
+            }
+        }
+
+        private async Task AutoScorePendingSubmissionsAsync(Round round)
+        {
+            if (!IsManualRound(round))
+                return;
+
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId,
+                ContestPolicyKeys.JudgeRescoreDays,
+                DEFAULT_JUDGE_RESCORE_DAYS,
+                configRepo);
+
+            DateTime defaultDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+            DateTime? judgeOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundJudgeDeadlineUtc(round.RoundId));
+            DateTime? rescoreOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundJudgeRescoreDeadlineUtc(round.RoundId));
+            if (judgeOverride.HasValue || rescoreOverride.HasValue)
+            {
+                var candidates = new List<DateTime> { defaultDeadline };
+                if (judgeOverride.HasValue) candidates.Add(judgeOverride.Value);
+                if (rescoreOverride.HasValue) candidates.Add(rescoreOverride.Value);
+                defaultDeadline = candidates.Min();
+            }
+
+            var pendingSubs = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                .Where(s => s.DeletedAt == null
+                            && s.Problem != null
+                            && s.Problem.RoundId == round.RoundId
+                            && s.Status == SubmissionStatusEnum.Pending.ToString())
+                .ToListAsync();
+
+            if (!pendingSubs.Any()) return;
+
+            Guid organizerId = Guid.Empty;
+            string? organizerStr = await contestRepo.Entities
+                .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                .Select(c => c.CreatedBy)
+                .FirstOrDefaultAsync();
+            Guid.TryParse(organizerStr, out organizerId);
+
+            var overdue = new List<Submission>();
+            foreach (var sub in pendingSubs)
+            {
+                DateTime deadline = defaultDeadline;
+                if (!string.IsNullOrWhiteSpace(sub.JudgedBy)
+                    && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                {
+                    string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                    string? val = await configRepo.Entities
+                        .Where(c => c.Key == key && c.DeletedAt == null)
+                        .Select(c => c.Value)
+                        .FirstOrDefaultAsync();
+                    if (DateTime.TryParse(
+                        val,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind,
+                        out DateTime parsed))
+                    {
+                        deadline = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+                    }
+                }
+
+                if (DateTime.UtcNow <= deadline) continue;
+
+                sub.Status = SubmissionStatusEnum.Finished.ToString();
+                sub.Score = 0;
+                await submissionRepo.UpdateAsync(sub);
+                overdue.Add(sub);
+            }
+
+            if (!overdue.Any()) return;
+
+            await _unitOfWork.SaveAsync();
+
+            foreach (var sub in overdue)
+            {
+                await _configService.MarkFinishedSubmissionAsync(round.RoundId, sub.SubmittedByStudentId);
+                await _leaderboardEntryService.UpdateTeamScoreAsync(round.ContestId, sub.TeamId);
+
+                var recipients = new HashSet<Guid>();
+                if (!string.IsNullOrWhiteSpace(sub.JudgedBy)
+                    && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                {
+                    recipients.Add(judgeId);
+                }
+                if (organizerId != Guid.Empty) recipients.Add(organizerId);
+
+                if (recipients.Count > 0)
+                {
+                    await _notificationService.CreateInAppToUsersAsync(
+                        recipients,
+                        NotificationTypes.SubmissionStatusChanged,
+                        new
+                        {
+                            contestId = round.ContestId,
+                            roundId = round.RoundId,
+                            submissionId = sub.SubmissionId,
+                            status = sub.Status,
+                            message = "Submission was auto-scored 0 because the judge deadline passed."
+                        });
+                }
+
+                if (organizerId != Guid.Empty)
+                {
+                    await _activityLogWriter.TryWriteAsync(
+                        organizerId,
+                        ActivityActions.SubmissionStatusChange,
+                        TargetTypes.Submission,
+                        sub.SubmissionId.ToString());
                 }
             }
         }
