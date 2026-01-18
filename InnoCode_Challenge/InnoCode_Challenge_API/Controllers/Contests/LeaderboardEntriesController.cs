@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Repository.DTOs.LeaderboardEntryDTOs;
 using Repository.ResponseModel;
 using Utility.Constant;
+using Utility.PaginatedList;
 
 namespace InnoCode_Challenge_API.Controllers.Contests
 {
@@ -74,7 +75,7 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             int pageSize = 10
             )
         {
-            var teams = await _leaderboardService.GetAllTeamsInContestAsync(pageNumber, pageSize, contestId);
+            PaginatedList<TeamInfo>? teams = await _leaderboardService.GetAllTeamsInContestAsync(pageNumber, pageSize, contestId);
 
             var paging = new
             {
@@ -112,24 +113,6 @@ namespace InnoCode_Challenge_API.Controllers.Contests
                 code: ResponseCodeConstants.SUCCESS,
                 data: newStatus,
                 message: $"Contest status changed to {newStatus} successfully."
-            ));
-        }
-
-        /// <summary>
-        /// Update team score (staff/admin only)
-        /// </summary>
-        [HttpPut("contests/{contestId}/teams/{teamId}/score")]
-        [Authorize(Policy = "RequireStaffOrAdmin")]
-        public async Task<IActionResult> SetTeamScore(
-            Guid contestId,
-            Guid teamId,
-            double newScore)
-        {
-            await _leaderboardService.SetTeamScoreAsync(contestId, teamId, newScore);
-            return Ok(new BaseResponseModel(
-                statusCode: StatusCodes.Status200OK,
-                code: ResponseCodeConstants.SUCCESS,
-                message: "Team score updated"
             ));
         }
     }

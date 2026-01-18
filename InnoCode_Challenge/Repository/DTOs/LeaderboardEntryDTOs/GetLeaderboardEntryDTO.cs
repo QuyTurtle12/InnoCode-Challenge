@@ -5,6 +5,8 @@
         public Guid EntryId { get; set; }
 
         public string ContestName { get; set; } = string.Empty;
+        
+        public bool IsFrozen { get; set; }
 
         public IList<TeamInfo> teamIdList { get; set; } = new List<TeamInfo>();
 
