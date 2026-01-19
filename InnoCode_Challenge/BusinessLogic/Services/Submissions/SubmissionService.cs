@@ -4232,178 +4232,343 @@ namespace BusinessLogic.Services.Submissions
         {
             try
             {
-                // Begin transaction
                 _unitOfWork.BeginTransaction();
 
-                // Validate round exists and get contest information
-                Round? round = await _unitOfWork.GetRepository<Round>()
-                    .Entities
-                    .Include(r => r.Contest)
-                    .Include(r => r.Problem)
-                    .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+                // Validate and get round
+                Round round = await ValidateAndGetRoundForTransferAsync(roundId);
 
-                if (round == null)
+                // Validate permissions
+                await ValidateTransferPermissionsAsync(round);
+
+                // Get active judges (excluding the transferring judge)
+                List<JudgeInContestDTO> targetJudges = await GetTargetJudgesForTransferAsync(round.ContestId, judgeId);
+
+                // Get submissions to transfer
+                List<Submission> submissions = await GetSubmissionsToTransferAsync(roundId, judgeId);
+
+                if (!submissions.Any())
                 {
-                    throw new ErrorException(
-                        StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        "Round not found"
-                    );
-                }
-
-                // Verify current user is the organizer
-                string currentUserId = GetCurrentUserIdOrThrow();
-                if (round.Contest.CreatedBy != currentUserId)
-                {
-                    throw new ErrorException(
-                        StatusCodes.Status403Forbidden,
-                        ResponseCodeConstants.FORBIDDEN,
-                        "Only the contest organizer can transfer submissions"
-                    );
-                }
-
-                // Check if round has a manual problem
-                if (round.Problem == null || round.Problem.Type != ProblemTypeEnum.Manual.ToString())
-                {
-                    throw new ErrorException(
-                        StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "This round does not have a manual problem type"
-                    );
-                }
-
-                // Get all judges for this contest
-                IList<JudgeInContestDTO> allJudges = await _contestJudgeService.GetJudgesByContestAsync(round.ContestId);
-
-                if (allJudges == null || !allJudges.Any())
-                {
-                    throw new ErrorException(
-                        StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        "No judges available for this contest"
-                    );
-                }
-
-                // Filter only active judges, excluding the transferring judge
-                List<JudgeInContestDTO> activeJudges = allJudges
-                    .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE && j.UserId != judgeId)
-                    .ToList();
-
-                if (!activeJudges.Any())
-                {
-                    throw new ErrorException(
-                        StatusCodes.Status400BadRequest,
-                        ResponseCodeConstants.BADREQUEST,
-                        "No other active judges available to transfer submissions to"
-                    );
-                }
-
-                // Get submissions assigned to the specified judge in this round
-                List<Submission> submissionsToTransfer = await _unitOfWork.GetRepository<Submission>()
-                    .Entities
-                    .Include(s => s.Team)
-                    .Where(s => s.Problem.RoundId == roundId
-                                && !s.DeletedAt.HasValue
-                                && s.JudgedBy == judgeId.ToString()
-                                && s.Status == SUBMISSION_STATUS_PENDING)
-                    .OrderBy(s => s.CreatedAt)
-                    .ToListAsync();
-
-                if (!submissionsToTransfer.Any())
-                {
-                    // No submissions to transfer, commit and return
                     _unitOfWork.CommitTransaction();
                     return;
                 }
 
-                // Distribute submissions equally using round-robin
-                int judgeIndex = 0;
-                IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
-                IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
-
-                // Calculate default deadline
-                int judgeDays = await GetContestPolicyDaysAsync(
-                    round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
-                DateTime defaultJudgeDeadline = round.End.AddDays(judgeDays);
-
-                // Assign submissions to other judges
-                foreach (Submission submission in submissionsToTransfer)
-                {
-                    JudgeInContestDTO assignedJudge = activeJudges[judgeIndex];
-
-                    // Retrieve old judge deadline config to preserve the deadline
-                    string oldKey = ConfigKeys.JudgeSubmissionDeadline(judgeId, submission.SubmissionId);
-                    Config? oldConfig = await configRepo.Entities
-                        .Where(c => c.Key == oldKey && c.DeletedAt == null)
-                        .FirstOrDefaultAsync();
-
-                    // Preserve the old deadline, or use default if not found
-                    DateTime judgeDeadline = defaultJudgeDeadline;
-                    if (oldConfig != null && DateTime.TryParse(oldConfig.Value, out DateTime parsedDeadline))
-                    {
-                        judgeDeadline = parsedDeadline;
-                    }
-
-                    // Update submission's judge
-                    submission.JudgedBy = assignedJudge.UserId.ToString();
-                    submissionRepo.Update(submission);
-
-                    // Soft delete old judge deadline config
-                    if (oldConfig != null)
-                    {
-                        oldConfig.DeletedAt = DateTime.UtcNow;
-                        await configRepo.UpdateAsync(oldConfig);
-                    }
-
-                    // Set new judge deadline for this submission
-                    string newKey = ConfigKeys.JudgeSubmissionDeadline(assignedJudge.UserId, submission.SubmissionId);
-                    Config? existing = await configRepo.Entities
-                        .Where(c => c.Key == newKey && c.DeletedAt == null)
-                        .FirstOrDefaultAsync();
-
-                    if (existing == null)
-                    {
-                        await configRepo.InsertAsync(new Config
-                        {
-                            Key = newKey,
-                            Value = judgeDeadline.ToString("o"),
-                            Scope = SCOPE_CONTEST,
-                            UpdatedAt = DateTime.UtcNow
-                        });
-                    }
-                    else
-                    {
-                        existing.Value = judgeDeadline.ToString("o");
-                        existing.Scope = SCOPE_CONTEST;
-                        existing.UpdatedAt = DateTime.UtcNow;
-                        await configRepo.UpdateAsync(existing);
-                    }
-
-                    // Move to next judge
-                    judgeIndex = (judgeIndex + 1) % activeJudges.Count;
-                }
+                // Transfer submissions and track assignments
+                Dictionary<Guid, int> judgeAssignments = await TransferSubmissionsToJudgesAsync(
+                    submissions, targetJudges, round, judgeId);
 
                 // Save changes
                 await _unitOfWork.SaveAsync();
-
-                // Commit transaction
                 _unitOfWork.CommitTransaction();
+
+                // Send notifications
+                await NotifyJudgesAboutNewAssignmentsAsync(judgeAssignments, round);
             }
             catch (Exception ex)
             {
-                // Rollback on error
                 _unitOfWork.RollBack();
-
-                if (ex is ErrorException)
-                {
-                    throw;
-                }
-
+                if (ex is ErrorException) throw;
                 throw new ErrorException(
                     StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error transferring submissions: {ex.Message}"
                 );
+            }
+        }
+
+        /// <summary>
+        /// Validates and retrieves the round for transfer operation
+        /// </summary>
+        private async Task<Round> ValidateAndGetRoundForTransferAsync(Guid roundId)
+        {
+            Round? round = await _unitOfWork.GetRepository<Round>()
+                .Entities
+                .Include(r => r.Contest)
+                .Include(r => r.Problem)
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+            if (round == null)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Round not found"
+                );
+            }
+
+            if (round.Problem == null || round.Problem.Type != ProblemTypeEnum.Manual.ToString())
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "This round does not have a manual problem type"
+                );
+            }
+
+            return round;
+        }
+
+        /// <summary>
+        /// Validates that the current user has permission to transfer submissions
+        /// </summary>
+        private async Task ValidateTransferPermissionsAsync(Round round)
+        {
+            string currentUserId = GetCurrentUserIdOrThrow();
+
+            if (round.Contest.CreatedBy != currentUserId)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Only the contest organizer can transfer submissions"
+                );
+            }
+        }
+
+        /// <summary>
+        /// Gets active judges available for receiving transferred submissions
+        /// </summary>
+        private async Task<List<JudgeInContestDTO>> GetTargetJudgesForTransferAsync(
+            Guid contestId,
+            Guid excludeJudgeId)
+        {
+            IList<JudgeInContestDTO> allJudges = await _contestJudgeService.GetJudgesByContestAsync(contestId);
+
+            if (allJudges == null || !allJudges.Any())
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "No judges available for this contest"
+                );
+            }
+
+            List<JudgeInContestDTO> activeJudges = allJudges
+                .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE && j.UserId != excludeJudgeId)
+                .ToList();
+
+            if (!activeJudges.Any())
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "No other active judges available to transfer submissions to"
+                );
+            }
+
+            return activeJudges;
+        }
+
+        /// <summary>
+        /// Gets submissions assigned to a specific judge that are pending grading
+        /// </summary>
+        private async Task<List<Submission>> GetSubmissionsToTransferAsync(Guid roundId, Guid judgeId)
+        {
+            return await _unitOfWork.GetRepository<Submission>()
+                .Entities
+                .Include(s => s.Team)
+                .Where(s => s.Problem.RoundId == roundId
+                            && !s.DeletedAt.HasValue
+                            && s.JudgedBy == judgeId.ToString()
+                            && s.Status == SUBMISSION_STATUS_PENDING)
+                .OrderBy(s => s.CreatedAt)
+                .ToListAsync();
+        }
+
+        /// <summary>
+        /// Transfers submissions to judges using round-robin distribution
+        /// </summary>
+        private async Task<Dictionary<Guid, int>> TransferSubmissionsToJudgesAsync(
+            List<Submission> submissions,
+            List<JudgeInContestDTO> targetJudges,
+            Round round,
+            Guid sourceJudgeId)
+        {
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var judgeAssignments = new Dictionary<Guid, int>();
+
+            // Calculate default deadline
+            DateTime defaultDeadline = await CalculateJudgeDeadlineAsync(round, configRepo);
+
+            int judgeIndex = 0;
+            foreach (Submission submission in submissions)
+            {
+                JudgeInContestDTO assignedJudge = targetJudges[judgeIndex];
+
+                // Track assignment count
+                if (!judgeAssignments.ContainsKey(assignedJudge.UserId))
+                {
+                    judgeAssignments[assignedJudge.UserId] = 0;
+                }
+                judgeAssignments[assignedJudge.UserId]++;
+
+                // Transfer submission
+                await TransferSubmissionToJudgeAsync(
+                    submission,
+                    assignedJudge.UserId,
+                    sourceJudgeId,
+                    defaultDeadline,
+                    submissionRepo,
+                    configRepo);
+
+                // Move to next judge (round-robin)
+                judgeIndex = (judgeIndex + 1) % targetJudges.Count;
+            }
+
+            return judgeAssignments;
+        }
+
+        /// <summary>
+        /// Calculates the deadline for judge scoring based on contest policy
+        /// </summary>
+        private async Task<DateTime> CalculateJudgeDeadlineAsync(
+            Round round,
+            IGenericRepository<Config> configRepo)
+        {
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId,
+                ContestPolicyKeys.JudgeRescoreDays,
+                DEFAULT_JUDGE_RESCORE_DAYS,
+                configRepo);
+
+            return round.End.AddDays(judgeDays);
+        }
+
+        /// <summary>
+        /// Transfers a single submission to a new judge and updates deadline configs
+        /// </summary>
+        private async Task TransferSubmissionToJudgeAsync(
+            Submission submission,
+            Guid newJudgeId,
+            Guid oldJudgeId,
+            DateTime defaultDeadline,
+            IGenericRepository<Submission> submissionRepo,
+            IGenericRepository<Config> configRepo)
+        {
+            // Get existing deadline (if any)
+            DateTime judgeDeadline = await GetOrCreateJudgeDeadlineAsync(
+                oldJudgeId,
+                submission.SubmissionId,
+                defaultDeadline,
+                configRepo);
+
+            // Update submission's judge
+            submission.JudgedBy = newJudgeId.ToString();
+            submissionRepo.Update(submission);
+
+            // Manage deadline configs
+            await UpdateJudgeDeadlineConfigsAsync(
+                oldJudgeId,
+                newJudgeId,
+                submission.SubmissionId,
+                judgeDeadline,
+                configRepo);
+        }
+
+        /// <summary>
+        /// Gets existing judge deadline or returns default
+        /// </summary>
+        private async Task<DateTime> GetOrCreateJudgeDeadlineAsync(
+            Guid judgeId,
+            Guid submissionId,
+            DateTime defaultDeadline,
+            IGenericRepository<Config> configRepo)
+        {
+            string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, submissionId);
+
+            Config? config = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (config != null && DateTime.TryParse(config.Value, out DateTime parsedDeadline))
+            {
+                return parsedDeadline;
+            }
+
+            return defaultDeadline;
+        }
+
+        /// <summary>
+        /// Updates deadline configuration when transferring submission between judges
+        /// </summary>
+        private async Task UpdateJudgeDeadlineConfigsAsync(
+            Guid oldJudgeId,
+            Guid newJudgeId,
+            Guid submissionId,
+            DateTime deadline,
+            IGenericRepository<Config> configRepo)
+        {
+            // Soft delete old judge's deadline config
+            string oldKey = ConfigKeys.JudgeSubmissionDeadline(oldJudgeId, submissionId);
+            Config? oldConfig = await configRepo.Entities
+                .Where(c => c.Key == oldKey && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (oldConfig != null)
+            {
+                configRepo.Delete(oldConfig);
+            }
+
+            // Create or update new judge's deadline config
+            string newKey = ConfigKeys.JudgeSubmissionDeadline(newJudgeId, submissionId);
+            Config? existingConfig = await configRepo.Entities
+                .Where(c => c.Key == newKey && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (existingConfig == null)
+            {
+                await configRepo.InsertAsync(new Config
+                {
+                    Key = newKey,
+                    Value = deadline.ToString("o"),
+                    Scope = SCOPE_CONTEST,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existingConfig.Value = deadline.ToString("o");
+                existingConfig.Scope = SCOPE_CONTEST;
+                existingConfig.UpdatedAt = DateTime.UtcNow;
+                await configRepo.UpdateAsync(existingConfig);
+            }
+        }
+
+        /// <summary>
+        /// Sends notifications to judges about their new submission assignments
+        /// </summary>
+        private async Task NotifyJudgesAboutNewAssignmentsAsync(
+            Dictionary<Guid, int> judgeAssignments,
+            Round round)
+        {
+            foreach (var kvp in judgeAssignments)
+            {
+                Guid judgeUserId = kvp.Key;
+                int submissionCount = kvp.Value;
+
+                try
+                {
+                    await _notificationService.CreateInAppToUserAsync(
+                        judgeUserId,
+                        NotificationTypes.ManualGradingAssigned,
+                        new
+                        {
+                            contestId = round.ContestId,
+                            contestName = round.Contest.Name,
+                            roundId = round.RoundId,
+                            roundName = round.Name,
+                            submissionCount = submissionCount,
+                            targetType = TargetTypes.Submission,
+                            targetId = round.RoundId.ToString(),
+                            message = $"You have been assigned {submissionCount} new submission{(submissionCount > 1 ? "s" : "")} to grade in contest '{round.Contest.Name}', round '{round.Name}'."
+                        });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to send manual grading notification. JudgeUserId={JudgeUserId}, RoundId={RoundId}",
+                        judgeUserId, round.RoundId);
+                }
             }
         }
     }

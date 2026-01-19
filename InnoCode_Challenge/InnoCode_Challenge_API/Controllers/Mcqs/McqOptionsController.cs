@@ -18,33 +18,6 @@ namespace InnoCode_Challenge_API.Controllers.Mcqs
             _mcqOptionService = mcqOptionService;
         }
 
-        ///// <summary>
-        ///// Gets paginated MCQ options
-        ///// </summary>
-        //[HttpGet]
-        //public async Task<IActionResult> GetPaginatedMcqOptions(int pageNumber = 1, int pageSize = 10, Guid? id = null, Guid? questionId = null)
-        //{
-        //    PaginatedList<GetMcqOptionDTO> result = await _mcqOptionService.GetPaginatedMcqOptionAsync(pageNumber, pageSize, id, questionId);
-
-        //    var paging = new
-        //    {
-        //        result.PageNumber,
-        //        result.PageSize,
-        //        result.TotalPages,
-        //        result.TotalCount,
-        //        result.HasPreviousPage,
-        //        result.HasNextPage
-        //    };
-
-        //    return Ok(new BaseResponseModel<object>(
-        //                statusCode: StatusCodes.Status200OK,
-        //                code: ResponseCodeConstants.SUCCESS,
-        //                data: result.Items,
-        //                additionalData: paging,
-        //                message: "Option retrieved successfully."
-        //            ));
-        //}
-
         /// <summary>
         /// Creates a new MCQ option
         /// </summary>
