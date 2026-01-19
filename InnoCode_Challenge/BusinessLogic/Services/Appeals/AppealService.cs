@@ -681,6 +681,40 @@ namespace BusinessLogic.Services.Appeals
                                 message = "Appeal was updated."
                             });
                     }
+
+                    if (string.Equals(appeal.Decision, AppealDecisionEnum.Approved.ToString(), StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(appeal.AppealResolution, AppealResolutionEnum.Rescore.ToString(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        var submissionRepo = _unitOfWork.GetRepository<Submission>();
+                        var rescoreSubmission = await submissionRepo.Entities
+                            .Where(s => s.TeamId == appeal.TeamId
+                                        && s.Problem != null
+                                        && s.Problem.RoundId == appeal.TargetId
+                                        && s.DeletedAt == null)
+                            .OrderByDescending(s => s.CreatedAt)
+                            .Select(s => new { s.SubmissionId, s.JudgedBy })
+                            .FirstOrDefaultAsync();
+
+                        if (rescoreSubmission != null
+                            && !string.IsNullOrWhiteSpace(rescoreSubmission.JudgedBy)
+                            && Guid.TryParse(rescoreSubmission.JudgedBy, out var judgeUserId))
+                        {
+                            await _notificationService.CreateInAppToUserAsync(
+                                judgeUserId,
+                                NotificationTypes.ManualGradingAssigned,
+                                new
+                                {
+                                    contestId = appeal.Target.ContestId,
+                                    roundId = appeal.TargetId,
+                                    submissionId = rescoreSubmission.SubmissionId,
+                                    teamId = appeal.TeamId,
+                                    appealId = appeal.AppealId,
+                                    targetType = TargetTypes.Submission,
+                                    targetId = rescoreSubmission.SubmissionId.ToString(),
+                                    message = "Submission was reassigned for rescore."
+                                });
+                        }
+                    }
                 }
                 catch
                 {
