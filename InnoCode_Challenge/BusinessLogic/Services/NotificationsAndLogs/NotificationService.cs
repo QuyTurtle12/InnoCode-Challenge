@@ -8,6 +8,7 @@ using Repository.DTOs.NotificationDTOs;
 using Repository.IRepositories;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Utility.Constant;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
@@ -145,6 +146,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             var page = await repo.GetPagingAsync(q, pageNumber, pageSize);
 
             var items = page.Items.Select(n => MapToDto(n, n.User.Email)).ToList();
+            await EnrichSubmissionResultPayloadsAsync(items);
 
             return new PaginatedList<GetNotificationDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
@@ -175,6 +177,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
             var page = await repo.GetPagingAsync(q, pageNumber, pageSize);
 
             var items = page.Items.Select(n => MapToDto(n, n.User.Email)).ToList();
+            await EnrichSubmissionResultPayloadsAsync(items);
 
             return new PaginatedList<GetNotificationDTO>(items, page.TotalCount, page.PageNumber, page.PageSize);
         }
@@ -440,6 +443,67 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 ReadAt = entity.ReadAt,
                 recipientEmailList = recipients
             };
+        }
+
+        private async Task EnrichSubmissionResultPayloadsAsync(IList<GetNotificationDTO> items)
+        {
+            if (items.Count == 0) return;
+
+            var pending = new List<(GetNotificationDTO Item, Guid SubmissionId, JsonObject Payload)>();
+
+            foreach (var item in items)
+            {
+                if (!string.Equals(item.Type, NotificationTypes.SubmissionResult, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (string.IsNullOrWhiteSpace(item.Payload))
+                    continue;
+
+                JsonObject? payloadObj;
+                try
+                {
+                    payloadObj = JsonNode.Parse(item.Payload) as JsonObject;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (payloadObj == null) continue;
+
+                if (payloadObj.TryGetPropertyValue("contestId", out var contestNode)
+                    && contestNode != null
+                    && !string.IsNullOrWhiteSpace(contestNode.ToString()))
+                {
+                    continue;
+                }
+
+                if (!payloadObj.TryGetPropertyValue("submissionId", out var submissionNode))
+                    continue;
+                if (!Guid.TryParse(submissionNode?.ToString(), out var submissionId))
+                    continue;
+
+                pending.Add((item, submissionId, payloadObj));
+            }
+
+            if (pending.Count == 0) return;
+
+            var submissionIds = pending.Select(x => x.SubmissionId).Distinct().ToList();
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var contestMap = await submissionRepo.Entities
+                .Where(s => s.DeletedAt == null && submissionIds.Contains(s.SubmissionId))
+                .Select(s => new { s.SubmissionId, ContestId = s.Problem.Round.ContestId })
+                .ToListAsync();
+
+            var contestLookup = contestMap.ToDictionary(x => x.SubmissionId, x => x.ContestId);
+
+            foreach (var (item, submissionId, payloadObj) in pending)
+            {
+                if (!contestLookup.TryGetValue(submissionId, out var contestId))
+                    continue;
+
+                payloadObj["contestId"] = contestId.ToString();
+                item.Payload = payloadObj.ToJsonString();
+            }
         }
     }
 }
