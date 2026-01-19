@@ -16,6 +16,8 @@ namespace Repository.DTOs.TeamDTOs
         public Guid MentorId { get; set; }
         public string MentorName { get; set; } = null!;
 
+        public string Status { get; set; } = null!;
+
         public DateTime CreatedAt { get; set; }
         public IList<TeamMemberDTO> Members { get; set; } = new List<TeamMemberDTO>();
     }
