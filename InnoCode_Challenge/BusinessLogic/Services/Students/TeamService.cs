@@ -373,6 +373,16 @@ namespace BusinessLogic.Services.Students
 
             memberRepository.Delete(member);
             await _unitOfWork.SaveAsync();
+
+            string actorUserId = GetCurrentUserIdOrThrow();
+            if (Guid.TryParse(actorUserId, out var actorId))
+            {
+                await _logWriter.TryWriteAsync(
+                    actorId,
+                    ActivityActions.TeamMemberRemove,
+                    TargetTypes.Team,
+                    team.TeamId.ToString());
+            }
         }
 
         public async Task<IReadOnlyList<TeamWithMembersDTO>> GetMyTeamsAsync()

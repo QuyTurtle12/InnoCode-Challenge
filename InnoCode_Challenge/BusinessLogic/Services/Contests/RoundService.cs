@@ -750,6 +750,8 @@ namespace BusinessLogic.Services.Contests
                 int judgeIndex = 0;
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                Guid? actorId = TryGetCurrentUserGuid() ?? TryParseGuid(round.Contest?.CreatedBy);
+                var assignedSubmissionIds = new List<Guid>();
 
                 int judgeDays = await GetContestPolicyDaysAsync(
                     round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
@@ -763,6 +765,7 @@ namespace BusinessLogic.Services.Contests
                     submission.JudgedBy = assignedJudge.UserId.ToString();
 
                     submissionRepo.Update(submission);
+                    assignedSubmissionIds.Add(submission.SubmissionId);
 
                     // Set judge deadline for this submission
                     string key = ConfigKeys.JudgeSubmissionDeadline(assignedJudge.UserId, submission.SubmissionId);
@@ -797,6 +800,18 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
+
+                if (actorId.HasValue && assignedSubmissionIds.Count > 0)
+                {
+                    foreach (var submissionId in assignedSubmissionIds)
+                    {
+                        await SafeWriteActivityAsync(
+                            actorId.Value,
+                            ActivityActions.SubmissionAssignJudge,
+                            TargetTypes.Submission,
+                            submissionId.ToString());
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -2774,6 +2789,12 @@ namespace BusinessLogic.Services.Contests
             string key = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
             await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
             await _unitOfWork.SaveAsync();
+
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundAppealSubmitEnd,
+                TargetTypes.Round,
+                roundId.ToString());
         }
 
         public async Task FastForwardAppealReviewDeadlineAsync(Guid roundId)
@@ -2808,20 +2829,19 @@ namespace BusinessLogic.Services.Contests
             await _unitOfWork.SaveAsync();
 
             await AutoDenyPendingAppealsAsync(round);
+
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundAppealReviewEnd,
+                TargetTypes.Round,
+                roundId.ToString());
         }
 
         public async Task FastForwardJudgeDeadlineAsync(Guid roundId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
             var submissionRepo = _unitOfWork.GetRepository<Submission>();
-            var roundRepo = _unitOfWork.GetRepository<Round>();
-
-            Round? round = await roundRepo.Entities
-                .Include(r => r.Problem)
-                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
-
-            if (round == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+            Round round = await FetchRoundWithIncludesAsync(roundId);
 
             if (round.Problem?.Type != ProblemTypeEnum.Manual.ToString())
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Judge deadline applies only to manual rounds.");
@@ -2872,6 +2892,12 @@ namespace BusinessLogic.Services.Contests
             await _unitOfWork.SaveAsync();
 
             await AutoScorePendingSubmissionsAsync(round);
+
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundJudgeDeadlineEnd,
+                TargetTypes.Round,
+                roundId.ToString());
         }
 
         public async Task TryFinalizeRoundAsync(Guid roundId)
@@ -2882,6 +2908,7 @@ namespace BusinessLogic.Services.Contests
             Round? round = await roundRepo.Entities
                 .Include(r => r.Problem)
                 .Include(r => r.McqTest)
+                .Include(r => r.Contest)
                 .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
 
             if (round == null)
@@ -2927,6 +2954,24 @@ namespace BusinessLogic.Services.Contests
                     "Cannot finalize while there are pending appeals.");
 
             await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
+
+            Guid? actorId = TryGetCurrentUserGuid() ?? TryParseGuid(round.Contest?.CreatedBy);
+            if (actorId.HasValue)
+            {
+                bool isFinalized = await roundRepo.Entities
+                    .AsNoTracking()
+                    .AnyAsync(r => r.RoundId == roundId
+                                   && r.DeletedAt == null
+                                   && r.Status == RoundStatusEnum.Finalized.ToString());
+                if (isFinalized)
+                {
+                    await SafeWriteActivityAsync(
+                        actorId.Value,
+                        ActivityActions.RoundFinalize,
+                        TargetTypes.Round,
+                        roundId.ToString());
+                }
+            }
         }
 
         public async Task<DateTime> GetFinalizeNotBeforeAsync(Guid roundId)
@@ -3269,6 +3314,19 @@ namespace BusinessLogic.Services.Contests
             }
 
             return parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+        }
+
+        private Guid? TryGetCurrentUserGuid()
+        {
+            string? idStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            return TryParseGuid(idStr);
+        }
+
+        private static Guid? TryParseGuid(string? value)
+        {
+            if (!Guid.TryParse(value, out var id) || id == Guid.Empty)
+                return null;
+            return id;
         }
 
         private static async Task<DateTime?> TryGetDeadlineUtcAsync(

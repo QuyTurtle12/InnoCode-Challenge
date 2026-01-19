@@ -384,6 +384,14 @@ namespace Api.IntegrationTests.Users
             loginRes.StatusCode.Should().Be(HttpStatusCode.OK);
             var loginBody = await loginRes.ReadOkAsync<AuthResponseDTO>();
             loginBody.Data!.Role.Should().Be(RoleConstants.Staff);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.ActivityLogs.Any(l => l.UserId == admin.UserId
+                                     && l.Action == ActivityActions.RoleRegistrationApprove
+                                     && l.TargetType == TargetTypes.RoleRegistration
+                                     && l.TargetId == submitted.RegistrationId.ToString()).Should().BeTrue();
         }
 
         [Fact]
@@ -453,6 +461,14 @@ namespace Api.IntegrationTests.Users
             var detail = await getRes.ReadOkAsync<RoleRegistrationDetailDTO>();
             detail.Data!.Status.Should().Be(RoleRegistrationStatusConstants.Denied);
             detail.Data!.DenyReason.Should().Be("Not eligible");
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.ActivityLogs.Any(l => l.UserId == admin.UserId
+                                     && l.Action == ActivityActions.RoleRegistrationDeny
+                                     && l.TargetType == TargetTypes.RoleRegistration
+                                     && l.TargetId == submitted.RegistrationId.ToString()).Should().BeTrue();
         }
 
         [Fact]

@@ -25,6 +25,7 @@ namespace BusinessLogic.Services.Users
         private readonly ICloudinaryService _cloudinary;
         private readonly ILogger<RoleRegistrationService> _logger;
         private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _logWriter;
         private static readonly Dictionary<string, string> RoleAliases = new(StringComparer.OrdinalIgnoreCase)
         {
             { "staff", RoleConstants.Staff },
@@ -39,12 +40,14 @@ namespace BusinessLogic.Services.Users
             IUOW uow,
             ICloudinaryService cloudinary,
             ILogger<RoleRegistrationService> logger,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            IActivityLogWriter logWriter)
         {
             _uow = uow;
             _cloudinary = cloudinary;
             _logger = logger;
             _notificationService = notificationService;
+            _logWriter = logWriter;
         }
 
         public async Task<RoleRegistrationSubmittedDTO> SubmitAsync(CreateRoleRegistrationDTO dto)
@@ -344,6 +347,12 @@ namespace BusinessLogic.Services.Users
                 _logger.LogError(ex, "Approve role registration failed. RegId={RegId}, Reviewer={Reviewer}", id, reviewerUserId);
                 throw;
             }
+
+            await _logWriter.TryWriteAsync(
+                reviewerUserId,
+                ActivityActions.RoleRegistrationApprove,
+                TargetTypes.RoleRegistration,
+                id.ToString());
         }
 
         public async Task DenyAsync(Guid id, string reason, Guid reviewerUserId)
@@ -366,6 +375,12 @@ namespace BusinessLogic.Services.Users
             reg.ReviewedAt = DateTime.UtcNow;
 
             await _uow.SaveAsync();
+
+            await _logWriter.TryWriteAsync(
+                reviewerUserId,
+                ActivityActions.RoleRegistrationDeny,
+                TargetTypes.RoleRegistration,
+                id.ToString());
         }
 
         // -------- helpers --------
