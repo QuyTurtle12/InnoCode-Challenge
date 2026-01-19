@@ -107,6 +107,9 @@ namespace BusinessLogic.Services.Schools
             if (dto.Contact != null)
                 school.Contact = string.IsNullOrWhiteSpace(dto.Contact) ? null : dto.Contact.Trim();
 
+            if (dto.Address != null)
+                school.Address = string.IsNullOrWhiteSpace(dto.Address) ? null : dto.Address.Trim();
+
             schoolRepository.Update(school);
             await _unitOfWork.SaveAsync();
 
