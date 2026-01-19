@@ -2578,12 +2578,14 @@ namespace BusinessLogic.Services.Submissions
             {
                 Guid? userId = await TryGetStudentUserIdAsync(submission.SubmittedByStudentId);
                 if (!userId.HasValue) return;
+                Guid? contestId = await TryGetContestIdForSubmissionAsync(submission);
 
                 await _notificationService.CreateInAppToUserAsync(
                     userId.Value,
                     NotificationTypes.SubmissionResult,
                     new
                     {
+                        contestId,
                         submissionId = submission.SubmissionId,
                         status = submission.Status,
                         score = submission.Score,
@@ -2603,6 +2605,32 @@ namespace BusinessLogic.Services.Submissions
             catch
             {
             }
+        }
+
+        private async Task<Guid?> TryGetContestIdForSubmissionAsync(Submission submission)
+        {
+            if (submission.Problem?.Round != null)
+                return submission.Problem.Round.ContestId;
+
+            if (submission.Team != null)
+                return submission.Team.ContestId;
+
+            var problemRepo = _unitOfWork.GetRepository<Problem>();
+            Guid contestId = await problemRepo.Entities
+                .Where(p => p.ProblemId == submission.ProblemId)
+                .Select(p => p.Round.ContestId)
+                .FirstOrDefaultAsync();
+
+            if (contestId != Guid.Empty)
+                return contestId;
+
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            contestId = await teamRepo.Entities
+                .Where(t => t.TeamId == submission.TeamId)
+                .Select(t => t.ContestId)
+                .FirstOrDefaultAsync();
+
+            return contestId == Guid.Empty ? (Guid?)null : contestId;
         }
 
         private async Task TryNotifySubmissionStatusAsync(Submission submission, string message)
