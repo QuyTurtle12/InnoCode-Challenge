@@ -2635,6 +2635,8 @@ namespace BusinessLogic.Services.Contests
                 query = query.Where(r => r.End <= endDate.Value);
             }
 
+            query = query.OrderBy(r => r.Start);
+
             return query;
         }
 
