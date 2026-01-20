@@ -2789,12 +2789,7 @@ namespace BusinessLogic.Services.Contests
         public async Task FastForwardAppealSubmitDeadlineAsync(Guid roundId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
-            var roundRepo = _unitOfWork.GetRepository<Round>();
-
-            Round? round = await roundRepo.Entities
-                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
-            if (round == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+            Round round = await FetchRoundWithIncludesAsync(roundId);
 
             if (round.IsRetakeRound)
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Appeals are not allowed for retake rounds.");
@@ -2805,6 +2800,63 @@ namespace BusinessLogic.Services.Contests
 
             if (round.End > now)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Appeal submit deadline cannot be before round end.");
+
+            if (IsManualRound(round))
+            {
+                var submissionRepo = _unitOfWork.GetRepository<Submission>();
+                int judgeDays = await GetContestPolicyDaysAsync(
+                    round.ContestId,
+                    ContestPolicyKeys.JudgeRescoreDays,
+                    DEFAULT_JUDGE_RESCORE_DAYS,
+                    configRepo);
+
+                DateTime defaultDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+                DateTime? judgeOverride = await TryGetDeadlineUtcAsync(
+                    configRepo, ConfigKeys.RoundJudgeDeadlineUtc(round.RoundId));
+                DateTime? rescoreOverride = await TryGetDeadlineUtcAsync(
+                    configRepo, ConfigKeys.RoundJudgeRescoreDeadlineUtc(round.RoundId));
+                if (judgeOverride.HasValue || rescoreOverride.HasValue)
+                {
+                    var candidates = new List<DateTime> { defaultDeadline };
+                    if (judgeOverride.HasValue) candidates.Add(judgeOverride.Value);
+                    if (rescoreOverride.HasValue) candidates.Add(rescoreOverride.Value);
+                    defaultDeadline = candidates.Min();
+                }
+
+                var submissions = await submissionRepo.Entities
+                    .Where(s => s.DeletedAt == null
+                                && s.Problem != null
+                                && s.Problem.RoundId == roundId)
+                    .ToListAsync();
+
+                foreach (var sub in submissions)
+                {
+                    DateTime deadline = defaultDeadline;
+                    if (!string.IsNullOrWhiteSpace(sub.JudgedBy)
+                        && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                    {
+                        string v = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                        string? val = await configRepo.Entities
+                            .Where(c => c.Key == v && c.DeletedAt == null)
+                            .Select(c => c.Value)
+                            .FirstOrDefaultAsync();
+                        if (DateTime.TryParse(
+                            val,
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.RoundtripKind,
+                            out DateTime parsed))
+                        {
+                            deadline = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+                        }
+                    }
+
+                    if (now < deadline)
+                    {
+                        throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                            "Appeal submit deadline can only be fast-forwarded after all judge deadlines are completed.");
+                    }
+                }
+            }
 
             string key = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
             await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
