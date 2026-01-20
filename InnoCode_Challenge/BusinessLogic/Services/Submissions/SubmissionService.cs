@@ -993,6 +993,7 @@ namespace BusinessLogic.Services.Submissions
                 {
                     SubmissionId = submissionId,
                     JudgedBy = judgeEmail,
+                    Status = submission.Status,
                     TotalScore = Math.Round(totalScore, 2),
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
@@ -1089,6 +1090,7 @@ namespace BusinessLogic.Services.Submissions
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
                     JudgedBy = judgeEmail,
+                    Status = submission.Status,
                     TotalScore = Math.Round(submission.Score, 2),
                     MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                     CriterionResults = results
@@ -1250,6 +1252,7 @@ namespace BusinessLogic.Services.Submissions
                     {
                         SubmissionId = submission.SubmissionId,
                         JudgedBy = judgeEmail,
+                        Status = submission.Status,
                         TotalScore = Math.Round(submission.Score, 2),
                         MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                         CriterionResults = criterionResults,
@@ -3238,6 +3241,7 @@ namespace BusinessLogic.Services.Submissions
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
                     JudgedBy = judgeEmail,
+                    Status = submission.Status,
                     TotalScore = Math.Round(submission.Score, 2),
                     MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                     CriterionResults = results
