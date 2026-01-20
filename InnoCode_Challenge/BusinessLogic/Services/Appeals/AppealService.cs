@@ -659,6 +659,7 @@ namespace BusinessLogic.Services.Appeals
                         if (mentorUserId.HasValue)
                         {
                             notifyUserIds.Add(mentorUserId.Value);
+                            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(appeal.Team.MentorId);
                         }
                     }
 

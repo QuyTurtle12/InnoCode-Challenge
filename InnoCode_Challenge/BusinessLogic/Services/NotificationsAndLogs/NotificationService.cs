@@ -239,7 +239,7 @@ namespace BusinessLogic.Services.NotificationsAndLogs
                 await _unitOfWork.SaveAsync();
                 _unitOfWork.CommitTransaction();
 
-                // realtime push (after commit)
+                // realtime push
                 foreach (var item in pushed)
                 {
                     await _hub.Clients

@@ -191,7 +191,7 @@ namespace BusinessLogic.Services.Mcqs
                 }
 
                 // Delete the MCQ test
-                await mcqTestRepo.DeleteAsync(mcqTest);
+                mcqTest.DeletedAt = DateTime.UtcNow;
 
                 // Save changes
                 await _unitOfWork.SaveAsync();

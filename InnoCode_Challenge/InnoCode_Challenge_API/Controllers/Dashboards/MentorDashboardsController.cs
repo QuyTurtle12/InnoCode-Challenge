@@ -42,7 +42,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
                 endDate,
                 predefined);
 
-            return Ok(new BaseResponseModel<MentorDashboardDTO>(
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: dashboard,
