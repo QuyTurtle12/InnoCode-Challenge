@@ -3185,6 +3185,12 @@ namespace BusinessLogic.Services.Contests
             // Validate contest existence and accessibility
             ValidateContest(contest);
 
+            // Sort rounds by start date descending
+            if (contest != null && contest.Rounds != null && contest.Rounds.Any())
+            {
+                contest.Rounds = contest.Rounds.OrderByDescending(r => r.Start).ToList();
+            }
+
             return contest!;
         }
 
