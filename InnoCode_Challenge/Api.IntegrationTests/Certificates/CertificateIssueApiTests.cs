@@ -447,5 +447,33 @@ namespace Api.IntegrationTests.Certificates
             var issued = await IssueAsync(token, payload);
             issued.Count.Should().Be(1);
         }
+
+        [Fact]
+        public async Task Issue_WhenReissueTrue_ShouldWriteActivityLog()
+        {
+            var seed = SeedIssueData();
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+
+            await IssueAsync(token, new IssueCertificatesDTO
+            {
+                TemplateId = seed.TemplateId,
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
+                Reissue = false
+            });
+
+            var reissued = await IssueAsync(token, new IssueCertificatesDTO
+            {
+                TemplateId = seed.TemplateId,
+                Recipients = new List<IssueRecipientDTO> { new IssueRecipientDTO { TeamId = seed.TeamId } },
+                Reissue = true
+            });
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            db.ActivityLogs.Any(l => l.UserId == seed.OrganizerUserId
+                                     && l.Action == ActivityActions.CertificateReissue
+                                     && l.TargetType == TargetTypes.Certificate
+                                     && l.TargetId == reissued[0].CertificateId.ToString()).Should().BeTrue();
+        }
     }
 }

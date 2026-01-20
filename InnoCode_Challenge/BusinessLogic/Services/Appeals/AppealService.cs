@@ -713,6 +713,16 @@ namespace BusinessLogic.Services.Appeals
                                     targetId = rescoreSubmission.SubmissionId.ToString(),
                                     message = "Submission was reassigned for rescore."
                                 });
+
+                            var reviewerIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+                            if (Guid.TryParse(reviewerIdStr, out var reviewerAssignId))
+                            {
+                                await _logWriter.TryWriteAsync(
+                                    reviewerAssignId,
+                                    ActivityActions.SubmissionAssignJudge,
+                                    TargetTypes.Submission,
+                                    rescoreSubmission.SubmissionId.ToString());
+                            }
                         }
                     }
                 }

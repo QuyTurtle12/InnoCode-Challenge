@@ -102,6 +102,7 @@ namespace BusinessLogic.Services.Certificates
                     // Prepare results list
                     List<IssuedCertificateDTO>? results = new List<IssuedCertificateDTO>();
                     Guid? issuerUserId = TryGetCurrentUserId();
+                    var logAction = dto.Reissue ? ActivityActions.CertificateReissue : ActivityActions.CertificateIssue;
 
                     // Issue certificates to each recipient
                     for (int i = 0; i < dto.Recipients.Count; i++)
@@ -393,7 +394,7 @@ namespace BusinessLogic.Services.Certificates
                             {
                                 await _logWriter.TryWriteAsync(
                                     issuerUserId.Value,
-                                    ActivityActions.CertificateIssue,
+                                    logAction,
                                     TargetTypes.Certificate,
                                     entity.CertificateId.ToString());
                             }

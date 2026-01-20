@@ -166,7 +166,7 @@ namespace BusinessLogic.Services.Students
 
             // mentorId diff userId
             string userId = GetCurrentUserIdOrThrow();
-            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid); 
+            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid);
 
             var meAsMentor = await mentorRepository.Entities
                 .Include(m => m.User)
@@ -176,7 +176,7 @@ namespace BusinessLogic.Services.Students
                      m.User.UserId.ToString() == userId));
             if (meAsMentor == null)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_MENTOR",
-                    "Only mentors can create teams."); 
+                    "Only mentors can create teams.");
 
             bool contestExists = await contestRepository.Entities.AnyAsync(c => c.ContestId == dto.ContestId);
             if (!contestExists)
@@ -186,9 +186,9 @@ namespace BusinessLogic.Services.Students
             if (!schoolExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={dto.SchoolId}");
 
-            if (meAsMentor.SchoolId != dto.SchoolId) 
+            if (meAsMentor.SchoolId != dto.SchoolId)
                 throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL",
-                    "This mentor does not belong to the selected school."); 
+                    "This mentor does not belong to the selected school.");
 
             var trimmedName = dto.Name.Trim();
 
@@ -218,7 +218,7 @@ namespace BusinessLogic.Services.Students
                 Name = trimmedName,
                 ContestId = dto.ContestId,
                 SchoolId = dto.SchoolId,
-                MentorId = meAsMentor.MentorId,    
+                MentorId = meAsMentor.MentorId,
                 CreatedAt = now,
                 DeletedAt = null,
                 Status = TeamStatusConstants.Active
@@ -421,8 +421,8 @@ namespace BusinessLogic.Services.Students
 
             Guid? myStudentId = await studentRepo.Entities
                 .Where(s => s.DeletedAt == null
-                    && ((hasUserGuid && EF.Property<Guid>(s, "UserId") == userGuid) 
-                        || s.UserId.ToString() == userId))                          
+                    && ((hasUserGuid && EF.Property<Guid>(s, "UserId") == userGuid)
+                        || s.UserId.ToString() == userId))
                 .Select(s => (Guid?)s.StudentId)
                 .FirstOrDefaultAsync();
 
@@ -430,8 +430,8 @@ namespace BusinessLogic.Services.Students
             Guid? myMentorId = await mentorRepo.Entities
                 .Include(m => m.User)
                 .Where(m => m.User != null
-                    && ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid) 
-                        || m.User.UserId.ToString() == userId))                          
+                    && ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid)
+                        || m.User.UserId.ToString() == userId))
                 .Select(m => (Guid?)m.MentorId)
                 .FirstOrDefaultAsync();
 
@@ -483,8 +483,8 @@ namespace BusinessLogic.Services.Students
                         StudentId = tm.StudentId,
                         StudentFullname = tm.Student.User.Fullname,
                         StudentEmail = tm.Student.User.Email,
-                        MemberRole = tm.MemberRole!.Equals(MemberRoleEnum.Member.ToString()) 
-                            ? MemberRoleEnum.Member 
+                        MemberRole = tm.MemberRole!.Equals(MemberRoleEnum.Member.ToString())
+                            ? MemberRoleEnum.Member
                             : MemberRoleEnum.Leader,
                         JoinedAt = tm.JoinedAt
                     }).ToList()

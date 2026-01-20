@@ -206,6 +206,71 @@ namespace Api.IntegrationTests.Certificates
         }
 
         [Fact]
+        public async Task Create_ShouldWriteActivityLog()
+        {
+            var token = await LoginAdminAsync();
+            var contestId = SeedContest();
+            var created = await CreateTemplateAsync(contestId, token);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.ActivityLogs.Any(l => l.UserId == admin.UserId
+                                     && l.Action == ActivityActions.CertTemplateCreate
+                                     && l.TargetType == TargetTypes.CertificateTemplate
+                                     && l.TargetId == created.TemplateId.ToString()).Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task Update_ShouldWriteActivityLog()
+        {
+            var token = await LoginAdminAsync();
+            var contestId = SeedContest();
+            var created = await CreateTemplateAsync(contestId, token);
+
+            var updateReq = new HttpRequestMessage(HttpMethod.Put, $"/api/certificate-templates/{created.TemplateId:D}");
+            updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            updateReq.Content = JsonContent.Create(new UpdateCertificateTemplateDTO
+            {
+                Name = "Updated Name",
+                FileUrl = "https://example.com/cert2.png"
+            });
+
+            var updateRes = await _client.SendAsync(updateReq);
+            updateRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.ActivityLogs.Any(l => l.UserId == admin.UserId
+                                     && l.Action == ActivityActions.CertTemplateUpdate
+                                     && l.TargetType == TargetTypes.CertificateTemplate
+                                     && l.TargetId == created.TemplateId.ToString()).Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task SoftDelete_ShouldWriteActivityLog()
+        {
+            var token = await LoginAdminAsync();
+            var contestId = SeedContest();
+            var created = await CreateTemplateAsync(contestId, token);
+
+            var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/certificate-templates/{created.TemplateId:D}");
+            deleteReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var deleteRes = await _client.SendAsync(deleteReq);
+            deleteRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var admin = db.Users.First(u => u.Email == TestSeed.AdminEmail.ToLowerInvariant());
+            db.ActivityLogs.Any(l => l.UserId == admin.UserId
+                                     && l.Action == ActivityActions.CertTemplateDelete
+                                     && l.TargetType == TargetTypes.CertificateTemplate
+                                     && l.TargetId == created.TemplateId.ToString()).Should().BeTrue();
+        }
+
+        [Fact]
         public async Task Create_WhenContestNotFound_ShouldReturn404()
         {
             var token = await LoginAdminAsync();

@@ -3,7 +3,6 @@ using DataAccess.Entities;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Repository.DTOs.AuthDTOs;
-using Repository.DTOs.RoundDTOs;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -14,12 +13,12 @@ using Xunit;
 
 namespace Api.IntegrationTests.Contests
 {
-    public class RoundTimelineJudgeDeadlineApiTests : IClassFixture<ApiFactory>
+    public class RoundDistributionActivityLogApiTests : IClassFixture<ApiFactory>
     {
         private readonly ApiFactory _factory;
         private readonly HttpClient _client;
 
-        public RoundTimelineJudgeDeadlineApiTests(ApiFactory factory)
+        public RoundDistributionActivityLogApiTests(ApiFactory factory)
         {
             _factory = factory;
             _client = factory.CreateClient();
@@ -27,10 +26,12 @@ namespace Api.IntegrationTests.Contests
 
         private sealed record SeedData(
             Guid RoundId,
+            Guid SubmissionId,
+            Guid OrganizerUserId,
             string OrganizerEmail,
             string OrganizerPassword);
 
-        private SeedData SeedManualRoundWithSubmission()
+        private SeedData SeedManualRoundWithPendingSubmission()
         {
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
@@ -41,7 +42,7 @@ namespace Api.IntegrationTests.Contests
             var organizerUser = new User
             {
                 UserId = Guid.NewGuid(),
-                Fullname = "Organizer",
+                Fullname = "Test Organizer",
                 Email = organizerEmail,
                 PasswordHash = PasswordHasher.Hash(organizerPassword),
                 Role = RoleConstants.ContestOrganizer,
@@ -53,7 +54,7 @@ namespace Api.IntegrationTests.Contests
             var judgeUser = new User
             {
                 UserId = Guid.NewGuid(),
-                Fullname = "Judge",
+                Fullname = "Test Judge",
                 Email = $"judge{Guid.NewGuid():N}@test.com",
                 PasswordHash = PasswordHasher.Hash("P@ssword123!"),
                 Role = RoleConstants.Judge,
@@ -65,7 +66,7 @@ namespace Api.IntegrationTests.Contests
             var mentorUser = new User
             {
                 UserId = Guid.NewGuid(),
-                Fullname = "Mentor",
+                Fullname = "Test Mentor",
                 Email = $"mentor{Guid.NewGuid():N}@test.com",
                 PasswordHash = PasswordHasher.Hash("P@ssword123!"),
                 Role = RoleConstants.Mentor,
@@ -77,7 +78,7 @@ namespace Api.IntegrationTests.Contests
             var studentUser = new User
             {
                 UserId = Guid.NewGuid(),
-                Fullname = "Student",
+                Fullname = "Test Student",
                 Email = $"student{Guid.NewGuid():N}@test.com",
                 PasswordHash = PasswordHasher.Hash("P@ssword123!"),
                 Role = RoleConstants.Student,
@@ -105,13 +106,13 @@ namespace Api.IntegrationTests.Contests
             var contest = new Contest
             {
                 ContestId = Guid.NewGuid(),
-                Name = "Timeline Judge Deadline Contest",
+                Name = "Distribution Log Contest",
                 Year = now.Year,
                 ImgUrl = "https://example.com/contest.png",
                 Status = ContestStatusEnum.Ongoing.ToString(),
                 CreatedAt = now,
-                Start = now.AddHours(-10),
-                End = now.AddHours(2),
+                Start = now.AddHours(-3),
+                End = now.AddHours(3),
                 CreatedBy = organizerUser.UserId.ToString()
             };
 
@@ -120,9 +121,9 @@ namespace Api.IntegrationTests.Contests
                 RoundId = Guid.NewGuid(),
                 ContestId = contest.ContestId,
                 Name = "Manual Round",
-                Start = now.AddHours(-5),
-                End = now.AddHours(-1),
-                Status = RoundStatusEnum.Closed.ToString(),
+                Start = now.AddHours(-2),
+                End = now.AddHours(2),
+                Status = RoundStatusEnum.Opened.ToString(),
                 IsRetakeRound = false
             };
 
@@ -141,9 +142,17 @@ namespace Api.IntegrationTests.Contests
                 ContestId = contest.ContestId,
                 SchoolId = TestSeed.SchoolId,
                 MentorId = mentor.MentorId,
-                Name = "Team Manual",
+                Name = "Team A",
                 Status = TeamStatusConstants.Active,
                 CreatedAt = now
+            };
+
+            var teamMember = new TeamMember
+            {
+                TeamId = team.TeamId,
+                StudentId = student.StudentId,
+                MemberRole = "leader",
+                JoinedAt = now
             };
 
             var submission = new Submission
@@ -152,20 +161,18 @@ namespace Api.IntegrationTests.Contests
                 TeamId = team.TeamId,
                 ProblemId = problem.ProblemId,
                 SubmittedByStudentId = student.StudentId,
-                JudgedBy = judgeUser.UserId.ToString(),
+                JudgedBy = null,
                 Status = SubmissionStatusEnum.Pending.ToString(),
                 Score = 0,
-                CreatedAt = now.AddHours(-2)
+                CreatedAt = now
             };
 
-            var leaderboardEntry = new LeaderboardEntry
+            var judgeConfig = new Config
             {
-                EntryId = Guid.NewGuid(),
-                ContestId = contest.ContestId,
-                TeamId = team.TeamId,
-                Rank = 1,
-                Score = 0,
-                SnapshotAt = now
+                Key = ConfigKeys.ContestJudge(contest.ContestId, judgeUser.UserId),
+                Value = "judge",
+                Scope = "contest",
+                UpdatedAt = now
             };
 
             db.Users.AddRange(organizerUser, judgeUser, mentorUser, studentUser);
@@ -175,27 +182,15 @@ namespace Api.IntegrationTests.Contests
             db.Rounds.Add(round);
             db.Problems.Add(problem);
             db.Teams.Add(team);
+            db.TeamMembers.Add(teamMember);
             db.Submissions.Add(submission);
-            db.LeaderboardEntries.Add(leaderboardEntry);
-            db.Configs.AddRange(
-                new Config
-                {
-                    Key = ConfigKeys.RoundAppealSubmitDeadlineUtc(round.RoundId),
-                    Value = now.AddHours(2).ToString("o"),
-                    Scope = "contest",
-                    UpdatedAt = now
-                },
-                new Config
-                {
-                    Key = ConfigKeys.RoundAppealReviewDeadlineUtc(round.RoundId),
-                    Value = now.AddHours(4).ToString("o"),
-                    Scope = "contest",
-                    UpdatedAt = now
-                });
+            db.Configs.Add(judgeConfig);
             db.SaveChanges();
 
             return new SeedData(
                 RoundId: round.RoundId,
+                SubmissionId: submission.SubmissionId,
+                OrganizerUserId: organizerUser.UserId,
                 OrganizerEmail: organizerEmail,
                 OrganizerPassword: organizerPassword);
         }
@@ -207,37 +202,30 @@ namespace Api.IntegrationTests.Contests
                 Email = email,
                 Password = password
             });
+
             res.StatusCode.Should().Be(HttpStatusCode.OK);
             var body = await res.ReadOkAsync<AuthResponseDTO>();
             return body.Data!.Token!;
         }
 
         [Fact]
-        public async Task FastForwardJudgeDeadline_ShouldUpdateTimeline()
+        public async Task EndNow_ShouldWriteAssignJudgeActivityLog()
         {
-            var seed = SeedManualRoundWithSubmission();
-
-            var beforeRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
-            beforeRes.StatusCode.Should().Be(HttpStatusCode.OK);
-            var before = await beforeRes.ReadOkAsync<RoundTimelineDTO>();
-            before.Data!.JudgeDeadline.Should().NotBeNull();
-            DateTime beforeDeadline = before.Data!.JudgeDeadline!.Value;
-
+            var seed = SeedManualRoundWithPendingSubmission();
             var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
-            var req = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/judge-deadline-end");
+
+            var req = new HttpRequestMessage(HttpMethod.Put, $"/api/rounds/{seed.RoundId:D}/end-now");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            var fastForwardRes = await _client.SendAsync(req);
-            fastForwardRes.StatusCode.Should().Be(HttpStatusCode.OK, await fastForwardRes.Content.ReadAsStringAsync());
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
 
-            var afterRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
-            afterRes.StatusCode.Should().Be(HttpStatusCode.OK);
-            var after = await afterRes.ReadOkAsync<RoundTimelineDTO>();
-            after.Data!.JudgeDeadline.Should().NotBeNull();
-            DateTime afterDeadline = after.Data!.JudgeDeadline!.Value;
-
-            afterDeadline.Should().BeBefore(beforeDeadline);
-            afterDeadline.Should().BeBefore(DateTime.UtcNow.AddSeconds(1));
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            db.ActivityLogs.Any(l => l.UserId == seed.OrganizerUserId
+                                     && l.Action == ActivityActions.SubmissionAssignJudge
+                                     && l.TargetType == TargetTypes.Submission
+                                     && l.TargetId == seed.SubmissionId.ToString()).Should().BeTrue();
         }
     }
 }

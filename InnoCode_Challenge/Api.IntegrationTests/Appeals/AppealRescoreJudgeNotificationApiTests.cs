@@ -29,7 +29,9 @@ namespace Api.IntegrationTests.Appeals
             Guid RoundId,
             Guid TeamId,
             Guid StudentId,
+            Guid SubmissionId,
             Guid JudgeUserId,
+            Guid OrganizerUserId,
             string MentorEmail,
             string MentorPassword,
             string OrganizerEmail,
@@ -222,7 +224,9 @@ namespace Api.IntegrationTests.Appeals
                 RoundId: roundId,
                 TeamId: teamId,
                 StudentId: student.StudentId,
+                SubmissionId: submission.SubmissionId,
                 JudgeUserId: judgeUser.UserId,
+                OrganizerUserId: organizerUser.UserId,
                 MentorEmail: mentorEmail,
                 MentorPassword: mentorPassword,
                 OrganizerEmail: organizerEmail,
@@ -287,6 +291,10 @@ namespace Api.IntegrationTests.Appeals
 
             db.Notifications.Any(n => n.UserId == seed.JudgeUserId
                                       && n.Type == NotificationTypes.ManualGradingAssigned).Should().BeTrue();
+            db.ActivityLogs.Any(l => l.UserId == seed.OrganizerUserId
+                                     && l.Action == ActivityActions.SubmissionAssignJudge
+                                     && l.TargetType == TargetTypes.Submission
+                                     && l.TargetId == seed.SubmissionId.ToString()).Should().BeTrue();
         }
     }
 }

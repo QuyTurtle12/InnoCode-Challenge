@@ -163,6 +163,10 @@ namespace Api.IntegrationTests.Students
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
             db.TeamMembers.Any(tm => tm.TeamId == teamId && tm.StudentId == studentId).Should().BeFalse();
+            db.ActivityLogs.Any(l => l.UserId == mentor.UserId
+                                     && l.Action == ActivityActions.TeamMemberRemove
+                                     && l.TargetType == TargetTypes.Team
+                                     && l.TargetId == teamId.ToString()).Should().BeTrue();
         }
 
         [Fact]
