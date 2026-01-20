@@ -254,9 +254,6 @@ namespace BusinessLogic.Services.Contests
             {
                 _unitOfWork.BeginTransaction();
 
-                // Validate input
-                ValidateRoundId(id);
-
                 // Get repositories
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
@@ -327,9 +324,6 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Validate input
-                ValidateRoundId(id);
-
                 // Get round with related entities
                 Round round = await FetchRoundWithIncludesAsync(id);
 
@@ -2297,19 +2291,6 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Validates round ID parameter
-        /// </summary>
-        private void ValidateRoundId(Guid id)
-        {
-            if (id == Guid.Empty)
-            {
-                throw new ErrorException(StatusCodes.Status400BadRequest,
-                    ResponseCodeConstants.BADREQUEST,
-                    "Round ID cannot be empty.");
-            }
-        }
-
-        /// <summary>
         /// Fetches round with all necessary includes
         /// </summary>
         private async Task<Round> FetchRoundWithIncludesAsync(Guid id)
@@ -2324,14 +2305,9 @@ namespace BusinessLogic.Services.Contests
                 .Include(r => r.MainRound)
                 .FirstOrDefaultAsync();
 
-            if (round == null)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND,
-                    "Round not found.");
-            }
+            ValidateRound(round);
 
-            return round;
+            return round!;
         }
 
         /// <summary>
@@ -2740,13 +2716,9 @@ namespace BusinessLogic.Services.Contests
                 .Include(r => r.McqTest)
                 .FirstOrDefaultAsync();
 
-            if (round == null)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND, "Round not found.");
-            }
+            ValidateRound(round);
 
-            return round;
+            return round!;
         }
 
         /// <summary>
@@ -3026,6 +2998,7 @@ namespace BusinessLogic.Services.Contests
         public async Task<RoundTimelineDTO> GetRoundTimelineAsync(Guid roundId)
         {
             Round round = await FetchRoundWithIncludesAsync(roundId);
+
             var configRepo = _unitOfWork.GetRepository<Config>();
 
             int submitDays = await GetContestPolicyDaysAsync(
@@ -3409,5 +3382,35 @@ namespace BusinessLogic.Services.Contests
                 });
         }
 
+        /// <summary>
+        /// Validates the access and existence of a round.
+        /// </summary>
+        private void ValidateRound(Round? round)
+        {
+            // Get logged-in user role
+            string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+
+            // Validate round exists
+            if (round == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Round not found.");
+            }
+
+            // Restrict access to round of other organizers
+            if (userRole == RoleConstants.ContestOrganizer)
+            {
+                // Get current user ID
+                string userId = GetCurrentUserIdOrThrow();
+
+                if (round.Contest.CreatedBy!.ToLower() != userId)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Access denied to this round.");
+                }
+            }
+        }
     }
 }

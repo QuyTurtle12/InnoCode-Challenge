@@ -251,6 +251,11 @@ namespace InnoCode_Challenge_API.Controllers.Contests
             ));
         }
 
+        /// <summary>
+        /// Get list of judges assigned to a contest
+        /// </summary>
+        /// <param name="contestId"></param>
+        /// <returns></returns>
         [Authorize(Policy = "RequireOrganizerRole")]
         [HttpGet("contests/{contestId}/judges")]
         public async Task<IActionResult> GetJudges(Guid contestId)

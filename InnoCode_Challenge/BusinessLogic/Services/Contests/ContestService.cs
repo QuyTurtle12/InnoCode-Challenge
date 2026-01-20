@@ -13,6 +13,7 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using System;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.IO.Compression;
@@ -253,15 +254,7 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
                 // Fetch contest with related data
-                Contest? contest = await FetchContestWithIncludesAsync(contestRepo, id);
-
-                // Validate contest exists
-                if (contest == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        "Contest not found.");
-                }
+                Contest contest = await FetchContestWithIncludesAsync(contestRepo, id);
 
                 // Load related data
                 var (configLookup, organizerName, timeLimitDict, mockTestWeightDict) = await LoadContestRelatedDataAsync(contest);
@@ -3178,9 +3171,9 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Fetches contest with all necessary includes
         /// </summary>
-        private async Task<Contest?> FetchContestWithIncludesAsync(IGenericRepository<Contest> contestRepo, Guid id)
+        private async Task<Contest> FetchContestWithIncludesAsync(IGenericRepository<Contest> contestRepo, Guid id)
         {
-            return await contestRepo.Entities
+             Contest? contest = await contestRepo.Entities
                 .Where(c => c.ContestId == id && !c.DeletedAt.HasValue)
                 .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
                     .ThenInclude(r => r.Problem)
@@ -3188,6 +3181,11 @@ namespace BusinessLogic.Services.Contests
                     .ThenInclude(r => r.McqTest)
                 .OrderByDescending(c => c.CreatedAt)
                 .FirstOrDefaultAsync();
+
+            // Validate contest existence and accessibility
+            ValidateContest(contest);
+
+            return contest!;
         }
 
         /// <summary>
@@ -3741,5 +3739,35 @@ namespace BusinessLogic.Services.Contests
             }
         }
 
+        /// <summary>
+        /// Validates access to the contest based on user role
+        /// </summary>
+        private void ValidateContest(Contest? contest)
+        {
+            // Get logged-in user role
+            string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+
+            // Validate contest exists
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Contest not found.");
+            }
+
+            // Restrict access to contests of other organizers
+            if (userRole == RoleConstants.ContestOrganizer)
+            {
+                // Get current user ID
+                string userId = GetCurrentUserIdOrThrow();
+
+                if (contest.CreatedBy!.ToLower() != userId)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Access denied to this contest.");
+                }
+            }
+        }
     }
 }

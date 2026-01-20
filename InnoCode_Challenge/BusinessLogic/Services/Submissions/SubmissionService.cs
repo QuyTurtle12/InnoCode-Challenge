@@ -2005,6 +2005,53 @@ namespace BusinessLogic.Services.Submissions
             };
         }
 
+        public async Task TransferSubmissionsToOtherJudge(Guid roundId, Guid judgeId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                // Validate and get round
+                Round round = await ValidateAndGetRoundForTransferAsync(roundId);
+
+                // Validate permissions
+                await ValidateTransferPermissionsAsync(round);
+
+                // Get active judges (excluding the transferring judge)
+                List<JudgeInContestDTO> targetJudges = await GetTargetJudgesForTransferAsync(round.ContestId, judgeId);
+
+                // Get submissions to transfer
+                List<Submission> submissions = await GetSubmissionsToTransferAsync(roundId, judgeId);
+
+                if (!submissions.Any())
+                {
+                    _unitOfWork.CommitTransaction();
+                    return;
+                }
+
+                // Transfer submissions and track assignments
+                Dictionary<Guid, int> judgeAssignments = await TransferSubmissionsToJudgesAsync(
+                    submissions, targetJudges, round, judgeId);
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+
+                // Send notifications
+                await NotifyJudgesAboutNewAssignmentsAsync(judgeAssignments, round);
+            }
+            catch (Exception ex)
+            {
+                _unitOfWork.RollBack();
+                if (ex is ErrorException) throw;
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error transferring submissions: {ex.Message}"
+                );
+            }
+        }
+
         public Task ApprovePlagiarismSubmissionAsync(Guid submissionId)
             => ResolvePlagiarismSubmissionAsync(submissionId, cleared: true);
 
@@ -4226,53 +4273,6 @@ namespace BusinessLogic.Services.Submissions
             mockResult.Summary.penaltyScore = 0;
 
             return mockResult;
-        }
-
-        public async Task TransferSubmissionsToOtherJudge(Guid roundId, Guid judgeId)
-        {
-            try
-            {
-                _unitOfWork.BeginTransaction();
-
-                // Validate and get round
-                Round round = await ValidateAndGetRoundForTransferAsync(roundId);
-
-                // Validate permissions
-                await ValidateTransferPermissionsAsync(round);
-
-                // Get active judges (excluding the transferring judge)
-                List<JudgeInContestDTO> targetJudges = await GetTargetJudgesForTransferAsync(round.ContestId, judgeId);
-
-                // Get submissions to transfer
-                List<Submission> submissions = await GetSubmissionsToTransferAsync(roundId, judgeId);
-
-                if (!submissions.Any())
-                {
-                    _unitOfWork.CommitTransaction();
-                    return;
-                }
-
-                // Transfer submissions and track assignments
-                Dictionary<Guid, int> judgeAssignments = await TransferSubmissionsToJudgesAsync(
-                    submissions, targetJudges, round, judgeId);
-
-                // Save changes
-                await _unitOfWork.SaveAsync();
-                _unitOfWork.CommitTransaction();
-
-                // Send notifications
-                await NotifyJudgesAboutNewAssignmentsAsync(judgeAssignments, round);
-            }
-            catch (Exception ex)
-            {
-                _unitOfWork.RollBack();
-                if (ex is ErrorException) throw;
-                throw new ErrorException(
-                    StatusCodes.Status500InternalServerError,
-                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                    $"Error transferring submissions: {ex.Message}"
-                );
-            }
         }
 
         /// <summary>
