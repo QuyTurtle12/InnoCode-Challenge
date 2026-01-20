@@ -262,6 +262,39 @@ namespace Api.IntegrationTests.Contests
         }
 
         [Fact]
+        public async Task JudgeDeadline_End_BeforeSubmit_ShouldNotChangeRescoreDeadline()
+        {
+            var now = DateTime.UtcNow;
+            var seed = SeedRound(
+                now,
+                ProblemTypeEnum.Manual,
+                false,
+                roundEnd: now.AddHours(-1),
+                appealSubmitDeadline: now.AddHours(2),
+                appealReviewDeadline: now.AddHours(5));
+
+            var beforeRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
+            beforeRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var before = await beforeRes.ReadOkAsync<RoundTimelineDTO>();
+            before.Data!.JudgeRescoreDeadline.Should().NotBeNull();
+            DateTime beforeRescore = before.Data!.JudgeRescoreDeadline!.Value;
+
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+            var req = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/judge-deadline-end");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var afterRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
+            afterRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var after = await afterRes.ReadOkAsync<RoundTimelineDTO>();
+            after.Data!.JudgeRescoreDeadline.Should().NotBeNull();
+            DateTime afterRescore = after.Data!.JudgeRescoreDeadline!.Value;
+
+            afterRescore.Should().Be(beforeRescore);
+        }
+
+        [Fact]
         public async Task JudgeDeadline_End_AfterReview_ShouldUpdateJudgeRescoreDeadline()
         {
             var now = DateTime.UtcNow;
@@ -309,6 +342,39 @@ namespace Api.IntegrationTests.Contests
             res.StatusCode.Should().Be(HttpStatusCode.Conflict);
             var err = await res.ReadErrorAsync();
             err.ErrorCode.Should().Be("INVALID_STATE");
+        }
+
+        [Fact]
+        public async Task JudgeDeadline_End_AfterReview_ShouldAllowFinalize()
+        {
+            var now = DateTime.UtcNow;
+            var seed = SeedRound(
+                now,
+                ProblemTypeEnum.Manual,
+                false,
+                roundEnd: now.AddHours(-1),
+                appealSubmitDeadline: now.AddHours(-6),
+                appealReviewDeadline: now.AddHours(-3));
+
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+
+            var judgeReq = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/judge-deadline-end");
+            judgeReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var judgeRes = await _client.SendAsync(judgeReq);
+            judgeRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var timelineRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
+            timelineRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var timeline = await timelineRes.ReadOkAsync<RoundTimelineDTO>();
+            timeline.Data!.JudgeDeadline.Should().NotBeNull();
+            timeline.Data!.JudgeDeadline.Should().BeBefore(DateTime.UtcNow.AddSeconds(1));
+            timeline.Data!.JudgeRescoreDeadline.Should().NotBeNull();
+            timeline.Data!.JudgeRescoreDeadline.Should().BeBefore(DateTime.UtcNow.AddSeconds(1));
+
+            var finalizeReq = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/finalize");
+            finalizeReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var finalizeRes = await _client.SendAsync(finalizeReq);
+            finalizeRes.StatusCode.Should().Be(HttpStatusCode.OK);
         }
     }
 }

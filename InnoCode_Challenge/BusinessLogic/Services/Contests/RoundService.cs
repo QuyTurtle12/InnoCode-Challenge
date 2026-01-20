@@ -2916,6 +2916,8 @@ namespace BusinessLogic.Services.Contests
             {
                 string judgeRescoreKey = ConfigKeys.RoundJudgeRescoreDeadlineUtc(roundId);
                 await UpsertDeadlineAsync(configRepo, judgeRescoreKey, past, scope: SCOPE_CONTEST);
+                string judgeKey = ConfigKeys.RoundJudgeDeadlineUtc(roundId);
+                await UpsertDeadlineAsync(configRepo, judgeKey, past, scope: SCOPE_CONTEST);
             }
             else if (now <= appealSubmitDeadline)
             {
