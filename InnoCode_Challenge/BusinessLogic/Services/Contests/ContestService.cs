@@ -680,9 +680,9 @@ namespace BusinessLogic.Services.Contests
         }
 
         private static void ValidateAutoEvaluationProblems(
-            List<Problem> problems,
-            List<Round> rounds,
-            PublishReadinessDTO result)
+    List<Problem> problems,
+    List<Round> rounds,
+    PublishReadinessDTO result)
         {
             // Filter auto-evaluation problems
             List<Problem> autoEvalProblems = problems
@@ -694,6 +694,13 @@ namespace BusinessLogic.Services.Contests
             {
                 Round? round = rounds.FirstOrDefault(r => r.RoundId == problem.RoundId);
                 string roundName = round?.Name ?? "Unknown Round";
+
+                // Check for template URL
+                bool hasTemplateUrl = !string.IsNullOrWhiteSpace(problem.TemplateUrl);
+                if (!hasTemplateUrl)
+                {
+                    result.Missing.Add($"Auto-evaluation round '{roundName}' is missing student code template.");
+                }
 
                 // Check for mock test URL and test cases
                 bool hasMockTestUrl = !string.IsNullOrWhiteSpace(problem.MockTestUrl);

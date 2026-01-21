@@ -2857,9 +2857,7 @@ namespace BusinessLogic.Services.Submissions
                     SubmissionId = submissionId,
                     TestcaseId = null,
                     Weight = weightPerTest,
-                    Note = string.IsNullOrEmpty(testCase.Stderr)
-                        ? $"{testCase.Id}: {testCase.Status}"
-                        : $"{testCase.Id}: {testCase.Status} - {testCase.Stderr}",
+                    Note = testCase.Status,
                     RuntimeMs = 0,
                     MemoryKb = testCase.MemoryKb ?? 0,
                     CreatedAt = DateTime.UtcNow
