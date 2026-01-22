@@ -18,9 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Services\Certificates\assets\Roboto-Regular.ttf">
+    <Content Include="Services\Certificates\assets\*.ttf">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      <TargetPath>assets\Roboto-Regular.ttf</TargetPath>
+      <TargetPath>assets\%(Filename)%(Extension)</TargetPath>
     </Content>
   </ItemGroup>
 
