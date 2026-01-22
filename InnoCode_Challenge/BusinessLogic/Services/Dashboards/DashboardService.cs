@@ -1,6 +1,5 @@
 ﻿using BusinessLogic.IServices.Dashboards;
 using DataAccess.Entities;
-using Humanizer;
 using Microsoft.EntityFrameworkCore;
 using Repository.DTOs.DashboardDTOs;
 using Repository.IRepositories;
@@ -104,8 +103,10 @@ namespace BusinessLogic.Services.Dashboards
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
             IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
+            // Build base contest query
             IQueryable<Contest> contestQuery = BuildContestQuery(contestRepo, startDate, endDate);
 
+            // Get trends and status distribution
             List<TrendDataPoint> contestTrend = await GetContestCreationTrendAsync(contestQuery);
             List<TrendDataPoint> teamTrend = await GetTeamRegistrationTrendAsync(teamRepo, startDate, endDate);
             Dictionary<string, int> statusDistribution = await GetContestStatusDistributionAsync(contestQuery);
@@ -140,10 +141,12 @@ namespace BusinessLogic.Services.Dashboards
                 endDate = calculatedEnd;
             }
 
+            // Get top performers
             List<TopOrganizerDTO> topOrganizers = await GetTopOrganizersAsync(topCount, startDate, endDate);
             List<TopMentorDTO> topMentors = await GetTopMentorsByCertificatesAsync(topCount, startDate, endDate);
             List<TopStudentDTO> topStudents = await GetTopStudentsByCertificatesAsync(topCount, startDate, endDate);
 
+            // Prepare final DTO
             TopPerformersDTO topPerformers = new TopPerformersDTO
             {
                 TopOrganizers = topOrganizers,
@@ -168,10 +171,12 @@ namespace BusinessLogic.Services.Dashboards
                 endDate = calculatedEnd;
             }
 
+            // Get repositories
             IGenericRepository<School> schoolRepo = _unitOfWork.GetRepository<School>();
             IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
             IGenericRepository<Province> provinceRepo = _unitOfWork.GetRepository<Province>();
 
+            // Get school metrics
             int totalSchools = await GetTotalSchoolsAsync(schoolRepo);
             List<TopSchoolDTO> topSchools = await GetTopSchoolsByParticipationAsync(
                 topSchoolCount,
@@ -183,6 +188,7 @@ namespace BusinessLogic.Services.Dashboards
                 startDate,
                 endDate);
 
+            /// Prepare final DTO
             SchoolMetricsDTO schoolMetrics = new SchoolMetricsDTO
             {
                 TotalSchools = totalSchools,
@@ -728,6 +734,7 @@ namespace BusinessLogic.Services.Dashboards
         /// <summary>
         /// Gets top students by total certificates (team + student)
         /// Counts both team certificates and student certificates
+        /// prioritizes individual certificates when ranking
         /// </summary>
         private async Task<List<TopStudentDTO>> GetTopStudentsByCertificatesAsync(
             int topCount,
@@ -786,6 +793,7 @@ namespace BusinessLogic.Services.Dashboards
                     TeamCertificates = teamCerts.GetValueOrDefault(studentId, 0)
                 })
                 .OrderByDescending(x => x.TotalCertificates)
+                .ThenByDescending(x => x.IndividualCertificates)
                 .Take(topCount)
                 .ToList();
 

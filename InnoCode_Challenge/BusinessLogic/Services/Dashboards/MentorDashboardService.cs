@@ -136,7 +136,7 @@ namespace BusinessLogic.Services.Dashboards
                     .Distinct()
                     .CountAsync();
 
-                // Best Performing Team (based on team + student certificates)
+                // Best Performing Team
                 dashboard.BestPerformingTeam = await GetBestPerformingTeamAsync(
                     teamIds,
                     certificateRepo,
@@ -175,7 +175,7 @@ namespace BusinessLogic.Services.Dashboards
                         string.Equals(c.Status, ContestStatusEnum.Paused.ToString()))
                 };
 
-                // Recent Certificates (last 5, Team type only)
+                // Recent Certificates
                 dashboard.RecentCertificates = await GetRecentCertificatesAsync(
                     teamIds,
                     certificateRepo,
