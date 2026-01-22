@@ -5,7 +5,7 @@
         CurrentMonth = 1,
         Last3Months = 2,
         Last6Months = 3,
-        CurrentYear = 4,
+        LastYear = 4,
         Custom = 5
     }
 }

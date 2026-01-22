@@ -34,7 +34,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
             Guid? mentorId = null,
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum? predefined = null)
+            TimeRangePredefinedEnum? predefined = TimeRangePredefinedEnum.LastYear)
         {
             MentorDashboardDTO dashboard = await _mentorDashboardService.GetMentorDashboardAsync(
                 mentorId,

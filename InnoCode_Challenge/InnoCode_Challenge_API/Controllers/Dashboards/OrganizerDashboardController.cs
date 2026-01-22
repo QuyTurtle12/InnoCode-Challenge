@@ -35,7 +35,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
              Guid? organizerId = null,
              DateTime? startDate = null,
              DateTime? endDate = null,
-             TimeRangePredefinedEnum? predefined = null)
+             TimeRangePredefinedEnum? predefined = TimeRangePredefinedEnum.LastYear)
         {
             OrganizerDashboardDTO dashboard = await _organizerDashboardService.GetOrganizerDashboardAsync(
                 organizerId,

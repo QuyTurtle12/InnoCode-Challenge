@@ -39,8 +39,8 @@ namespace BusinessLogic.Services.Contests
         private readonly IDashboardNotifierService _dashboardNotifier;
         private readonly ILeaderboardEntryService _leaderboardEntryService;
 
-        private readonly INotificationService _notificationService;   
-        private readonly IActivityLogWriter _activityLogWriter;       
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _activityLogWriter;
         private readonly ILogger<RoundService> _logger;
 
         private const string CODE_TEMPLATE_FOLDER = "code_template";
@@ -97,7 +97,7 @@ namespace BusinessLogic.Services.Contests
             _activityLogWriter = activityLogWriter;
             _logger = logger;
             _dashboardNotifier = dashboardNotifier;
-            _leaderboardEntryService = leaderboardEntryService;}
+            _leaderboardEntryService = leaderboardEntryService; }
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
         {
@@ -152,15 +152,6 @@ namespace BusinessLogic.Services.Contests
 
             // Post-creation operations (logging, scheduling)
             await PerformPostCreateRoundOperationsAsync(createdRound!);
-
-            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-
-            // Notify organizer dashboard update
-            Contest? contest = await contestRepo.GetByIdAsync(createdRound.ContestId);
-            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
-            {
-                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
-            }
         }
 
         private async Task ValidateRetakeRoundAsync(Guid contestId, Guid? mainRoundId, bool isRetakeRound, ProblemTypeEnum? retakeRoundType = null)
@@ -294,15 +285,6 @@ namespace BusinessLogic.Services.Contests
 
             // Post-deletion operations
             await PerformPostDeleteRoundOperationsAsync(roundId, contestId, roundName);
-
-            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
-
-            // Notify organizer dashboard update
-            Contest? contest = await contestRepo.GetByIdAsync(contestId);
-            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
-            {
-                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
-            }
         }
 
         private async Task<bool> HasApprovedRetakeAppealAsync(Guid studentUserId, Guid mainRoundId)
@@ -1795,8 +1777,8 @@ namespace BusinessLogic.Services.Contests
 
             return rows
                 .OrderByDescending(r => r.AvgScore)
-                .ThenBy(r => r.AvgCreatedAtTicks) 
-                .ThenBy(r => r.TeamId)            
+                .ThenBy(r => r.AvgCreatedAtTicks)
+                .ThenBy(r => r.TeamId)
                 .Take(cutoff)
                 .Select(r => r.TeamId)
                 .ToList();
@@ -1977,7 +1959,7 @@ namespace BusinessLogic.Services.Contests
             }
 
             // Set mock test weight
-            if (config.MockTestWeight != null) 
+            if (config.MockTestWeight != null)
             {
                 await AssignWeightToRoundAsync(roundId, config.MockTestWeight.Value);
             }
@@ -2045,6 +2027,15 @@ namespace BusinessLogic.Services.Contests
             SafeEnqueue(() =>
                 BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(createdRound.RoundId)),
                 "ScheduleRoundStateTransitionsAsync");
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(createdRound.ContestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         /// <summary>
@@ -2086,15 +2077,12 @@ namespace BusinessLogic.Services.Contests
                 .Where(r => r.RoundId == id)
                 .Include(r => r.McqTest)
                 .Include(r => r.Problem)
+                .Include(r => r.Contest)
                 .FirstOrDefaultAsync();
 
-            if (round == null)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND, "Round not found.");
-            }
+            ValidateRound(round);
 
-            return round;
+            return round!;
         }
 
         /// <summary>
@@ -2102,6 +2090,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private async Task UpdateRoundEntityAsync(Round round, UpdateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
         {
+            ValidateModifyRound(round);
+
             // Update basic properties
             _mapper.Map(roundDTO, round);
 
@@ -2731,6 +2721,7 @@ namespace BusinessLogic.Services.Contests
                 .Where(r => r.RoundId == id)
                 .Include(r => r.Problem)
                 .Include(r => r.McqTest)
+                .Include(r => r.Contest)
                 .FirstOrDefaultAsync();
 
             ValidateRound(round);
@@ -2743,6 +2734,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private async Task DeleteRoundContentAsync(Round round)
         {
+            ValidateModifyRound(round);
+
             // Delete related Problem
             if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
             {
@@ -3494,6 +3487,15 @@ namespace BusinessLogic.Services.Contests
                     targetId = roundId.ToString(),
                     message = $"Round '{roundName}' has deleted."
                 });
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         /// <summary>
@@ -3505,7 +3507,7 @@ namespace BusinessLogic.Services.Contests
             string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
 
             // Validate round exists
-            if (round == null)
+            if (round == null || round.DeletedAt.HasValue)
             {
                 throw new ErrorException(StatusCodes.Status404NotFound,
                     ResponseCodeConstants.NOT_FOUND,
@@ -3524,6 +3526,21 @@ namespace BusinessLogic.Services.Contests
                         ResponseCodeConstants.FORBIDDEN,
                         "Access denied to this round.");
                 }
+            }
+        }
+
+        /// <summary>
+        /// Validates whether a round can be modified.
+        /// </summary>
+        private void ValidateModifyRound(Round? round)
+        {
+            // Restrict modifications to rounds in contests with Draft or Delayed status
+            if (round!.Contest.Status != ContestStatusEnum.Draft.ToString() &&
+                round.Contest.Status != ContestStatusEnum.Delayed.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Modifications are only allowed for rounds in contests with Draft or Delayed status.");
             }
         }
     }

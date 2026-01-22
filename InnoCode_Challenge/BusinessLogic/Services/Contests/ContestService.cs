@@ -211,9 +211,11 @@ namespace BusinessLogic.Services.Contests
                 {
                     query = query.Where(c => c.CreatedBy == userId);
                 }
-
-                // Filter draft contests for non-privileged users
-                query = ApplyDraftFilterForRole(query, userRole);
+                else
+                {
+                    // Exclude draft contests for non-owners
+                    query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
+                }
 
                 // Apply search filters
                 query = ApplySearchFilters(query, idSearch, creatorIdSearch, roundIdSearch, nameSearch, yearSearch, startDate, endDate);
@@ -3045,21 +3047,6 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Applies draft filter based on user role
-        /// </summary>
-        private IQueryable<Contest> ApplyDraftFilterForRole(IQueryable<Contest> query, string? userRole)
-        {
-            // For non-organizers, don't show draft contests
-            if (userRole != RoleConstants.ContestOrganizer &&
-                userRole != RoleConstants.Judge)
-            {
-                query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
-            }
-
-            return query;
-        }
-
-        /// <summary>
         /// Applies all search filters to the query
         /// </summary>
         private IQueryable<Contest> ApplySearchFilters(
@@ -3316,13 +3303,9 @@ namespace BusinessLogic.Services.Contests
         {
             Contest? existingContest = await contestRepo.GetByIdAsync(id);
 
-            if (existingContest == null || existingContest.DeletedAt.HasValue)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND, "Contest not found.");
-            }
+            ValidateContest(existingContest);
 
-            return existingContest;
+            return existingContest!;
         }
 
         /// <summary>
@@ -3370,6 +3353,8 @@ namespace BusinessLogic.Services.Contests
             UpdateContestDTO contestDTO,
             IGenericRepository<Config> configRepo)
         {
+            ValidateModifyContest(existingContest);
+
             // Update basic properties
             _mapper.Map(contestDTO, existingContest);
 
@@ -3761,11 +3746,10 @@ namespace BusinessLogic.Services.Contests
             string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
 
             // Validate contest exists
-            if (contest == null)
+            if (contest == null || contest.DeletedAt.HasValue)
             {
                 throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND,
-                    "Contest not found.");
+                    ResponseCodeConstants.NOT_FOUND, "Contest not found.");
             }
 
             // Restrict access to contests of other organizers
@@ -3780,6 +3764,18 @@ namespace BusinessLogic.Services.Contests
                         ResponseCodeConstants.FORBIDDEN,
                         "Access denied to this contest.");
                 }
+            }
+        }
+
+        private void ValidateModifyContest(Contest? contest)
+        {
+            // Restrict modifications to contest with Draft or Delayed status
+            if (contest!.Status != ContestStatusEnum.Draft.ToString() &&
+                contest.Status != ContestStatusEnum.Delayed.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Modifications are only allowed for contest with Draft or Delayed status.");
             }
         }
     }

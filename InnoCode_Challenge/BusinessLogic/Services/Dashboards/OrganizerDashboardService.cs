@@ -621,16 +621,17 @@ namespace BusinessLogic.Services.Dashboards
                     break;
 
                 case TimeRangePredefinedEnum.Last3Months:
-                    startDate = now.Date.AddMonths(-3);
+                    startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-2);
                     break;
 
                 case TimeRangePredefinedEnum.Last6Months:
-                    startDate = now.Date.AddMonths(-6);
+                    startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-5);
                     break;
 
-                case TimeRangePredefinedEnum.CurrentYear:
-                    startDate = new DateTime(now.Year, 1, 1);
+                case TimeRangePredefinedEnum.LastYear:
+                    startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-11);
                     break;
+
                 default:
                     startDate = DateTime.MinValue;
                     endDate = DateTime.MaxValue;

@@ -63,7 +63,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
         public async Task<IActionResult> GetChartData(
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum? predefined = null)
+            TimeRangePredefinedEnum predefined = TimeRangePredefinedEnum.LastYear)
         {
             ChartDataDTO chartData = await _dashboardService.GetChartDataAsync(
                 startDate,
