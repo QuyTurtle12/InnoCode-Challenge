@@ -482,6 +482,7 @@ namespace BusinessLogic.Services.Contests
                     TeamName = entry.Team.Name,
                     Rank = entry.Rank ?? 0,
                     Score = entry.Score ?? 0,
+                    Status = entry.Team.Status!,
                     Members = new List<MemberInfo>()
                 }).ToList();
 
@@ -504,7 +505,7 @@ namespace BusinessLogic.Services.Contests
                     .ToListAsync();
 
                 // Populate member details for paginated teams only
-                foreach (var teamData in paginatedTeams)
+                foreach (TeamInfo teamData in paginatedTeams)
                 {
                     bool isUserTeam = userTeamId.HasValue && userTeamId.Value == teamData.TeamId;
 
