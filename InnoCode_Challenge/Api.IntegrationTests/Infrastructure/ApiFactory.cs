@@ -1,3 +1,4 @@
+using BusinessLogic.IServices.Contests;
 using BusinessLogic.IServices.FileStorages;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Hosting;
@@ -53,6 +54,17 @@ public class ApiFactory : WebApplicationFactory<Program>
                 d => d.ServiceType == typeof(ICloudinaryService));
             if (cloudDescriptor != null) services.Remove(cloudDescriptor);
             services.AddSingleton<ICloudinaryService, FakeCloudinaryService>();
+
+            // Replace Judge0 and mock test services to avoid external HTTP calls
+            var judgeDescriptor = services.SingleOrDefault(
+                d => d.ServiceType == typeof(IJudge0Service));
+            if (judgeDescriptor != null) services.Remove(judgeDescriptor);
+            services.AddScoped<IJudge0Service, FakeJudge0Service>();
+
+            var mockDescriptor = services.SingleOrDefault(
+                d => d.ServiceType == typeof(IMockTestService));
+            if (mockDescriptor != null) services.Remove(mockDescriptor);
+            services.AddScoped<IMockTestService, FakeMockTestService>();
 
             // Replace HttpClientFactory to avoid external HTTP calls (certificate template download)
             var httpFactoryDescriptor = services.SingleOrDefault(
