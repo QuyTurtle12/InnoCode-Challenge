@@ -36,7 +36,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
         public async Task<IActionResult> GetDashboardMetrics(
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum? predefined = null)
+            TimeRangePredefinedEnum? predefined = TimeRangePredefinedEnum.AllTime)
         {
 
             DashboardMetricsDTO metrics = await _dashboardService.GetDashboardMetricsAsync(
@@ -63,7 +63,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
         public async Task<IActionResult> GetChartData(
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum predefined = TimeRangePredefinedEnum.LastYear)
+            TimeRangePredefinedEnum predefined = TimeRangePredefinedEnum.AllTime)
         {
             ChartDataDTO chartData = await _dashboardService.GetChartDataAsync(
                 startDate,
@@ -91,7 +91,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
             int topCount = DEFAULT_TOP_COUNT,
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum? predefined = null)
+            TimeRangePredefinedEnum? predefined = TimeRangePredefinedEnum.AllTime)
         {
             TopPerformersDTO topPerformers = await _dashboardService.GetTopPerformersAsync(
                 startDate,
@@ -120,7 +120,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
             int topSchoolCount = DEFAULT_TOP_SCHOOL_COUNT,
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum? predefined = null)
+            TimeRangePredefinedEnum? predefined = TimeRangePredefinedEnum.AllTime)
         {
             SchoolMetricsDTO schoolMetrics = await _dashboardService.GetSchoolMetricsAsync(
                 startDate,

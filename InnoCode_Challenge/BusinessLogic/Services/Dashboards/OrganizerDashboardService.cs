@@ -8,6 +8,7 @@ using System.Security.Claims;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
+using Utility.Helpers;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.Services.Dashboards
@@ -36,7 +37,7 @@ namespace BusinessLogic.Services.Dashboards
                 // Calculate date range if predefined option is specified
                 if (predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom)
                 {
-                    (DateTime calculatedStart, DateTime calculatedEnd) = CalculateDateRange(predefined.Value);
+                    (DateTime calculatedStart, DateTime calculatedEnd) = DateTimeHelpers.CalculateDateRange(predefined.Value);
                     startDate = calculatedStart;
                     endDate = calculatedEnd;
                 }
@@ -602,43 +603,6 @@ namespace BusinessLogic.Services.Dashboards
                 return result.ToUniversalTime();
 
             return null;
-        }
-
-        /// <summary>
-        /// Calculate date range based on predefined option
-        /// </summary>
-        private (DateTime StartDate, DateTime EndDate) CalculateDateRange(
-            TimeRangePredefinedEnum predefined)
-        {
-            DateTime now = DateTime.UtcNow;
-            DateTime startDate;
-            DateTime endDate = now;
-
-            switch (predefined)
-            {
-                case TimeRangePredefinedEnum.CurrentMonth:
-                    startDate = new DateTime(now.Year, now.Month, 1);
-                    break;
-
-                case TimeRangePredefinedEnum.Last3Months:
-                    startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-2);
-                    break;
-
-                case TimeRangePredefinedEnum.Last6Months:
-                    startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-5);
-                    break;
-
-                case TimeRangePredefinedEnum.LastYear:
-                    startDate = new DateTime(now.Year, now.Month, 1).AddMonths(-11);
-                    break;
-
-                default:
-                    startDate = DateTime.MinValue;
-                    endDate = DateTime.MaxValue;
-                    break;
-            }
-
-            return (startDate, endDate);
         }
 
         /// <summary>
