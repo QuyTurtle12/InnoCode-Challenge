@@ -279,5 +279,54 @@ namespace Api.IntegrationTests.Appeals
             var err = await reviewRes.ReadErrorAsync();
             err.ErrorCode.Should().Be("APPEAL_REVIEW_DEADLINE_PASSED");
         }
+
+        [Fact]
+        public async Task ReviewAppeal_BeforeSubmitDeadline_ShouldReturn403()
+        {
+            var seed = SeedAppealData();
+            var mentorToken = await LoginAsync(seed.MentorEmail, seed.MentorPassword);
+
+            using var form = BuildCreateAppealForm(seed.RoundId, seed.TeamId, seed.StudentId, "Need retake");
+            var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/appeals");
+            createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", mentorToken);
+            createReq.Content = form;
+            var createRes = await _client.SendAsync(createReq);
+            createRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var created = await createRes.ReadOkAsync<GetAppealDTO>();
+
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+                db.Configs.Add(new Config
+                {
+                    Key = ConfigKeys.RoundAppealSubmitDeadlineUtc(seed.RoundId),
+                    Value = DateTime.UtcNow.AddMinutes(10).ToString("o"),
+                    Scope = "round",
+                    UpdatedAt = DateTime.UtcNow
+                });
+                db.Configs.Add(new Config
+                {
+                    Key = ConfigKeys.RoundAppealReviewDeadlineUtc(seed.RoundId),
+                    Value = DateTime.UtcNow.AddMinutes(20).ToString("o"),
+                    Scope = "round",
+                    UpdatedAt = DateTime.UtcNow
+                });
+                db.SaveChanges();
+            }
+
+            var organizerToken = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+            var reviewReq = new HttpRequestMessage(HttpMethod.Put, $"/api/appeals/{created.Data!.AppealId:D}/review");
+            reviewReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", organizerToken);
+            reviewReq.Content = JsonContent.Create(new ReviewAppealDTO
+            {
+                Decision = "Rejected",
+                DecisionReason = "Too early"
+            });
+
+            var reviewRes = await _client.SendAsync(reviewReq);
+            reviewRes.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            var err = await reviewRes.ReadErrorAsync();
+            err.ErrorCode.Should().Be("APPEAL_REVIEW_DEADLINE_PASSED");
+        }
     }
 }
