@@ -25,6 +25,7 @@ using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -200,17 +201,16 @@ namespace BusinessLogic.Services.Contests
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
                 string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
 
-                // Apply participation filters
-                if (isMyParticipatedContest)
-                {
-                    query = await ApplyParticipantFilterAsync(query, userRole, userId);
-                }
-
-                // Apply ownership filter
                 if (isMyContest && !string.IsNullOrEmpty(userId))
                 {
+                    // Apply ownership filter
                     query = query.Where(c => c.CreatedBy == userId);
                 }
+                else if (isMyParticipatedContest)
+                {
+                    // Apply participation filters
+                    query = await ApplyParticipantFilterAsync(query, userRole, userId);
+                } 
                 else
                 {
                     // Exclude draft contests for non-owners
@@ -310,18 +310,13 @@ namespace BusinessLogic.Services.Contests
                 // Post-update operations (logging, notifications, scheduling)
                 await PerformPostUpdateOperationsAsync(existingContest, oldValues);
 
-                // Notify organizer dashboard
-                Guid organizerId = Guid.Parse(GetCurrentUserIdOrThrow());
-                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
-
-                // Notify mentors dashboard
-                await NotifiMentorDashboardContestUpdated(existingContest.ContestId);
-
                 // Return updated contest
-                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(
-                    1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
+                //PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(
+                //    1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
 
-                return result.Items.First();
+                GetContestDTO result = await GetContestByIdAsync(existingContest.ContestId);
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -2624,12 +2619,17 @@ namespace BusinessLogic.Services.Contests
 
             if (studentId.HasValue)
             {
+                // Include teams and team members
                 query = query.Include(c => c.Teams)
                              .ThenInclude(t => t.TeamMembers);
 
+                // Filter contests where the student is a team member
                 query = query.Where(c => c.Teams.Any(t =>
                     t.TeamMembers.Any(tm => tm.StudentId == studentId.Value)
                     && t.DeletedAt == null));
+
+                // Exclude draft contests for students
+                query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }
 
             return query;
@@ -2651,11 +2651,16 @@ namespace BusinessLogic.Services.Contests
 
             if (mentorId.HasValue)
             {
+                // Include teams
                 query = query.Include(c => c.Teams);
 
+                // Filter contests where the mentor has teams
                 query = query.Where(c => c.Teams.Any(t =>
                     t.MentorId == mentorId.Value
                  && t.DeletedAt == null));
+
+                // Exclude draft contests for students
+                query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }
 
             return query;
@@ -2696,7 +2701,7 @@ namespace BusinessLogic.Services.Contests
                 .Select(id => id!.Value)
                 .ToList();
 
-            // Filter contests to only those where the user is a judge
+            // Filter contests to only those where judge is assigned
             if (contestIds.Any())
             {
                 query = query.Where(c => contestIds.Contains(c.ContestId));
@@ -3477,6 +3482,14 @@ namespace BusinessLogic.Services.Contests
             SafeEnqueue(() =>
                 BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contest.ContestId)),
                 "ScheduleContestStateTransitionsAsync");
+
+            // Notify organizer dashboard
+            Guid organizerId = Guid.Parse(GetCurrentUserIdOrThrow());
+            await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+            // Notify mentors dashboard
+            await NotifiMentorDashboardContestUpdated(contest.ContestId);
+
         }
 
         /// <summary>
