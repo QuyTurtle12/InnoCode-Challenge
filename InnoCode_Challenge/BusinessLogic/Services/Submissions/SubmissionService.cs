@@ -465,9 +465,6 @@ namespace BusinessLogic.Services.Submissions
                 await SaveSubmissionResultAsync(
                     submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
 
-                // Check for plagiarism
-                await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
-
                 _unitOfWork.CommitTransaction();
 
                 return result;
@@ -837,6 +834,8 @@ namespace BusinessLogic.Services.Submissions
                     .Where(s => s.SubmissionId == submissionId && s.DeletedAt == null)
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
+                            .ThenInclude(r => r.Contest)
+                    .Include(s => s.SubmissionArtifacts)
                     .FirstOrDefaultAsync();
 
                 // Validate submission existence
@@ -847,13 +846,10 @@ namespace BusinessLogic.Services.Submissions
                         $"Submission with ID {submissionId} not found");
                 }
 
-                // Check if submission is flagged for plagiarism
-                if (string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new ErrorException(StatusCodes.Status409Conflict,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Submission is flagged for plagiarism and must be reviewed by staff before acceptance.");
-                }
+                bool isPlagiarismSuspected = string.Equals(
+                    submission.Status,
+                    STATUS_PLAGIARISM_SUSPECTED,
+                    StringComparison.OrdinalIgnoreCase);
 
                 // Get roundId and studentId
                 Guid roundId = submission.Problem.RoundId;
@@ -869,6 +865,21 @@ namespace BusinessLogic.Services.Submissions
                         $"Cannot accept result. You have already finished this round.");
                 }
 
+                if (string.Equals(submission.Problem.Type, PROBLEM_TYPE_AUTO_EVALUATION, StringComparison.OrdinalIgnoreCase))
+                {
+                    var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+                    bool hasFingerprint = await fpRepo.Entities
+                        .AsNoTracking()
+                        .AnyAsync(f => f.SubmissionId == submission.SubmissionId);
+
+                    if (!hasFingerprint)
+                    {
+                        string sourceCode = await GetSubmissionSourceCodeAsync(submission);
+                        var (suspected, _) = await CheckAndFlagPlagiarismAsync(submission, submission.Problem, sourceCode);
+                        isPlagiarismSuspected = isPlagiarismSuspected || suspected;
+                    }
+                }
+
                 // Get all other submissions for this student in the same round
                 List<Submission> otherSubmissions = await submissionRepo.Entities
                     .Where(s => s.Problem.RoundId == roundId
@@ -878,8 +889,11 @@ namespace BusinessLogic.Services.Submissions
                         && s.Status != SubmissionStatusEnum.Finished.ToString())
                     .ToListAsync();
 
-                // Set the current submission to Finished
-                submission.Status = SubmissionStatusEnum.Finished.ToString();
+                // Set the current submission to Finished unless it's flagged as plagiarism suspected
+                if (!isPlagiarismSuspected)
+                {
+                    submission.Status = SubmissionStatusEnum.Finished.ToString();
+                }
                 await submissionRepo.UpdateAsync(submission);
 
                 // Cancel all other submissions
@@ -2773,9 +2787,6 @@ namespace BusinessLogic.Services.Submissions
                     previousSubmissionsCount,
                     problem.PenaltyRate);
 
-                // Check plagiarism
-                await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
-
                 _unitOfWork.CommitTransaction();
 
                 return mockResult;
@@ -3428,6 +3439,33 @@ namespace BusinessLogic.Services.Submissions
             string artifactUrl = await UploadCodeAsFileAsync(code, fileName);
 
             return (sourceCode, CODE_ARTIFACT_TYPE, artifactUrl);
+        }
+
+        private async Task<string> GetSubmissionSourceCodeAsync(Submission submission)
+        {
+            List<SubmissionArtifact> artifacts = submission.SubmissionArtifacts?
+                .Where(a => a.DeletedAt == null)
+                .OrderByDescending(a => a.CreatedAt)
+                .ToList() ?? new List<SubmissionArtifact>();
+
+            if (artifacts.Count == 0)
+            {
+                var artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+                artifacts = await artifactRepo.Entities
+                    .Where(a => a.SubmissionId == submission.SubmissionId && a.DeletedAt == null)
+                    .OrderByDescending(a => a.CreatedAt)
+                    .ToListAsync();
+            }
+
+            SubmissionArtifact? artifact = artifacts.FirstOrDefault();
+            if (artifact == null || string.IsNullOrWhiteSpace(artifact.Url))
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Submission artifact not found.");
+            }
+
+            return await SubmissionHelpers.DownloadFileContentAsync(artifact.Url);
         }
 
         /// <summary>
