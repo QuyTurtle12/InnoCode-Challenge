@@ -270,6 +270,50 @@ namespace Api.IntegrationTests.Appeals
             createRes.StatusCode.Should().Be(HttpStatusCode.OK);
             var created = await createRes.ReadOkAsync<GetAppealDTO>();
 
+            using (var scopes = _factory.Services.CreateScope())
+            {
+                var newdb = scopes.ServiceProvider.GetRequiredService<ContestDbContext>();
+                var now = DateTime.UtcNow;
+                var submitKey = ConfigKeys.RoundAppealSubmitDeadlineUtc(seed.RoundId);
+                var reviewKey = ConfigKeys.RoundAppealReviewDeadlineUtc(seed.RoundId);
+
+                var submitConfig = newdb.Configs.FirstOrDefault(c => c.Key == submitKey && c.DeletedAt == null);
+                if (submitConfig == null)
+                {
+                    newdb.Configs.Add(new Config
+                    {
+                        Key = submitKey,
+                        Value = now.AddMinutes(-1).ToString("o"),
+                        Scope = "contest",
+                        UpdatedAt = now
+                    });
+                }
+                else
+                {
+                    submitConfig.Value = now.AddMinutes(-1).ToString("o");
+                    submitConfig.UpdatedAt = now;
+                }
+
+                var reviewConfig = newdb.Configs.FirstOrDefault(c => c.Key == reviewKey && c.DeletedAt == null);
+                if (reviewConfig == null)
+                {
+                    newdb.Configs.Add(new Config
+                    {
+                        Key = reviewKey,
+                        Value = now.AddMinutes(30).ToString("o"),
+                        Scope = "contest",
+                        UpdatedAt = now
+                    });
+                }
+                else
+                {
+                    reviewConfig.Value = now.AddMinutes(30).ToString("o");
+                    reviewConfig.UpdatedAt = now;
+                }
+
+                newdb.SaveChanges();
+            }
+
             var organizerToken = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
             var reviewReq = new HttpRequestMessage(HttpMethod.Put, $"/api/appeals/{created.Data!.AppealId:D}/review");
             reviewReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", organizerToken);

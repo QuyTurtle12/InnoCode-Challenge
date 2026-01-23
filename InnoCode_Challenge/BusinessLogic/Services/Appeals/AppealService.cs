@@ -580,9 +580,9 @@ namespace BusinessLogic.Services.Appeals
                         "Appeal not found.");
                 }
 
+                DateTime submitDeadline = await GetAppealSubmitDeadlineUtcAsync(appeal.Target, configRepo);
                 DateTime reviewDeadline = await GetAppealReviewDeadlineUtcAsync(appeal.Target, configRepo);
-                DateTime reviewWindowStart = appeal.Target.End;
-                if (DateTime.UtcNow < reviewWindowStart || DateTime.UtcNow > reviewDeadline)
+                if (DateTime.UtcNow < submitDeadline || DateTime.UtcNow > reviewDeadline)
                 {
                     throw new ErrorException(StatusCodes.Status403Forbidden,
                         "APPEAL_REVIEW_DEADLINE_PASSED",
