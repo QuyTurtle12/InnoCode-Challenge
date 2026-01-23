@@ -2333,9 +2333,9 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
 
                 // Notify organizer about suspected plagiarism
-                Guid contestId = submission.Problem.Round.ContestId;
-                Guid roundId = submission.Problem.RoundId;
-                if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                Guid contestId = problem.Round.ContestId;
+                Guid roundId = problem.RoundId;
+                if (Guid.TryParse(problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
                 {
                     try
                     {
@@ -3269,6 +3269,8 @@ namespace BusinessLogic.Services.Submissions
 
             Problem? problem = await problemRepo.Entities
                 .Where(p => p.RoundId == roundId)
+                .Include(p => p.Round)
+                    .ThenInclude(r => r.Contest)
                 .FirstOrDefaultAsync();
 
             if (problem == null)
@@ -4140,6 +4142,8 @@ namespace BusinessLogic.Services.Submissions
             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
             Problem? problem = await problemRepo.Entities
                 .Where(p => p.RoundId == roundId)
+                .Include(p => p.Round)
+                    .ThenInclude(r => r.Contest)
                 .FirstOrDefaultAsync();
 
             if (problem == null)
