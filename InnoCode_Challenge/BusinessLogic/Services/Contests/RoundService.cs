@@ -988,13 +988,25 @@ namespace BusinessLogic.Services.Contests
             if (string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
                 return;
 
+            await _configService.SetConfigValueAsync(
+                ConfigKeys.RoundTeamFinalSubmission(roundId, submission.TeamId),
+                submission.SubmissionId.ToString(),
+                SCOPE_ROUND);
+
+            List<Guid> otherFinalSubmissionIds =
+                await GetFinalSubmissionIdsForOtherTeamsAsync(roundId, submission.TeamId);
+
             var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
             SubmissionFingerprint? existingFp = await fpRepo.Entities
                 .AsNoTracking()
                 .FirstOrDefaultAsync(f => f.SubmissionId == submission.SubmissionId);
             if (existingFp != null)
             {
-                await CheckAndFlagPlagiarismByHashAsync(submission, existingFp.Hash, existingFp.NormalizedLength);
+                await CheckAndFlagPlagiarismByHashAsync(
+                    submission,
+                    existingFp.Hash,
+                    existingFp.NormalizedLength,
+                    otherFinalSubmissionIds);
                 return;
             }
 
@@ -1011,10 +1023,13 @@ namespace BusinessLogic.Services.Contests
             string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(archiveFile);
             if (string.IsNullOrWhiteSpace(combinedNormalized)) return;
 
-            await CheckAndFlagPlagiarismNormalizedAsync(submission, combinedNormalized);
+            await CheckAndFlagPlagiarismNormalizedAsync(submission, combinedNormalized, otherFinalSubmissionIds);
         }
 
-        private async Task CheckAndFlagPlagiarismNormalizedAsync(Submission submission, string normalized)
+        private async Task CheckAndFlagPlagiarismNormalizedAsync(
+            Submission submission,
+            string normalized,
+            IReadOnlyCollection<Guid> allowedSubmissionIds)
         {
             if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
                 return;
@@ -1022,15 +1037,20 @@ namespace BusinessLogic.Services.Contests
             string hash = PlagiarismHelpers.Sha256Hex(normalized);
             var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
 
-            Guid? matchedId = await fpRepo.Entities
-                .AsNoTracking()
-                .Where(f =>
-                    f.ProblemId == submission.ProblemId &&
-                    f.Hash == hash &&
-                    f.TeamId != submission.TeamId &&
-                    f.Submission.DeletedAt == null)
-                .Select(f => (Guid?)f.SubmissionId)
-                .FirstOrDefaultAsync();
+            Guid? matchedId = null;
+            if (allowedSubmissionIds.Count > 0)
+            {
+                matchedId = await fpRepo.Entities
+                    .AsNoTracking()
+                    .Where(f =>
+                        f.ProblemId == submission.ProblemId &&
+                        f.Hash == hash &&
+                        f.TeamId != submission.TeamId &&
+                        allowedSubmissionIds.Contains(f.SubmissionId) &&
+                        f.Submission.DeletedAt == null)
+                    .Select(f => (Guid?)f.SubmissionId)
+                    .FirstOrDefaultAsync();
+            }
 
             bool exists = await fpRepo.Entities.AnyAsync(x => x.SubmissionId == submission.SubmissionId);
             if (!exists)
@@ -1082,22 +1102,31 @@ namespace BusinessLogic.Services.Contests
             await _unitOfWork.SaveAsync();
         }
 
-        private async Task CheckAndFlagPlagiarismByHashAsync(Submission submission, string hash, int normalizedLength)
+        private async Task CheckAndFlagPlagiarismByHashAsync(
+            Submission submission,
+            string hash,
+            int normalizedLength,
+            IReadOnlyCollection<Guid> allowedSubmissionIds)
         {
             if (string.IsNullOrWhiteSpace(hash) || normalizedLength < MIN_NORMALIZED_LEN_TO_CHECK)
                 return;
 
             var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
-            Guid? matchedId = await fpRepo.Entities
-                .AsNoTracking()
-                .Where(f =>
-                    f.ProblemId == submission.ProblemId &&
-                    f.Hash == hash &&
-                    f.TeamId != submission.TeamId &&
-                    f.SubmissionId != submission.SubmissionId &&
-                    f.Submission.DeletedAt == null)
-                .Select(f => (Guid?)f.SubmissionId)
-                .FirstOrDefaultAsync();
+            Guid? matchedId = null;
+            if (allowedSubmissionIds.Count > 0)
+            {
+                matchedId = await fpRepo.Entities
+                    .AsNoTracking()
+                    .Where(f =>
+                        f.ProblemId == submission.ProblemId &&
+                        f.Hash == hash &&
+                        f.TeamId != submission.TeamId &&
+                        f.SubmissionId != submission.SubmissionId &&
+                        allowedSubmissionIds.Contains(f.SubmissionId) &&
+                        f.Submission.DeletedAt == null)
+                    .Select(f => (Guid?)f.SubmissionId)
+                    .FirstOrDefaultAsync();
+            }
 
             if (!matchedId.HasValue) return;
 
@@ -1130,6 +1159,38 @@ namespace BusinessLogic.Services.Contests
             }
 
             await _unitOfWork.SaveAsync();
+        }
+
+        private async Task<List<Guid>> GetFinalSubmissionIdsForOtherTeamsAsync(Guid roundId, Guid currentTeamId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            string prefix = ConfigKeys.RoundTeamFinalSubmissionPrefix(roundId);
+            const string suffix = ":final_submission_id";
+
+            List<Config> configs = await configRepo.Entities
+                .AsNoTracking()
+                .Where(c => c.DeletedAt == null
+                            && c.Scope == SCOPE_ROUND
+                            && c.Key.StartsWith(prefix)
+                            && c.Key.EndsWith(suffix)
+                            && c.Value != null)
+                .ToListAsync();
+
+            var result = new List<Guid>();
+
+            foreach (Config config in configs)
+            {
+                string teamPart = config.Key.Substring(prefix.Length, config.Key.Length - prefix.Length - suffix.Length);
+                if (!Guid.TryParse(teamPart, out Guid teamId)) continue;
+                if (teamId == currentTeamId) continue;
+
+                if (Guid.TryParse(config.Value, out Guid submissionId))
+                {
+                    result.Add(submissionId);
+                }
+            }
+
+            return result;
         }
 
         private async Task<IFormFile?> DownloadArchiveAsFormFileAsync(string url)

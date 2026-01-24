@@ -246,6 +246,14 @@ namespace Api.IntegrationTests.Submissions
                 CreatedAt = now
             };
 
+            var otherFinalConfig = new Config
+            {
+                Key = ConfigKeys.RoundTeamFinalSubmission(roundId, otherTeamId),
+                Value = existingSubmission.SubmissionId.ToString(),
+                Scope = "round",
+                UpdatedAt = now
+            };
+
             db.Users.AddRange(studentUser, mentorUser, otherMentorUser, otherStudentUser, organizerUser);
             db.Mentors.AddRange(mentor, otherMentor);
             db.Students.AddRange(student, otherStudent);
@@ -256,6 +264,7 @@ namespace Api.IntegrationTests.Submissions
             db.TeamMembers.Add(teamMember);
             db.Submissions.Add(existingSubmission);
             db.SubmissionFingerprints.Add(existingFingerprint);
+            db.Configs.Add(otherFinalConfig);
             db.SaveChanges();
 
         return new PlagiarismSeed(
