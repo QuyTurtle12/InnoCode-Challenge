@@ -67,9 +67,13 @@ public class ApiFactory : WebApplicationFactory<Program>
             services.AddScoped<IMockTestService, FakeMockTestService>();
 
             // Replace HttpClientFactory to avoid external HTTP calls (certificate template download)
-            var httpFactoryDescriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(IHttpClientFactory));
-            if (httpFactoryDescriptor != null) services.Remove(httpFactoryDescriptor);
+            var httpFactoryDescriptors = services
+                .Where(d => d.ServiceType == typeof(IHttpClientFactory))
+                .ToList();
+            foreach (var descriptors in httpFactoryDescriptors)
+            {
+                services.Remove(descriptors);
+            }
             services.AddSingleton<IHttpClientFactory, FakeHttpClientFactory>();
 
             // IMPORTANT: use same DbName + shared _dbRoot

@@ -15,8 +15,11 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using SharpCompress.Archives;
 using System.Globalization;
+using System.IO.Compression;
 using System.Security.Claims;
+using System.Text;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -38,6 +41,7 @@ namespace BusinessLogic.Services.Contests
         private readonly ICloudinaryService _cloudinaryService;
         private readonly IDashboardNotifierService _dashboardNotifier;
         private readonly ILeaderboardEntryService _leaderboardEntryService;
+        private readonly IHttpClientFactory _httpClientFactory;
 
         private readonly INotificationService _notificationService;   
         private readonly IActivityLogWriter _activityLogWriter;       
@@ -52,6 +56,22 @@ namespace BusinessLogic.Services.Contests
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
         private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
         private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
+        private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
+        private const string FP_ALGORITHM = "sha256_py_v1";
+        private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
+        private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+        private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
+        private const int MAX_PY_FILES = 50;
+
+        private const string EXTENSION_PY = ".py";
+        private const string EXTENSION_ZIP = ".zip";
+        private const string EXTENSION_RAR = ".rar";
+
+        private static readonly string[] IGNORE_PATH_CONTAINS = new[]
+        {
+            "__pycache__", "/venv/", "\\venv\\", "/.venv/", "\\.venv\\",
+            "site-packages", "/dist/", "\\dist\\", "/build/", "\\build\\"
+        };
 
         // Round status enum values
         private static readonly string ROUND_STATUS_INCOMING = RoundStatusEnum.Incoming.ToString();
@@ -78,6 +98,7 @@ namespace BusinessLogic.Services.Contests
             IHttpContextAccessor httpContextAccessor,
             IConfigService configService,
             ICloudinaryService cloudinaryService,
+            IHttpClientFactory httpClientFactory,
             INotificationService notificationService,
             ILeaderboardEntryService leaderboardEntryService,
             IActivityLogWriter activityLogWriter,
@@ -93,6 +114,7 @@ namespace BusinessLogic.Services.Contests
             _httpContextAccessor = httpContextAccessor;
             _configService = configService;
             _cloudinaryService = cloudinaryService;
+            _httpClientFactory = httpClientFactory;
             _notificationService = notificationService;
             _activityLogWriter = activityLogWriter;
             _logger = logger;
@@ -936,8 +958,395 @@ namespace BusinessLogic.Services.Contests
                     $"Cannot end round. You have already finished this round.");
             }
 
+            await TryCheckManualPlagiarismOnFinishAsync(roundId, studentId);
+
             // Mark student as finished for this round
             await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+        }
+
+        private async Task TryCheckManualPlagiarismOnFinishAsync(Guid roundId, Guid studentId)
+        {
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            Submission? submission = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                    .ThenInclude(p => p.Round)
+                        .ThenInclude(r => r.Contest)
+                .Include(s => s.SubmissionArtifacts)
+                .Where(s => s.DeletedAt == null
+                            && s.SubmittedByStudentId == studentId
+                            && s.Problem != null
+                            && s.Problem.RoundId == roundId)
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (submission?.Problem == null) return;
+
+            if (!string.Equals(submission.Problem.Type, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+            SubmissionFingerprint? existingFp = await fpRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(f => f.SubmissionId == submission.SubmissionId);
+            if (existingFp != null)
+            {
+                await CheckAndFlagPlagiarismByHashAsync(submission, existingFp.Hash, existingFp.NormalizedLength);
+                return;
+            }
+
+            SubmissionArtifact? artifact = submission.SubmissionArtifacts?
+                .Where(a => a.DeletedAt == null && a.Type == "file")
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefault();
+
+            if (artifact == null || string.IsNullOrWhiteSpace(artifact.Url)) return;
+
+            IFormFile? archiveFile = await DownloadArchiveAsFormFileAsync(artifact.Url);
+            if (archiveFile == null) return;
+
+            string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(archiveFile);
+            if (string.IsNullOrWhiteSpace(combinedNormalized)) return;
+
+            await CheckAndFlagPlagiarismNormalizedAsync(submission, combinedNormalized);
+        }
+
+        private async Task CheckAndFlagPlagiarismNormalizedAsync(Submission submission, string normalized)
+        {
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
+                return;
+
+            string hash = PlagiarismHelpers.Sha256Hex(normalized);
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+
+            Guid? matchedId = await fpRepo.Entities
+                .AsNoTracking()
+                .Where(f =>
+                    f.ProblemId == submission.ProblemId &&
+                    f.Hash == hash &&
+                    f.TeamId != submission.TeamId &&
+                    f.Submission.DeletedAt == null)
+                .Select(f => (Guid?)f.SubmissionId)
+                .FirstOrDefaultAsync();
+
+            bool exists = await fpRepo.Entities.AnyAsync(x => x.SubmissionId == submission.SubmissionId);
+            if (!exists)
+            {
+                await fpRepo.InsertAsync(new SubmissionFingerprint
+                {
+                    FingerprintId = Guid.NewGuid(),
+                    SubmissionId = submission.SubmissionId,
+                    ProblemId = submission.ProblemId,
+                    TeamId = submission.TeamId,
+                    Algorithm = FP_ALGORITHM,
+                    Hash = hash,
+                    NormalizedLength = normalized.Length,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            if (matchedId.HasValue)
+            {
+                submission.Status = STATUS_PLAGIARISM_SUSPECTED;
+                submission.JudgedBy = null;
+                await _unitOfWork.GetRepository<Submission>().UpdateAsync(submission);
+
+                Guid contestId = submission.Problem.Round.ContestId;
+                Guid roundId = submission.Problem.RoundId;
+                if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _notificationService.CreateInAppToUserAsync(
+                            organizerId,
+                            NotificationTypes.PlagiarismSuspected,
+                            new
+                            {
+                                contestId,
+                                roundId,
+                                submissionId = submission.SubmissionId,
+                                teamId = submission.TeamId,
+                                status = submission.Status,
+                                message = "A submission was flagged as plagiarism suspected."
+                            });
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        private async Task CheckAndFlagPlagiarismByHashAsync(Submission submission, string hash, int normalizedLength)
+        {
+            if (string.IsNullOrWhiteSpace(hash) || normalizedLength < MIN_NORMALIZED_LEN_TO_CHECK)
+                return;
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+            Guid? matchedId = await fpRepo.Entities
+                .AsNoTracking()
+                .Where(f =>
+                    f.ProblemId == submission.ProblemId &&
+                    f.Hash == hash &&
+                    f.TeamId != submission.TeamId &&
+                    f.SubmissionId != submission.SubmissionId &&
+                    f.Submission.DeletedAt == null)
+                .Select(f => (Guid?)f.SubmissionId)
+                .FirstOrDefaultAsync();
+
+            if (!matchedId.HasValue) return;
+
+            submission.Status = STATUS_PLAGIARISM_SUSPECTED;
+            submission.JudgedBy = null;
+            await _unitOfWork.GetRepository<Submission>().UpdateAsync(submission);
+
+            Guid contestId = submission.Problem.Round.ContestId;
+            Guid roundId = submission.Problem.RoundId;
+            if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+            {
+                try
+                {
+                    await _notificationService.CreateInAppToUserAsync(
+                        organizerId,
+                        NotificationTypes.PlagiarismSuspected,
+                        new
+                        {
+                            contestId,
+                            roundId,
+                            submissionId = submission.SubmissionId,
+                            teamId = submission.TeamId,
+                            status = submission.Status,
+                            message = "A submission was flagged as plagiarism suspected."
+                        });
+                }
+                catch
+                {
+                }
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        private async Task<IFormFile?> DownloadArchiveAsFormFileAsync(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+
+            try
+            {
+                var httpClient = _httpClientFactory.CreateClient();
+                byte[] bytes = await httpClient.GetByteArrayAsync(url);
+                if (bytes.Length == 0) return null;
+
+                string fileName = GetFileNameFromUrl(url);
+                if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)))
+                    return null;
+
+                var stream = new MemoryStream(bytes);
+                return new FormFile(stream, 0, bytes.Length, "file", fileName)
+                {
+                    Headers = new HeaderDictionary(),
+                    ContentType = "application/octet-stream"
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string GetFileNameFromUrl(string url)
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                string name = Path.GetFileName(uri.LocalPath);
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+
+            return "submission.zip";
+        }
+
+        private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
+        {
+            try
+            {
+                if (archiveFile == null || archiveFile.Length <= 0) return null;
+                if (archiveFile.Length > MAX_ARCHIVE_BYTES) return null;
+
+                string ext = Path.GetExtension(archiveFile.FileName).ToLowerInvariant();
+                if (ext != EXTENSION_ZIP && ext != EXTENSION_RAR) return null;
+
+                using var input = archiveFile.OpenReadStream();
+                using var ms = new MemoryStream(capacity: (int)Math.Min(archiveFile.Length, int.MaxValue));
+
+                await input.CopyToAsync(ms);
+                ms.Position = 0;
+
+                List<string> normalizedPieces = ext == EXTENSION_ZIP
+                    ? await ReadZipPythonAsync(ms)
+                    : await ReadRarPythonAsync(ms);
+
+                normalizedPieces = normalizedPieces
+                    .Where(s => !string.IsNullOrWhiteSpace(s) && s.Length >= MIN_NORMALIZED_LEN_TO_CHECK)
+                    .ToList();
+
+                if (!normalizedPieces.Any()) return null;
+
+                var ordered = normalizedPieces
+                    .Select(s => new { Code = s, H = PlagiarismHelpers.Sha256Hex(s) })
+                    .OrderBy(x => x.H, StringComparer.Ordinal)
+                    .Select(x => x.Code);
+
+                string combined = string.Concat(ordered);
+
+                if (combined.Length < MIN_NORMALIZED_LEN_TO_CHECK) return null;
+
+                return combined;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task<List<string>> ReadZipPythonAsync(Stream zipStream)
+        {
+            if (zipStream == null) return new List<string>();
+
+            zipStream.Position = 0;
+
+            var results = new List<string>();
+            long totalBytes = 0;
+
+            using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
+
+            foreach (var entry in zip.Entries)
+            {
+                try
+                {
+                    if (results.Count >= MAX_PY_FILES) break;
+                    if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
+
+                    if (string.IsNullOrWhiteSpace(entry.FullName) || entry.FullName.EndsWith("/")) continue;
+                    if (!entry.FullName.EndsWith(EXTENSION_PY, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string path = entry.FullName.Replace('\\', '/');
+                    if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    if (entry.Length <= 0) continue;
+
+                    long remaining = MAX_TOTAL_PY_BYTES - totalBytes;
+                    if (remaining <= 0) break;
+
+                    if (entry.Length > remaining) continue;
+
+                    if (entry.Length > int.MaxValue) continue;
+
+                    using var entryStream = entry.Open();
+
+                    var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, (int)entry.Length);
+                    if (raw == null) continue;
+
+                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        results.Add(normalized);
+
+                    totalBytes += bytesRead;
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return results;
+        }
+
+        private async Task<List<string>> ReadRarPythonAsync(Stream rarStream)
+        {
+            if (rarStream == null) return new List<string>();
+
+            rarStream.Position = 0;
+
+            var results = new List<string>();
+            long totalBytes = 0;
+
+            using var archive = ArchiveFactory.Open(rarStream);
+
+            foreach (var entry in archive.Entries)
+            {
+                try
+                {
+                    if (results.Count >= MAX_PY_FILES) break;
+                    if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
+
+                    if (entry.IsDirectory) continue;
+                    if (string.IsNullOrWhiteSpace(entry.Key)) continue;
+                    if (!entry.Key.EndsWith(EXTENSION_PY, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string path = entry.Key.Replace('\\', '/');
+                    if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    long remaining = MAX_TOTAL_PY_BYTES - totalBytes;
+                    if (remaining <= 0) break;
+
+                    long? entrySize = null;
+                    try { entrySize = (long)entry.Size; } catch { entrySize = null; }
+
+                    if (entrySize.HasValue && entrySize.Value > remaining) continue;
+
+                    int limit = (int)Math.Min(remaining, int.MaxValue);
+
+                    using var entryStream = entry.OpenEntryStream();
+
+                    var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, limit);
+                    if (raw == null) continue;
+
+                    if (entrySize.HasValue && bytesRead != (int)entrySize.Value)
+                    {
+                        continue;
+                    }
+
+                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        results.Add(normalized);
+
+                    totalBytes += bytesRead;
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return results;
+        }
+
+        private static async Task<(string? Text, int BytesRead)> ReadAllTextWithinLimitAsync(Stream stream, int maxBytes)
+        {
+            if (stream == null || maxBytes <= 0) return (string.Empty, 0);
+
+            byte[] buffer = new byte[81920];
+            int total = 0;
+
+            using var ms = new MemoryStream(capacity: Math.Min(maxBytes, 1024 * 1024));
+
+            int read;
+            while ((read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, maxBytes - total))) > 0)
+            {
+                ms.Write(buffer, 0, read);
+                total += read;
+                if (total >= maxBytes) break;
+            }
+
+            string raw = Encoding.UTF8.GetString(ms.ToArray());
+            return (raw, total);
         }
 
         public async Task<string> GenerateOpenCode(Guid roundId)
@@ -1233,7 +1642,7 @@ namespace BusinessLogic.Services.Contests
                 string recurringJobId = $"regenerate-open-code-{persistedRoundId}";
 
                 // Cancel any pending open code regeneration jobs
-                RecurringJob.RemoveIfExists(recurringJobId);
+                SafeEnqueue(() => RecurringJob.RemoveIfExists(recurringJobId), "RemoveOpenCodeRegeneration");
 
                 // capture for later use
                 contestId = round.ContestId;
