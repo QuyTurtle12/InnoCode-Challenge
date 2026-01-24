@@ -674,8 +674,16 @@ namespace BusinessLogic.Services.Submissions
                 Submission submission = await CreateFileSubmissionRecordAsync(
                     teamId, problemId, studentId, fileUrl);
 
-                // Check plagiarism for archives
-                await CheckPlagiarismForArchiveAsync(submission, file);
+                try
+                {
+                    await TryCreateManualFingerprintAsync(submission, file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to precompute manual submission fingerprint for {SubmissionId}",
+                        submission.SubmissionId);
+                }
 
                 _unitOfWork.CommitTransaction();
 
@@ -3784,6 +3792,43 @@ namespace BusinessLogic.Services.Submissions
             await LogSubmissionCreationAsync(submission.SubmissionId);
 
             return submission;
+        }
+
+        private async Task TryCreateManualFingerprintAsync(Submission submission, IFormFile file)
+        {
+            if (submission == null || file == null) return;
+
+            var problemRepo = _unitOfWork.GetRepository<Problem>();
+            Problem? problem = await problemRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.ProblemId == submission.ProblemId && p.DeletedAt == null);
+
+            if (problem == null || !string.Equals(problem.Type, PROBLEM_TYPE_MANUAL, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string? normalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
+                return;
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+            bool exists = await fpRepo.Entities.AnyAsync(f => f.SubmissionId == submission.SubmissionId);
+            if (exists) return;
+
+            string hash = PlagiarismHelpers.Sha256Hex(normalized);
+
+            await fpRepo.InsertAsync(new SubmissionFingerprint
+            {
+                FingerprintId = Guid.NewGuid(),
+                SubmissionId = submission.SubmissionId,
+                ProblemId = submission.ProblemId,
+                TeamId = submission.TeamId,
+                Algorithm = FP_ALGORITHM,
+                Hash = hash,
+                NormalizedLength = normalized.Length,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _unitOfWork.SaveAsync();
         }
 
         /// <summary>
