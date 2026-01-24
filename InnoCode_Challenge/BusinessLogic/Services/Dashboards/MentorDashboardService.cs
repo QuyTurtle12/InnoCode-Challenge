@@ -137,14 +137,6 @@ namespace BusinessLogic.Services.Dashboards
                     .Distinct()
                     .CountAsync();
 
-                // Best Performing Team
-                dashboard.BestPerformingTeam = await GetBestPerformingTeamAsync(
-                    teamIds,
-                    certificateRepo,
-                    teamRepo,
-                    startDate,
-                    endDate);
-
                 // Team Status Breakdown
                 dashboard.TeamStatusBreakdown = new TeamStatusBreakdownDTO
                 {
@@ -229,93 +221,6 @@ namespace BusinessLogic.Services.Dashboards
         }
 
         /// <summary>
-        /// Get best performing team based on total certificates (team + student)
-        /// Rank by total certificates, then team certificates, then fewest members, then TeamId
-        /// </summary>
-        private async Task<BestTeamDTO?> GetBestPerformingTeamAsync(
-            List<Guid> teamIds,
-            IGenericRepository<Certificate> certificateRepo,
-            IGenericRepository<Team> teamRepo,
-            DateTime? startDate,
-            DateTime? endDate)
-        {
-            if (!teamIds.Any())
-                return null;
-
-            // Get team member counts
-            IGenericRepository<TeamMember> teamMemberRepo = _unitOfWork.GetRepository<TeamMember>();
-
-            Dictionary<Guid, int> teamMemberCounts = await teamMemberRepo.Entities
-                .Where(tm => teamIds.Contains(tm.TeamId))
-                .GroupBy(tm => tm.TeamId)
-                .ToDictionaryAsync(g => g.Key, g => g.Count());
-
-            // Build certificate query with date filtering
-            IQueryable<Certificate> certQuery = certificateRepo.Entities
-                .Where(c => teamIds.Contains(c.TeamId!.Value) && c.DeletedAt == null);
-
-            if (startDate.HasValue)
-            {
-                certQuery = certQuery.Where(c => c.IssuedAt >= startDate.Value);
-            }
-
-            if (endDate.HasValue)
-            {
-                DateTime endOfDay = endDate.Value.Date.AddDays(1);
-                certQuery = certQuery.Where(c => c.IssuedAt < endOfDay);
-            }
-
-            // Get all certificates for these teams
-            var teamCertificates = await certQuery
-                .GroupBy(c => c.TeamId)
-                .Select(g => new
-                {
-                    TeamId = g.Key!.Value,
-                    TeamCertCount = g.Count(c => c.CertificateType == CertificateTypeConstants.Team),
-                    StudentCertCount = g.Count(c => c.CertificateType == CertificateTypeConstants.Student),
-                    TotalCertCount = g.Count()
-                })
-                .ToListAsync();
-
-            // Combine with team member counts and apply ranking
-            var bestTeam = teamCertificates
-                .Select(tc => new
-                {
-                    tc.TeamId,
-                    tc.TeamCertCount,
-                    tc.StudentCertCount,
-                    tc.TotalCertCount,
-                    MemberCount = teamMemberCounts.GetValueOrDefault(tc.TeamId, 0)
-                })
-                .OrderByDescending(x => x.TotalCertCount)
-                .ThenByDescending(x => x.TeamCertCount)
-                .ThenBy(x => x.MemberCount)
-                .ThenBy(x => x.TeamId)
-                .FirstOrDefault();
-
-            if (bestTeam == null)
-                return null;
-
-            // Get team details
-            Team? team = await teamRepo.Entities
-                .Include(t => t.Contest)
-                .FirstOrDefaultAsync(t => t.TeamId == bestTeam.TeamId);
-
-            if (team == null)
-                return null;
-
-            return new BestTeamDTO
-            {
-                TeamId = team.TeamId,
-                TeamName = team.Name,
-                TotalCertificates = bestTeam.TotalCertCount,
-                TeamCertificates = bestTeam.TeamCertCount,
-                StudentCertificates = bestTeam.StudentCertCount,
-                ContestName = team.Contest?.Name ?? "N/A"
-            };
-        }
-
-        /// <summary>
         /// Get recent certificates (last 5, Team type only)
         /// </summary>
         private async Task<List<RecentCertificateDTO>> GetRecentCertificatesAsync(
@@ -345,6 +250,7 @@ namespace BusinessLogic.Services.Dashboards
                 certQuery = certQuery.Where(c => c.IssuedAt < endOfDay);
             }
 
+            // Get recent 5 certificates
             var recentCerts = await certQuery
                 .OrderByDescending(c => c.IssuedAt)
                 .Take(5)
@@ -372,6 +278,7 @@ namespace BusinessLogic.Services.Dashboards
                 })
                 .ToListAsync();
 
+            // Map to DTOs
             return recentCerts.Select(rc =>
             {
                 var team = teamDetails.FirstOrDefault(td => td.TeamId == rc.TeamId!.Value);

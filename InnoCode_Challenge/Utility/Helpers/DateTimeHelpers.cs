@@ -50,14 +50,12 @@ namespace Utility.Helpers
                     break;
 
                 case TimeRangePredefinedEnum.AllTime:
-                    startDate = DateTime.MinValue;
+                    startDate = new DateTime(2025, 1, 1);
                     endDate = DateTime.UtcNow;
                     break;
-
-                case TimeRangePredefinedEnum.Custom:
                 default:
-                    startDate = DateTime.MinValue;
-                    endDate = DateTime.MaxValue;
+                    startDate = new DateTime(2025, 1, 1);
+                    endDate = DateTime.UtcNow;
                     break;
             }
 
