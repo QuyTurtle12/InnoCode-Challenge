@@ -745,7 +745,10 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Filter only active judges
-                List<JudgeInContestDTO> activeJudges = judges.Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE).ToList();
+                List<JudgeInContestDTO> activeJudges = judges
+                    .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE)
+                    .OrderBy(_ => Guid.NewGuid())
+                    .ToList();
 
                 if (!activeJudges.Any())
                 {

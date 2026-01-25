@@ -520,7 +520,6 @@ namespace BusinessLogic.Services
                     .Select(r => new { r.Start, r.End }))
                 .ToListAsync();
 
-
             foreach (var t in targetRanges)
                 foreach (var o in otherRanges)
                     if (t.Start <= o.End && o.Start <= t.End)
