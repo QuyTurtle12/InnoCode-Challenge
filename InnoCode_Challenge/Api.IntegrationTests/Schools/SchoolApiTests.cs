@@ -232,6 +232,29 @@ namespace Api.IntegrationTests.Schools
         }
 
         [Fact]
+        public async Task Update_ShouldAllowEditingAddress()
+        {
+            var staff = SeedStaffUser();
+            var token = await LoginAsync(staff.Email, staff.Password);
+            var province = EnsureProvince();
+            var school = SeedSchool("Address School", province.ProvinceId);
+
+            var req = new HttpRequestMessage(HttpMethod.Put, $"/api/schools/{school.SchoolId:D}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            req.Content = JsonContent.Create(new UpdateSchoolDTO
+            {
+                Address = " 123 Main Street "
+            });
+
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var body = await res.ReadOkAsync<SchoolDTO>();
+            body.Data.Should().NotBeNull();
+            body.Data!.Address.Should().Be("123 Main Street");
+        }
+
+        [Fact]
         public async Task Delete_WhenSchoolHasStudents_ShouldReturn409_SCHOOL_IN_USE()
         {
             var staff = SeedStaffUser();

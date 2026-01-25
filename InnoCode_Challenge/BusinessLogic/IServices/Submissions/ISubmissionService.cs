@@ -43,6 +43,6 @@ namespace BusinessLogic.IServices.Submissions
             TestCaseEvaluationTypeEnum evaluationType);
         Task ApprovePlagiarismSubmissionAsync(Guid submissionId);
         Task DenyPlagiarismSubmissionAsync(Guid submissionId);
-
+        Task TransferSubmissionsToOtherJudge(Guid roundId, Guid judgeId);
     }
 }

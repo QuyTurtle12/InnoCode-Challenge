@@ -15,13 +15,17 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using SharpCompress.Archives;
 using System.Globalization;
+using System.IO.Compression;
 using System.Security.Claims;
+using System.Text;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
+using BusinessLogic.IServices.Dashboards;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -35,9 +39,12 @@ namespace BusinessLogic.Services.Contests
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IConfigService _configService;
         private readonly ICloudinaryService _cloudinaryService;
+        private readonly IDashboardNotifierService _dashboardNotifier;
+        private readonly ILeaderboardEntryService _leaderboardEntryService;
+        private readonly IHttpClientFactory _httpClientFactory;
 
-        private readonly INotificationService _notificationService;   
-        private readonly IActivityLogWriter _activityLogWriter;       
+        private readonly INotificationService _notificationService;
+        private readonly IActivityLogWriter _activityLogWriter;
         private readonly ILogger<RoundService> _logger;
 
         private const string CODE_TEMPLATE_FOLDER = "code_template";
@@ -49,6 +56,22 @@ namespace BusinessLogic.Services.Contests
         private const int DEFAULT_APPEAL_SUBMIT_DAYS = 2;
         private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
         private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
+        private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
+        private const string FP_ALGORITHM = "sha256_py_v2";
+        private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
+        private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
+        private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
+        private const int MAX_PY_FILES = 50;
+
+        private const string EXTENSION_PY = ".py";
+        private const string EXTENSION_ZIP = ".zip";
+        private const string EXTENSION_RAR = ".rar";
+
+        private static readonly string[] IGNORE_PATH_CONTAINS = new[]
+        {
+            "__pycache__", "/venv/", "\\venv\\", "/.venv/", "\\.venv\\",
+            "site-packages", "/dist/", "\\dist\\", "/build/", "\\build\\"
+        };
 
         // Round status enum values
         private static readonly string ROUND_STATUS_INCOMING = RoundStatusEnum.Incoming.ToString();
@@ -75,9 +98,12 @@ namespace BusinessLogic.Services.Contests
             IHttpContextAccessor httpContextAccessor,
             IConfigService configService,
             ICloudinaryService cloudinaryService,
-            INotificationService notificationService,               
-            IActivityLogWriter activityLogWriter,                     
-            ILogger<RoundService> logger)                             
+            IHttpClientFactory httpClientFactory,
+            INotificationService notificationService,
+            ILeaderboardEntryService leaderboardEntryService,
+            IActivityLogWriter activityLogWriter,
+            ILogger<RoundService> logger,
+            IDashboardNotifierService dashboardNotifier)
         {
 
             _mapper = mapper;
@@ -88,10 +114,12 @@ namespace BusinessLogic.Services.Contests
             _httpContextAccessor = httpContextAccessor;
             _configService = configService;
             _cloudinaryService = cloudinaryService;
-            _notificationService = notificationService;               
-            _activityLogWriter = activityLogWriter;                   
-            _logger = logger;                                         
-        }
+            _httpClientFactory = httpClientFactory;
+            _notificationService = notificationService;
+            _activityLogWriter = activityLogWriter;
+            _logger = logger;
+            _dashboardNotifier = dashboardNotifier;
+            _leaderboardEntryService = leaderboardEntryService; }
 
         public async Task CreateRoundAsync(Guid contestId, CreateRoundDTO roundDTO)
         {
@@ -239,9 +267,6 @@ namespace BusinessLogic.Services.Contests
             {
                 _unitOfWork.BeginTransaction();
 
-                // Validate input
-                ValidateRoundId(id);
-
                 // Get repositories
                 IGenericRepository<Round> roundRepo = _unitOfWork.GetRepository<Round>();
 
@@ -303,9 +328,6 @@ namespace BusinessLogic.Services.Contests
         {
             try
             {
-                // Validate input
-                ValidateRoundId(id);
-
                 // Get round with related entities
                 Round round = await FetchRoundWithIncludesAsync(id);
 
@@ -431,6 +453,15 @@ namespace BusinessLogic.Services.Contests
 
                 // Post-update operations
                 await PerformPostUpdateRoundOperationsAsync(round);
+
+                IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+                // Notify organizer dashboard update
+                Contest? contest = await contestRepo.GetByIdAsync(round.ContestId);
+                if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+                {
+                    await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+                }
             }
             catch (Exception ex)
             {
@@ -714,7 +745,10 @@ namespace BusinessLogic.Services.Contests
                 }
 
                 // Filter only active judges
-                List<JudgeInContestDTO> activeJudges = judges.Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE).ToList();
+                List<JudgeInContestDTO> activeJudges = judges
+                    .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE)
+                    .OrderBy(_ => Guid.NewGuid())
+                    .ToList();
 
                 if (!activeJudges.Any())
                 {
@@ -747,6 +781,8 @@ namespace BusinessLogic.Services.Contests
                 int judgeIndex = 0;
                 IGenericRepository<Submission> submissionRepo = _unitOfWork.GetRepository<Submission>();
                 IGenericRepository<Config> configRepo = _unitOfWork.GetRepository<Config>();
+                Guid? actorId = TryGetCurrentUserGuid() ?? TryParseGuid(round.Contest?.CreatedBy);
+                var assignedSubmissionIds = new List<Guid>();
 
                 int judgeDays = await GetContestPolicyDaysAsync(
                     round.ContestId, ContestPolicyKeys.JudgeRescoreDays, DEFAULT_JUDGE_RESCORE_DAYS, configRepo);
@@ -760,6 +796,7 @@ namespace BusinessLogic.Services.Contests
                     submission.JudgedBy = assignedJudge.UserId.ToString();
 
                     submissionRepo.Update(submission);
+                    assignedSubmissionIds.Add(submission.SubmissionId);
 
                     // Set judge deadline for this submission
                     string key = ConfigKeys.JudgeSubmissionDeadline(assignedJudge.UserId, submission.SubmissionId);
@@ -794,6 +831,18 @@ namespace BusinessLogic.Services.Contests
 
                 // Commit transaction
                 _unitOfWork.CommitTransaction();
+
+                if (actorId.HasValue && assignedSubmissionIds.Count > 0)
+                {
+                    foreach (var submissionId in assignedSubmissionIds)
+                    {
+                        await SafeWriteActivityAsync(
+                            actorId.Value,
+                            ActivityActions.SubmissionAssignJudge,
+                            TargetTypes.Submission,
+                            submissionId.ToString());
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -894,8 +943,456 @@ namespace BusinessLogic.Services.Contests
                     $"Cannot end round. You have already finished this round.");
             }
 
+            await TryCheckManualPlagiarismOnFinishAsync(roundId, studentId);
+
             // Mark student as finished for this round
             await _configService.MarkFinishedSubmissionAsync(roundId, studentId);
+        }
+
+        private async Task TryCheckManualPlagiarismOnFinishAsync(Guid roundId, Guid studentId)
+        {
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+
+            Submission? submission = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                    .ThenInclude(p => p.Round)
+                        .ThenInclude(r => r.Contest)
+                .Include(s => s.SubmissionArtifacts)
+                .Where(s => s.DeletedAt == null
+                            && s.SubmittedByStudentId == studentId
+                            && s.Problem != null
+                            && s.Problem.RoundId == roundId)
+                .OrderByDescending(s => s.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (submission?.Problem == null) return;
+
+            if (!string.Equals(submission.Problem.Type, ProblemTypeEnum.Manual.ToString(), StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            await _configService.SetConfigValueAsync(
+                ConfigKeys.RoundTeamFinalSubmission(roundId, submission.TeamId),
+                submission.SubmissionId.ToString(),
+                SCOPE_ROUND);
+
+            List<Guid> otherFinalSubmissionIds =
+                await GetFinalSubmissionIdsForOtherTeamsAsync(roundId, submission.TeamId);
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+            SubmissionFingerprint? existingFp = await fpRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(f => f.SubmissionId == submission.SubmissionId);
+            if (existingFp != null)
+            {
+                await CheckAndFlagPlagiarismByHashAsync(
+                    submission,
+                    existingFp.Hash,
+                    existingFp.NormalizedLength,
+                    otherFinalSubmissionIds);
+                return;
+            }
+
+            SubmissionArtifact? artifact = submission.SubmissionArtifacts?
+                .Where(a => a.DeletedAt == null && a.Type == "file")
+                .OrderByDescending(a => a.CreatedAt)
+                .FirstOrDefault();
+
+            if (artifact == null || string.IsNullOrWhiteSpace(artifact.Url)) return;
+
+            IFormFile? archiveFile = await DownloadArchiveAsFormFileAsync(artifact.Url);
+            if (archiveFile == null) return;
+
+            string? combinedNormalized = await TryExtractNormalizedPythonFromArchiveAsync(archiveFile);
+            if (string.IsNullOrWhiteSpace(combinedNormalized)) return;
+
+            await CheckAndFlagPlagiarismNormalizedAsync(submission, combinedNormalized, otherFinalSubmissionIds);
+        }
+
+        private async Task CheckAndFlagPlagiarismNormalizedAsync(
+            Submission submission,
+            string normalized,
+            IReadOnlyCollection<Guid> allowedSubmissionIds)
+        {
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
+                return;
+
+            string hash = PlagiarismHelpers.Sha256Hex(normalized);
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+
+            Guid? matchedId = null;
+            if (allowedSubmissionIds.Count > 0)
+            {
+                matchedId = await fpRepo.Entities
+                    .AsNoTracking()
+                    .Where(f =>
+                        f.ProblemId == submission.ProblemId &&
+                        f.Hash == hash &&
+                        f.TeamId != submission.TeamId &&
+                        allowedSubmissionIds.Contains(f.SubmissionId) &&
+                        f.Submission.DeletedAt == null)
+                    .Select(f => (Guid?)f.SubmissionId)
+                    .FirstOrDefaultAsync();
+            }
+
+            bool exists = await fpRepo.Entities.AnyAsync(x => x.SubmissionId == submission.SubmissionId);
+            if (!exists)
+            {
+                await fpRepo.InsertAsync(new SubmissionFingerprint
+                {
+                    FingerprintId = Guid.NewGuid(),
+                    SubmissionId = submission.SubmissionId,
+                    ProblemId = submission.ProblemId,
+                    TeamId = submission.TeamId,
+                    Algorithm = FP_ALGORITHM,
+                    Hash = hash,
+                    NormalizedLength = normalized.Length,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            if (matchedId.HasValue)
+            {
+                submission.Status = STATUS_PLAGIARISM_SUSPECTED;
+                submission.JudgedBy = null;
+                await _unitOfWork.GetRepository<Submission>().UpdateAsync(submission);
+
+                Guid contestId = submission.Problem.Round.ContestId;
+                Guid roundId = submission.Problem.RoundId;
+                if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                {
+                    try
+                    {
+                        await _notificationService.CreateInAppToUserAsync(
+                            organizerId,
+                            NotificationTypes.PlagiarismSuspected,
+                            new
+                            {
+                                contestId,
+                                roundId,
+                                submissionId = submission.SubmissionId,
+                                teamId = submission.TeamId,
+                                status = submission.Status,
+                                message = "A submission was flagged as plagiarism suspected."
+                            });
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        private async Task CheckAndFlagPlagiarismByHashAsync(
+            Submission submission,
+            string hash,
+            int normalizedLength,
+            IReadOnlyCollection<Guid> allowedSubmissionIds)
+        {
+            if (string.IsNullOrWhiteSpace(hash) || normalizedLength < MIN_NORMALIZED_LEN_TO_CHECK)
+                return;
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+            Guid? matchedId = null;
+            if (allowedSubmissionIds.Count > 0)
+            {
+                matchedId = await fpRepo.Entities
+                    .AsNoTracking()
+                    .Where(f =>
+                        f.ProblemId == submission.ProblemId &&
+                        f.Hash == hash &&
+                        f.TeamId != submission.TeamId &&
+                        f.SubmissionId != submission.SubmissionId &&
+                        allowedSubmissionIds.Contains(f.SubmissionId) &&
+                        f.Submission.DeletedAt == null)
+                    .Select(f => (Guid?)f.SubmissionId)
+                    .FirstOrDefaultAsync();
+            }
+
+            if (!matchedId.HasValue) return;
+
+            submission.Status = STATUS_PLAGIARISM_SUSPECTED;
+            submission.JudgedBy = null;
+            await _unitOfWork.GetRepository<Submission>().UpdateAsync(submission);
+
+            Guid contestId = submission.Problem.Round.ContestId;
+            Guid roundId = submission.Problem.RoundId;
+            if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+            {
+                try
+                {
+                    await _notificationService.CreateInAppToUserAsync(
+                        organizerId,
+                        NotificationTypes.PlagiarismSuspected,
+                        new
+                        {
+                            contestId,
+                            roundId,
+                            submissionId = submission.SubmissionId,
+                            teamId = submission.TeamId,
+                            status = submission.Status,
+                            message = "A submission was flagged as plagiarism suspected."
+                        });
+                }
+                catch
+                {
+                }
+            }
+
+            await _unitOfWork.SaveAsync();
+        }
+
+        private async Task<List<Guid>> GetFinalSubmissionIdsForOtherTeamsAsync(Guid roundId, Guid currentTeamId)
+        {
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            string prefix = ConfigKeys.RoundTeamFinalSubmissionPrefix(roundId);
+            const string suffix = ":final_submission_id";
+
+            List<Config> configs = await configRepo.Entities
+                .AsNoTracking()
+                .Where(c => c.DeletedAt == null
+                            && c.Scope == SCOPE_ROUND
+                            && c.Key.StartsWith(prefix)
+                            && c.Key.EndsWith(suffix)
+                            && c.Value != null)
+                .ToListAsync();
+
+            var result = new List<Guid>();
+
+            foreach (Config config in configs)
+            {
+                string teamPart = config.Key.Substring(prefix.Length, config.Key.Length - prefix.Length - suffix.Length);
+                if (!Guid.TryParse(teamPart, out Guid teamId)) continue;
+                if (teamId == currentTeamId) continue;
+
+                if (Guid.TryParse(config.Value, out Guid submissionId))
+                {
+                    result.Add(submissionId);
+                }
+            }
+
+            return result;
+        }
+
+        private async Task<IFormFile?> DownloadArchiveAsFormFileAsync(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+
+            try
+            {
+                var httpClient = _httpClientFactory.CreateClient();
+                byte[] bytes = await httpClient.GetByteArrayAsync(url);
+                if (bytes.Length == 0) return null;
+
+                string fileName = GetFileNameFromUrl(url);
+                if (string.IsNullOrWhiteSpace(Path.GetExtension(fileName)))
+                    return null;
+
+                var stream = new MemoryStream(bytes);
+                return new FormFile(stream, 0, bytes.Length, "file", fileName)
+                {
+                    Headers = new HeaderDictionary(),
+                    ContentType = "application/octet-stream"
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string GetFileNameFromUrl(string url)
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                string name = Path.GetFileName(uri.LocalPath);
+                if (!string.IsNullOrWhiteSpace(name)) return name;
+            }
+
+            return "submission.zip";
+        }
+
+        private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
+        {
+            try
+            {
+                if (archiveFile == null || archiveFile.Length <= 0) return null;
+                if (archiveFile.Length > MAX_ARCHIVE_BYTES) return null;
+
+                string ext = Path.GetExtension(archiveFile.FileName).ToLowerInvariant();
+                if (ext != EXTENSION_ZIP && ext != EXTENSION_RAR) return null;
+
+                using var input = archiveFile.OpenReadStream();
+                using var ms = new MemoryStream(capacity: (int)Math.Min(archiveFile.Length, int.MaxValue));
+
+                await input.CopyToAsync(ms);
+                ms.Position = 0;
+
+                List<string> normalizedPieces = ext == EXTENSION_ZIP
+                    ? await ReadZipPythonAsync(ms)
+                    : await ReadRarPythonAsync(ms);
+
+                normalizedPieces = normalizedPieces
+                    .Where(s => !string.IsNullOrWhiteSpace(s) && s.Length >= MIN_NORMALIZED_LEN_TO_CHECK)
+                    .ToList();
+
+                if (!normalizedPieces.Any()) return null;
+
+                var ordered = normalizedPieces
+                    .Select(s => new { Code = s, H = PlagiarismHelpers.Sha256Hex(s) })
+                    .OrderBy(x => x.H, StringComparer.Ordinal)
+                    .Select(x => x.Code);
+
+                string combined = string.Concat(ordered);
+
+                if (combined.Length < MIN_NORMALIZED_LEN_TO_CHECK) return null;
+
+                return combined;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task<List<string>> ReadZipPythonAsync(Stream zipStream)
+        {
+            if (zipStream == null) return new List<string>();
+
+            zipStream.Position = 0;
+
+            var results = new List<string>();
+            long totalBytes = 0;
+
+            using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
+
+            foreach (var entry in zip.Entries)
+            {
+                try
+                {
+                    if (results.Count >= MAX_PY_FILES) break;
+                    if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
+
+                    if (string.IsNullOrWhiteSpace(entry.FullName) || entry.FullName.EndsWith("/")) continue;
+                    if (!entry.FullName.EndsWith(EXTENSION_PY, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string path = entry.FullName.Replace('\\', '/');
+                    if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    if (entry.Length <= 0) continue;
+
+                    long remaining = MAX_TOTAL_PY_BYTES - totalBytes;
+                    if (remaining <= 0) break;
+
+                    if (entry.Length > remaining) continue;
+
+                    if (entry.Length > int.MaxValue) continue;
+
+                    using var entryStream = entry.Open();
+
+                    var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, (int)entry.Length);
+                    if (raw == null) continue;
+
+                    string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(raw, removeTripleQuoted: true);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        results.Add(normalized);
+
+                    totalBytes += bytesRead;
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return results;
+        }
+
+        private async Task<List<string>> ReadRarPythonAsync(Stream rarStream)
+        {
+            if (rarStream == null) return new List<string>();
+
+            rarStream.Position = 0;
+
+            var results = new List<string>();
+            long totalBytes = 0;
+
+            using var archive = ArchiveFactory.Open(rarStream);
+
+            foreach (var entry in archive.Entries)
+            {
+                try
+                {
+                    if (results.Count >= MAX_PY_FILES) break;
+                    if (totalBytes >= MAX_TOTAL_PY_BYTES) break;
+
+                    if (entry.IsDirectory) continue;
+                    if (string.IsNullOrWhiteSpace(entry.Key)) continue;
+                    if (!entry.Key.EndsWith(EXTENSION_PY, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string path = entry.Key.Replace('\\', '/');
+                    if (IGNORE_PATH_CONTAINS.Any(x => path.Contains(x, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    long remaining = MAX_TOTAL_PY_BYTES - totalBytes;
+                    if (remaining <= 0) break;
+
+                    long? entrySize = null;
+                    try { entrySize = (long)entry.Size; } catch { entrySize = null; }
+
+                    if (entrySize.HasValue && entrySize.Value > remaining) continue;
+
+                    int limit = (int)Math.Min(remaining, int.MaxValue);
+
+                    using var entryStream = entry.OpenEntryStream();
+
+                    var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, limit);
+                    if (raw == null) continue;
+
+                    if (entrySize.HasValue && bytesRead != (int)entrySize.Value)
+                    {
+                        continue;
+                    }
+
+                    string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(raw, removeTripleQuoted: true);
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        results.Add(normalized);
+
+                    totalBytes += bytesRead;
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            return results;
+        }
+
+        private static async Task<(string? Text, int BytesRead)> ReadAllTextWithinLimitAsync(Stream stream, int maxBytes)
+        {
+            if (stream == null || maxBytes <= 0) return (string.Empty, 0);
+
+            byte[] buffer = new byte[81920];
+            int total = 0;
+
+            using var ms = new MemoryStream(capacity: Math.Min(maxBytes, 1024 * 1024));
+
+            int read;
+            while ((read = await stream.ReadAsync(buffer, 0, Math.Min(buffer.Length, maxBytes - total))) > 0)
+            {
+                ms.Write(buffer, 0, read);
+                total += read;
+                if (total >= maxBytes) break;
+            }
+
+            string raw = Encoding.UTF8.GetString(ms.ToArray());
+            return (raw, total);
         }
 
         public async Task<string> GenerateOpenCode(Guid roundId)
@@ -1136,6 +1633,15 @@ namespace BusinessLogic.Services.Contests
                     message = $"Round '{roundName}' has started."
                 });
 
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
+
             // Schedule background job to handle state transitions
             SafeEnqueue(() =>
                 BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(persistedRoundId)),
@@ -1182,7 +1688,7 @@ namespace BusinessLogic.Services.Contests
                 string recurringJobId = $"regenerate-open-code-{persistedRoundId}";
 
                 // Cancel any pending open code regeneration jobs
-                RecurringJob.RemoveIfExists(recurringJobId);
+                SafeEnqueue(() => RecurringJob.RemoveIfExists(recurringJobId), "RemoveOpenCodeRegeneration");
 
                 // capture for later use
                 contestId = round.ContestId;
@@ -1227,6 +1733,15 @@ namespace BusinessLogic.Services.Contests
                     targetId = persistedRoundId.ToString(),
                     message = $"Round '{roundName}' has ended."
                 });
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
 
             // Schedule background job to handle state transitions
             SafeEnqueue(() =>
@@ -1735,8 +2250,8 @@ namespace BusinessLogic.Services.Contests
 
             return rows
                 .OrderByDescending(r => r.AvgScore)
-                .ThenBy(r => r.AvgCreatedAtTicks) 
-                .ThenBy(r => r.TeamId)            
+                .ThenBy(r => r.AvgCreatedAtTicks)
+                .ThenBy(r => r.TeamId)
                 .Take(cutoff)
                 .Select(r => r.TeamId)
                 .ToList();
@@ -1917,7 +2432,7 @@ namespace BusinessLogic.Services.Contests
             }
 
             // Set mock test weight
-            if (config.MockTestWeight != null) 
+            if (config.MockTestWeight != null)
             {
                 await AssignWeightToRoundAsync(roundId, config.MockTestWeight.Value);
             }
@@ -1985,6 +2500,15 @@ namespace BusinessLogic.Services.Contests
             SafeEnqueue(() =>
                 BackgroundJob.Enqueue<RoundStateJob>(job => job.ScheduleRoundStateTransitionsAsync(createdRound.RoundId)),
                 "ScheduleRoundStateTransitionsAsync");
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(createdRound.ContestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         /// <summary>
@@ -2026,15 +2550,12 @@ namespace BusinessLogic.Services.Contests
                 .Where(r => r.RoundId == id)
                 .Include(r => r.McqTest)
                 .Include(r => r.Problem)
+                .Include(r => r.Contest)
                 .FirstOrDefaultAsync();
 
-            if (round == null)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND, "Round not found.");
-            }
+            ValidateRound(round);
 
-            return round;
+            return round!;
         }
 
         /// <summary>
@@ -2042,6 +2563,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private async Task UpdateRoundEntityAsync(Round round, UpdateRoundDTO roundDTO, IGenericRepository<Config> configRepo)
         {
+            ValidateModifyRound(round);
+
             // Update basic properties
             _mapper.Map(roundDTO, round);
 
@@ -2246,19 +2769,6 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Validates round ID parameter
-        /// </summary>
-        private void ValidateRoundId(Guid id)
-        {
-            if (id == Guid.Empty)
-            {
-                throw new ErrorException(StatusCodes.Status400BadRequest,
-                    ResponseCodeConstants.BADREQUEST,
-                    "Round ID cannot be empty.");
-            }
-        }
-
-        /// <summary>
         /// Fetches round with all necessary includes
         /// </summary>
         private async Task<Round> FetchRoundWithIncludesAsync(Guid id)
@@ -2273,14 +2783,9 @@ namespace BusinessLogic.Services.Contests
                 .Include(r => r.MainRound)
                 .FirstOrDefaultAsync();
 
-            if (round == null)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND,
-                    "Round not found.");
-            }
+            ValidateRound(round);
 
-            return round;
+            return round!;
         }
 
         /// <summary>
@@ -2593,6 +3098,8 @@ namespace BusinessLogic.Services.Contests
                 query = query.Where(r => r.End <= endDate.Value);
             }
 
+            query = query.OrderBy(r => r.Start);
+
             return query;
         }
 
@@ -2687,15 +3194,12 @@ namespace BusinessLogic.Services.Contests
                 .Where(r => r.RoundId == id)
                 .Include(r => r.Problem)
                 .Include(r => r.McqTest)
+                .Include(r => r.Contest)
                 .FirstOrDefaultAsync();
 
-            if (round == null)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND, "Round not found.");
-            }
+            ValidateRound(round);
 
-            return round;
+            return round!;
         }
 
         /// <summary>
@@ -2703,6 +3207,8 @@ namespace BusinessLogic.Services.Contests
         /// </summary>
         private async Task DeleteRoundContentAsync(Round round)
         {
+            ValidateModifyRound(round);
+
             // Delete related Problem
             if (round.Problem != null && !round.Problem.DeletedAt.HasValue)
             {
@@ -2751,12 +3257,7 @@ namespace BusinessLogic.Services.Contests
         public async Task FastForwardAppealSubmitDeadlineAsync(Guid roundId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
-            var roundRepo = _unitOfWork.GetRepository<Round>();
-
-            Round? round = await roundRepo.Entities
-                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
-            if (round == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+            Round round = await FetchRoundWithIncludesAsync(roundId);
 
             if (round.IsRetakeRound)
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Appeals are not allowed for retake rounds.");
@@ -2768,9 +3269,72 @@ namespace BusinessLogic.Services.Contests
             if (round.End > now)
                 throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE", "Appeal submit deadline cannot be before round end.");
 
+            if (IsManualRound(round))
+            {
+                var submissionRepo = _unitOfWork.GetRepository<Submission>();
+                int judgeDays = await GetContestPolicyDaysAsync(
+                    round.ContestId,
+                    ContestPolicyKeys.JudgeRescoreDays,
+                    DEFAULT_JUDGE_RESCORE_DAYS,
+                    configRepo);
+
+                DateTime defaultDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+                DateTime? judgeOverride = await TryGetDeadlineUtcAsync(
+                    configRepo, ConfigKeys.RoundJudgeDeadlineUtc(round.RoundId));
+                DateTime? rescoreOverride = await TryGetDeadlineUtcAsync(
+                    configRepo, ConfigKeys.RoundJudgeRescoreDeadlineUtc(round.RoundId));
+                if (judgeOverride.HasValue || rescoreOverride.HasValue)
+                {
+                    var candidates = new List<DateTime> { defaultDeadline };
+                    if (judgeOverride.HasValue) candidates.Add(judgeOverride.Value);
+                    if (rescoreOverride.HasValue) candidates.Add(rescoreOverride.Value);
+                    defaultDeadline = candidates.Min();
+                }
+
+                var submissions = await submissionRepo.Entities
+                    .Where(s => s.DeletedAt == null
+                                && s.Problem != null
+                                && s.Problem.RoundId == roundId)
+                    .ToListAsync();
+
+                foreach (var sub in submissions)
+                {
+                    DateTime deadline = defaultDeadline;
+                    if (!string.IsNullOrWhiteSpace(sub.JudgedBy)
+                        && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                    {
+                        string v = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                        string? val = await configRepo.Entities
+                            .Where(c => c.Key == v && c.DeletedAt == null)
+                            .Select(c => c.Value)
+                            .FirstOrDefaultAsync();
+                        if (DateTime.TryParse(
+                            val,
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.RoundtripKind,
+                            out DateTime parsed))
+                        {
+                            deadline = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+                        }
+                    }
+
+                    if (now < deadline)
+                    {
+                        throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                            "Appeal submit deadline can only be fast-forwarded after all judge deadlines are completed.");
+                    }
+                }
+            }
+
             string key = ConfigKeys.RoundAppealSubmitDeadlineUtc(roundId);
             await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
             await _unitOfWork.SaveAsync();
+
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundAppealSubmitEnd,
+                TargetTypes.Round,
+                roundId.ToString());
         }
 
         public async Task FastForwardAppealReviewDeadlineAsync(Guid roundId)
@@ -2803,20 +3367,21 @@ namespace BusinessLogic.Services.Contests
             string key = ConfigKeys.RoundAppealReviewDeadlineUtc(roundId);
             await UpsertDeadlineAsync(configRepo, key, now.AddSeconds(-1), scope: SCOPE_CONTEST);
             await _unitOfWork.SaveAsync();
+
+            await AutoDenyPendingAppealsAsync(round);
+
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundAppealReviewEnd,
+                TargetTypes.Round,
+                roundId.ToString());
         }
 
         public async Task FastForwardJudgeDeadlineAsync(Guid roundId)
         {
             var configRepo = _unitOfWork.GetRepository<Config>();
             var submissionRepo = _unitOfWork.GetRepository<Submission>();
-            var roundRepo = _unitOfWork.GetRepository<Round>();
-
-            Round? round = await roundRepo.Entities
-                .Include(r => r.Problem)
-                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
-
-            if (round == null)
-                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+            Round round = await FetchRoundWithIncludesAsync(roundId);
 
             if (round.Problem?.Type != ProblemTypeEnum.Manual.ToString())
                 throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Judge deadline applies only to manual rounds.");
@@ -2843,6 +3408,8 @@ namespace BusinessLogic.Services.Contests
             {
                 string judgeRescoreKey = ConfigKeys.RoundJudgeRescoreDeadlineUtc(roundId);
                 await UpsertDeadlineAsync(configRepo, judgeRescoreKey, past, scope: SCOPE_CONTEST);
+                string judgeKey = ConfigKeys.RoundJudgeDeadlineUtc(roundId);
+                await UpsertDeadlineAsync(configRepo, judgeKey, past, scope: SCOPE_CONTEST);
             }
             else if (now <= appealSubmitDeadline)
             {
@@ -2865,25 +3432,88 @@ namespace BusinessLogic.Services.Contests
             }
 
             await _unitOfWork.SaveAsync();
+
+            await AutoScorePendingSubmissionsAsync(round);
+
+            var actorId = GetCurrentUserGuidOrThrow();
+            await SafeWriteActivityAsync(actorId,
+                ActivityActions.RoundJudgeDeadlineEnd,
+                TargetTypes.Round,
+                roundId.ToString());
         }
 
         public async Task TryFinalizeRoundAsync(Guid roundId)
         {
             var roundRepo = _unitOfWork.GetRepository<Round>();
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
             Round? round = await roundRepo.Entities
                 .Include(r => r.Problem)
                 .Include(r => r.McqTest)
+                .Include(r => r.Contest)
                 .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
 
-            if (round == null) return;
+            if (round == null)
+                throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Round not found.");
+
+            string finalized = RoundStatusEnum.Finalized.ToString();
+            string closed = RoundStatusEnum.Closed.ToString();
+
+            if (string.Equals(round.Status, finalized, StringComparison.OrdinalIgnoreCase))
+                return;
 
             DateTime finalizeNotBefore = await GetFinalizeNotBeforeAsync(roundId);
 
             // Finalize only when all deadlines and round end are in the past
             if (DateTime.UtcNow < finalizeNotBefore)
-                return;
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Finalize is only allowed after all deadlines are completed.");
+
+            bool roundEnded = string.Equals(round.Status, closed, StringComparison.OrdinalIgnoreCase)
+                              || DateTime.UtcNow >= round.End;
+            if (!roundEnded)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Round has not ended yet.");
+
+            bool hasPendingSubs = await submissionRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(s => s.DeletedAt == null
+                               && s.Problem != null
+                               && s.Problem.RoundId == roundId
+                               && s.Status == SubmissionStatusEnum.Pending.ToString());
+            if (hasPendingSubs)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Cannot finalize while there are pending submissions.");
+
+            bool hasOpenAppeals = await appealRepo.Entities
+                .AsNoTracking()
+                .AnyAsync(a => a.DeletedAt == null
+                               && a.TargetId == roundId
+                               && (a.State != AppealStateEnum.Closed.ToString()
+                                   || a.Decision == AppealDecisionEnum.Pending.ToString()));
+            if (hasOpenAppeals)
+                throw new ErrorException(StatusCodes.Status409Conflict, "INVALID_STATE",
+                    "Cannot finalize while there are pending appeals.");
 
             await RoundFinalizer.TryFinalizeAsync(_unitOfWork, roundId);
+
+            Guid? actorId = TryGetCurrentUserGuid() ?? TryParseGuid(round.Contest?.CreatedBy);
+            if (actorId.HasValue)
+            {
+                bool isFinalized = await roundRepo.Entities
+                    .AsNoTracking()
+                    .AnyAsync(r => r.RoundId == roundId
+                                   && r.DeletedAt == null
+                                   && r.Status == RoundStatusEnum.Finalized.ToString());
+                if (isFinalized)
+                {
+                    await SafeWriteActivityAsync(
+                        actorId.Value,
+                        ActivityActions.RoundFinalize,
+                        TargetTypes.Round,
+                        roundId.ToString());
+                }
+            }
         }
 
         public async Task<DateTime> GetFinalizeNotBeforeAsync(Guid roundId)
@@ -2935,6 +3565,7 @@ namespace BusinessLogic.Services.Contests
         public async Task<RoundTimelineDTO> GetRoundTimelineAsync(Guid roundId)
         {
             Round round = await FetchRoundWithIncludesAsync(roundId);
+
             var configRepo = _unitOfWork.GetRepository<Config>();
 
             int submitDays = await GetContestPolicyDaysAsync(
@@ -3010,6 +3641,207 @@ namespace BusinessLogic.Services.Contests
                 : fallback;
         }
 
+        private async Task AutoDenyPendingAppealsAsync(Round round)
+        {
+            var appealRepo = _unitOfWork.GetRepository<Appeal>();
+            var mentorRepo = _unitOfWork.GetRepository<Mentor>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            var pendingAppeals = await appealRepo.Entities
+                .Include(a => a.Team)
+                .Where(a => a.DeletedAt == null
+                            && a.TargetId == round.RoundId
+                            && (a.State != AppealStateEnum.Closed.ToString()
+                                || a.Decision == AppealDecisionEnum.Pending.ToString()))
+                .ToListAsync();
+
+            if (!pendingAppeals.Any()) return;
+
+            Guid organizerId = Guid.Empty;
+            string? organizerStr = await contestRepo.Entities
+                .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                .Select(c => c.CreatedBy)
+                .FirstOrDefaultAsync();
+            Guid.TryParse(organizerStr, out organizerId);
+
+            foreach (var appeal in pendingAppeals)
+            {
+                appeal.State = AppealStateEnum.Closed.ToString();
+                appeal.Decision = AppealDecisionEnum.Rejected.ToString();
+                if (string.IsNullOrWhiteSpace(appeal.DecisionReason))
+                {
+                    appeal.DecisionReason = "Auto-denied because the appeal review deadline passed.";
+                }
+
+                await appealRepo.UpdateAsync(appeal);
+            }
+
+            await _unitOfWork.SaveAsync();
+
+            foreach (var appeal in pendingAppeals)
+            {
+                var recipients = new HashSet<Guid>();
+                if (appeal.OwnerId != Guid.Empty) recipients.Add(appeal.OwnerId);
+
+                if (appeal.Team?.MentorId != null)
+                {
+                    Guid? mentorUserId = await mentorRepo.Entities
+                        .Where(m => m.MentorId == appeal.Team.MentorId && m.DeletedAt == null)
+                        .Select(m => (Guid?)m.UserId)
+                        .FirstOrDefaultAsync();
+                    if (mentorUserId.HasValue) recipients.Add(mentorUserId.Value);
+                }
+
+                if (organizerId != Guid.Empty) recipients.Add(organizerId);
+
+                if (recipients.Count > 0)
+                {
+                    await _notificationService.CreateInAppToUsersAsync(
+                        recipients,
+                        NotificationTypes.AppealUpdated,
+                        new
+                        {
+                            appealId = appeal.AppealId,
+                            teamId = appeal.TeamId,
+                            roundId = appeal.TargetId,
+                            contestId = round.ContestId,
+                            state = appeal.State,
+                            decision = appeal.Decision,
+                            targetType = TargetTypes.Appeal,
+                            targetId = appeal.AppealId.ToString(),
+                            message = "Appeal was auto-denied after the review deadline."
+                        });
+                }
+
+                if (organizerId != Guid.Empty)
+                {
+                    await _activityLogWriter.TryWriteAsync(
+                        organizerId,
+                        ActivityActions.AppealResolve,
+                        TargetTypes.Appeal,
+                        appeal.AppealId.ToString());
+                }
+            }
+        }
+
+        private async Task AutoScorePendingSubmissionsAsync(Round round)
+        {
+            if (!IsManualRound(round))
+                return;
+
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId,
+                ContestPolicyKeys.JudgeRescoreDays,
+                DEFAULT_JUDGE_RESCORE_DAYS,
+                configRepo);
+
+            DateTime defaultDeadline = round.End.AddDays(judgeDays).ToUniversalTime();
+            DateTime? judgeOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundJudgeDeadlineUtc(round.RoundId));
+            DateTime? rescoreOverride = await TryGetDeadlineUtcAsync(
+                configRepo, ConfigKeys.RoundJudgeRescoreDeadlineUtc(round.RoundId));
+            if (judgeOverride.HasValue || rescoreOverride.HasValue)
+            {
+                var candidates = new List<DateTime> { defaultDeadline };
+                if (judgeOverride.HasValue) candidates.Add(judgeOverride.Value);
+                if (rescoreOverride.HasValue) candidates.Add(rescoreOverride.Value);
+                defaultDeadline = candidates.Min();
+            }
+
+            var pendingSubs = await submissionRepo.Entities
+                .Include(s => s.Problem)
+                .Where(s => s.DeletedAt == null
+                            && s.Problem != null
+                            && s.Problem.RoundId == round.RoundId
+                            && s.Status == SubmissionStatusEnum.Pending.ToString())
+                .ToListAsync();
+
+            if (!pendingSubs.Any()) return;
+
+            Guid organizerId = Guid.Empty;
+            string? organizerStr = await contestRepo.Entities
+                .Where(c => c.ContestId == round.ContestId && c.DeletedAt == null)
+                .Select(c => c.CreatedBy)
+                .FirstOrDefaultAsync();
+            Guid.TryParse(organizerStr, out organizerId);
+
+            var overdue = new List<Submission>();
+            foreach (var sub in pendingSubs)
+            {
+                DateTime deadline = defaultDeadline;
+                if (!string.IsNullOrWhiteSpace(sub.JudgedBy)
+                    && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                {
+                    string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, sub.SubmissionId);
+                    string? val = await configRepo.Entities
+                        .Where(c => c.Key == key && c.DeletedAt == null)
+                        .Select(c => c.Value)
+                        .FirstOrDefaultAsync();
+                    if (DateTime.TryParse(
+                        val,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind,
+                        out DateTime parsed))
+                    {
+                        deadline = parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+                    }
+                }
+
+                if (DateTime.UtcNow <= deadline) continue;
+
+                sub.Status = SubmissionStatusEnum.Finished.ToString();
+                sub.Score = 0;
+                await submissionRepo.UpdateAsync(sub);
+                overdue.Add(sub);
+            }
+
+            if (!overdue.Any()) return;
+
+            await _unitOfWork.SaveAsync();
+
+            foreach (var sub in overdue)
+            {
+                await _configService.MarkFinishedSubmissionAsync(round.RoundId, sub.SubmittedByStudentId);
+                await _leaderboardEntryService.UpdateTeamScoreAsync(round.ContestId, sub.TeamId);
+
+                var recipients = new HashSet<Guid>();
+                if (!string.IsNullOrWhiteSpace(sub.JudgedBy)
+                    && Guid.TryParse(sub.JudgedBy, out Guid judgeId))
+                {
+                    recipients.Add(judgeId);
+                }
+                if (organizerId != Guid.Empty) recipients.Add(organizerId);
+
+                if (recipients.Count > 0)
+                {
+                    await _notificationService.CreateInAppToUsersAsync(
+                        recipients,
+                        NotificationTypes.SubmissionStatusChanged,
+                        new
+                        {
+                            contestId = round.ContestId,
+                            roundId = round.RoundId,
+                            submissionId = sub.SubmissionId,
+                            status = sub.Status,
+                            message = "Submission was auto-scored 0 because the judge deadline passed."
+                        });
+                }
+
+                if (organizerId != Guid.Empty)
+                {
+                    await _activityLogWriter.TryWriteAsync(
+                        organizerId,
+                        ActivityActions.SubmissionStatusChange,
+                        TargetTypes.Submission,
+                        sub.SubmissionId.ToString());
+                }
+            }
+        }
+
         private static DateTime? TryParseUtc(string? isoString)
         {
             if (string.IsNullOrWhiteSpace(isoString))
@@ -3025,6 +3857,19 @@ namespace BusinessLogic.Services.Contests
             }
 
             return parsed.Kind == DateTimeKind.Utc ? parsed : parsed.ToUniversalTime();
+        }
+
+        private Guid? TryGetCurrentUserGuid()
+        {
+            string? idStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+            return TryParseGuid(idStr);
+        }
+
+        private static Guid? TryParseGuid(string? value)
+        {
+            if (!Guid.TryParse(value, out var id) || id == Guid.Empty)
+                return null;
+            return id;
         }
 
         private static async Task<DateTime?> TryGetDeadlineUtcAsync(
@@ -3115,7 +3960,61 @@ namespace BusinessLogic.Services.Contests
                     targetId = roundId.ToString(),
                     message = $"Round '{roundName}' has deleted."
                 });
+
+            IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard update
+            Contest? contest = await contestRepo.GetByIdAsync(contestId);
+            if (Guid.TryParse(contest!.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
+        /// <summary>
+        /// Validates the access and existence of a round.
+        /// </summary>
+        private void ValidateRound(Round? round)
+        {
+            // Get logged-in user role
+            string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+
+            // Validate round exists
+            if (round == null || round.DeletedAt.HasValue)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Round not found.");
+            }
+
+            // Restrict access to round of other organizers
+            if (userRole == RoleConstants.ContestOrganizer)
+            {
+                // Get current user ID
+                string userId = GetCurrentUserIdOrThrow();
+
+                if (round.Contest.CreatedBy!.ToLower() != userId)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Access denied to this round.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Validates whether a round can be modified.
+        /// </summary>
+        private void ValidateModifyRound(Round? round)
+        {
+            // Restrict modifications to rounds in contests with Draft or Delayed status
+            if (round!.Contest.Status != ContestStatusEnum.Draft.ToString() &&
+                round.Contest.Status != ContestStatusEnum.Delayed.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Modifications are only allowed for rounds in contests with Draft or Delayed status.");
+            }
+        }
     }
 }

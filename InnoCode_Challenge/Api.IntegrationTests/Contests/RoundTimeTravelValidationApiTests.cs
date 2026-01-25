@@ -123,6 +123,164 @@ namespace Api.IntegrationTests.Contests
                 OrganizerPassword: organizerPassword);
         }
 
+        private SeedData SeedManualRoundWithPendingSubmission(
+            DateTime now,
+            DateTime roundEnd,
+            DateTime? judgeSubmissionDeadline = null)
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
+
+            var organizerEmail = $"organizer{Guid.NewGuid():N}@test.com";
+            const string organizerPassword = "P@ssword123!";
+            var organizerUser = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = "Organizer",
+                Email = organizerEmail,
+                PasswordHash = PasswordHasher.Hash(organizerPassword),
+                Role = RoleConstants.ContestOrganizer,
+                Status = UserStatusConstants.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var judgeUser = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = "Judge",
+                Email = $"judge{Guid.NewGuid():N}@test.com",
+                PasswordHash = PasswordHasher.Hash("P@ssword123!"),
+                Role = RoleConstants.Judge,
+                Status = UserStatusConstants.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var mentorUser = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = "Mentor",
+                Email = $"mentor{Guid.NewGuid():N}@test.com",
+                PasswordHash = PasswordHasher.Hash("P@ssword123!"),
+                Role = RoleConstants.Mentor,
+                Status = UserStatusConstants.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var studentUser = new User
+            {
+                UserId = Guid.NewGuid(),
+                Fullname = "Student",
+                Email = $"student{Guid.NewGuid():N}@test.com",
+                PasswordHash = PasswordHasher.Hash("P@ssword123!"),
+                Role = RoleConstants.Student,
+                Status = UserStatusConstants.Active,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            var mentor = new Mentor
+            {
+                MentorId = Guid.NewGuid(),
+                UserId = mentorUser.UserId,
+                SchoolId = TestSeed.SchoolId,
+                CreatedAt = now
+            };
+
+            var student = new Student
+            {
+                StudentId = Guid.NewGuid(),
+                UserId = studentUser.UserId,
+                SchoolId = TestSeed.SchoolId,
+                CreatedAt = now
+            };
+
+            var contest = new Contest
+            {
+                ContestId = Guid.NewGuid(),
+                Name = $"Time Travel Contest {Guid.NewGuid():N}",
+                Year = now.Year,
+                ImgUrl = "https://example.com/contest.png",
+                Status = ContestStatusEnum.Ongoing.ToString(),
+                CreatedAt = now,
+                Start = now.AddHours(-12),
+                End = now.AddHours(12),
+                CreatedBy = organizerUser.UserId.ToString()
+            };
+
+            var round = new Round
+            {
+                RoundId = Guid.NewGuid(),
+                ContestId = contest.ContestId,
+                Name = "Manual Round",
+                Start = roundEnd.AddHours(-2),
+                End = roundEnd,
+                Status = roundEnd <= now ? RoundStatusEnum.Closed.ToString() : RoundStatusEnum.Opened.ToString(),
+                IsRetakeRound = false
+            };
+
+            var problem = new Problem
+            {
+                ProblemId = Guid.NewGuid(),
+                RoundId = round.RoundId,
+                Language = "markdown",
+                Type = ProblemTypeEnum.Manual.ToString(),
+                CreatedAt = now
+            };
+
+            var team = new Team
+            {
+                TeamId = Guid.NewGuid(),
+                ContestId = contest.ContestId,
+                SchoolId = TestSeed.SchoolId,
+                MentorId = mentor.MentorId,
+                Name = "Team Manual",
+                Status = TeamStatusConstants.Active,
+                CreatedAt = now
+            };
+
+            var submission = new Submission
+            {
+                SubmissionId = Guid.NewGuid(),
+                TeamId = team.TeamId,
+                ProblemId = problem.ProblemId,
+                SubmittedByStudentId = student.StudentId,
+                JudgedBy = judgeUser.UserId.ToString(),
+                Status = SubmissionStatusEnum.Pending.ToString(),
+                Score = 0,
+                CreatedAt = now.AddHours(-1)
+            };
+
+            db.Users.AddRange(organizerUser, judgeUser, mentorUser, studentUser);
+            db.Mentors.Add(mentor);
+            db.Students.Add(student);
+            db.Contests.Add(contest);
+            db.Rounds.Add(round);
+            db.Problems.Add(problem);
+            db.Teams.Add(team);
+            db.Submissions.Add(submission);
+
+            if (judgeSubmissionDeadline.HasValue)
+            {
+                db.Configs.Add(new Config
+                {
+                    Key = ConfigKeys.JudgeSubmissionDeadline(judgeUser.UserId, submission.SubmissionId),
+                    Value = judgeSubmissionDeadline.Value.ToString("o"),
+                    Scope = "contest",
+                    UpdatedAt = now
+                });
+            }
+
+            db.SaveChanges();
+
+            return new SeedData(
+                RoundId: round.RoundId,
+                OrganizerEmail: organizerEmail,
+                OrganizerPassword: organizerPassword);
+        }
+
         private async Task<string> LoginAsync(string email, string password)
         {
             var res = await _client.PostAsJsonAsync("/api/auth/login", new LoginDTO
@@ -262,6 +420,39 @@ namespace Api.IntegrationTests.Contests
         }
 
         [Fact]
+        public async Task JudgeDeadline_End_BeforeSubmit_ShouldNotChangeRescoreDeadline()
+        {
+            var now = DateTime.UtcNow;
+            var seed = SeedRound(
+                now,
+                ProblemTypeEnum.Manual,
+                false,
+                roundEnd: now.AddHours(-1),
+                appealSubmitDeadline: now.AddHours(2),
+                appealReviewDeadline: now.AddHours(5));
+
+            var beforeRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
+            beforeRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var before = await beforeRes.ReadOkAsync<RoundTimelineDTO>();
+            before.Data!.JudgeRescoreDeadline.Should().NotBeNull();
+            DateTime beforeRescore = before.Data!.JudgeRescoreDeadline!.Value;
+
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+            var req = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/judge-deadline-end");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var afterRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
+            afterRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var after = await afterRes.ReadOkAsync<RoundTimelineDTO>();
+            after.Data!.JudgeRescoreDeadline.Should().NotBeNull();
+            DateTime afterRescore = after.Data!.JudgeRescoreDeadline!.Value;
+
+            afterRescore.Should().Be(beforeRescore);
+        }
+
+        [Fact]
         public async Task JudgeDeadline_End_AfterReview_ShouldUpdateJudgeRescoreDeadline()
         {
             var now = DateTime.UtcNow;
@@ -309,6 +500,58 @@ namespace Api.IntegrationTests.Contests
             res.StatusCode.Should().Be(HttpStatusCode.Conflict);
             var err = await res.ReadErrorAsync();
             err.ErrorCode.Should().Be("INVALID_STATE");
+        }
+
+        [Fact]
+        public async Task AppealSubmit_End_BeforeJudgeDeadline_ShouldReturn409()
+        {
+            var now = DateTime.UtcNow;
+            var seed = SeedManualRoundWithPendingSubmission(
+                now,
+                roundEnd: now.AddHours(-1),
+                judgeSubmissionDeadline: now.AddHours(2));
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+
+            var req = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/appeal-submit-end");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var res = await _client.SendAsync(req);
+            res.StatusCode.Should().Be(HttpStatusCode.Conflict);
+            var err = await res.ReadErrorAsync();
+            err.ErrorCode.Should().Be("INVALID_STATE");
+        }
+
+        [Fact]
+        public async Task JudgeDeadline_End_AfterReview_ShouldAllowFinalize()
+        {
+            var now = DateTime.UtcNow;
+            var seed = SeedRound(
+                now,
+                ProblemTypeEnum.Manual,
+                false,
+                roundEnd: now.AddHours(-1),
+                appealSubmitDeadline: now.AddHours(-6),
+                appealReviewDeadline: now.AddHours(-3));
+
+            var token = await LoginAsync(seed.OrganizerEmail, seed.OrganizerPassword);
+
+            var judgeReq = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/judge-deadline-end");
+            judgeReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var judgeRes = await _client.SendAsync(judgeReq);
+            judgeRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var timelineRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
+            timelineRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            var timeline = await timelineRes.ReadOkAsync<RoundTimelineDTO>();
+            timeline.Data!.JudgeDeadline.Should().NotBeNull();
+            timeline.Data!.JudgeDeadline.Should().BeBefore(DateTime.UtcNow.AddSeconds(1));
+            timeline.Data!.JudgeRescoreDeadline.Should().NotBeNull();
+            timeline.Data!.JudgeRescoreDeadline.Should().BeBefore(DateTime.UtcNow.AddSeconds(1));
+
+            var finalizeReq = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/time-travel/finalize");
+            finalizeReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var finalizeRes = await _client.SendAsync(finalizeReq);
+            finalizeRes.StatusCode.Should().Be(HttpStatusCode.OK);
         }
     }
 }

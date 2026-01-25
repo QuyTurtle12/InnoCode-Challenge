@@ -10,8 +10,6 @@
 
         public int TotalStudentsMentored { get; set; }
 
-        public BestTeamDTO? BestPerformingTeam { get; set; }
-
         public TeamStatusBreakdownDTO TeamStatusBreakdown { get; set; } = new();
 
         public ContestActivityDTO ContestActivity { get; set; } = new();

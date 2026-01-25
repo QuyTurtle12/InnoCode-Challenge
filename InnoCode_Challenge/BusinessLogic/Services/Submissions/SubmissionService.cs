@@ -1,7 +1,7 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices;
-using BusinessLogic.Helpers;
 using BusinessLogic.IServices.Contests;
+using BusinessLogic.IServices.Dashboards;
 using BusinessLogic.IServices.FileStorages;
 using BusinessLogic.IServices.NotificationsAndLogs;
 using BusinessLogic.IServices.Submissions;
@@ -9,8 +9,8 @@ using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Repository.DTOs.ContestDTOs;
 using Repository.DTOs.JudgeDTOs;
-using Repository.DTOs.MockTestDTOs;
 using Repository.DTOs.PlagiarismDTOs;
 using Repository.DTOs.RubricDTOs;
 using Repository.DTOs.SubmissionArtifactDTOs;
@@ -26,7 +26,6 @@ using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace BusinessLogic.Services.Submissions
 {
@@ -44,6 +43,9 @@ namespace BusinessLogic.Services.Submissions
         private readonly IActivityLogWriter _logWriter;
         private readonly ILogger<SubmissionService> _logger;
         private readonly IRoundService _roundService;
+        private readonly IContestJudgeService _contestJudgeService;
+        private readonly IDashboardNotifierService _dashboardNotifier;
+
         private const string OPERATION_NAME = "submit code";
         private const string DEFAULT_JUDGED_BY = "system";
         private const double DEFAULT_TIMELIMIT = 10.0;
@@ -69,10 +71,10 @@ namespace BusinessLogic.Services.Submissions
         private static readonly string TESTCASE_TYPE_TESTCASE = TestCaseTypeEnum.TestCase.ToString();
         private static readonly string TESTCASE_TYPE_MANUAL = TestCaseTypeEnum.Manual.ToString();
 
-
+        private const string JUDGE_STATUS_ACTIVE = "active";
         private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
         private const string STATUS_PLAGIARISM_CONFIRMED = "PlagiarismConfirmed";
-        private const string FP_ALGORITHM = "sha256_py_v1";
+        private const string FP_ALGORITHM = "sha256_py_v2";
         private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
         private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
         private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
@@ -105,7 +107,9 @@ namespace BusinessLogic.Services.Submissions
             INotificationService notificationService,
             IActivityLogWriter logWriter,
             IRoundService roundService,
-            ILogger<SubmissionService> logger)
+            ILogger<SubmissionService> logger,
+            IContestJudgeService contestJudgeService,
+            IDashboardNotifierService dashboardNotifier)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
@@ -119,6 +123,8 @@ namespace BusinessLogic.Services.Submissions
             _logWriter = logWriter;
             _roundService = roundService;
             _logger = logger;
+            _contestJudgeService = contestJudgeService;
+            _dashboardNotifier = dashboardNotifier;
         }
 
         public async Task UpdateSubmissionAsync(Guid id, UpdateSubmissionDTO submissionDTO)
@@ -459,9 +465,6 @@ namespace BusinessLogic.Services.Submissions
                 await SaveSubmissionResultAsync(
                     submission.SubmissionId, result, previousSubmissionsCount, problem.PenaltyRate);
 
-                // Check for plagiarism
-                await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
-
                 _unitOfWork.CommitTransaction();
 
                 return result;
@@ -671,8 +674,16 @@ namespace BusinessLogic.Services.Submissions
                 Submission submission = await CreateFileSubmissionRecordAsync(
                     teamId, problemId, studentId, fileUrl);
 
-                // Check plagiarism for archives
-                await CheckPlagiarismForArchiveAsync(submission, file);
+                try
+                {
+                    await TryCreateManualFingerprintAsync(submission, file);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to precompute manual submission fingerprint for {SubmissionId}",
+                        submission.SubmissionId);
+                }
 
                 _unitOfWork.CommitTransaction();
 
@@ -831,6 +842,8 @@ namespace BusinessLogic.Services.Submissions
                     .Where(s => s.SubmissionId == submissionId && s.DeletedAt == null)
                     .Include(s => s.Problem)
                         .ThenInclude(p => p.Round)
+                            .ThenInclude(r => r.Contest)
+                    .Include(s => s.SubmissionArtifacts)
                     .FirstOrDefaultAsync();
 
                 // Validate submission existence
@@ -841,13 +854,10 @@ namespace BusinessLogic.Services.Submissions
                         $"Submission with ID {submissionId} not found");
                 }
 
-                // Check if submission is flagged for plagiarism
-                if (string.Equals(submission.Status, STATUS_PLAGIARISM_SUSPECTED, StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new ErrorException(StatusCodes.Status409Conflict,
-                        ResponseCodeConstants.BADREQUEST,
-                        "Submission is flagged for plagiarism and must be reviewed by staff before acceptance.");
-                }
+                bool isPlagiarismSuspected = string.Equals(
+                    submission.Status,
+                    STATUS_PLAGIARISM_SUSPECTED,
+                    StringComparison.OrdinalIgnoreCase);
 
                 // Get roundId and studentId
                 Guid roundId = submission.Problem.RoundId;
@@ -863,6 +873,21 @@ namespace BusinessLogic.Services.Submissions
                         $"Cannot accept result. You have already finished this round.");
                 }
 
+                if (string.Equals(submission.Problem.Type, PROBLEM_TYPE_AUTO_EVALUATION, StringComparison.OrdinalIgnoreCase))
+                {
+                    var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+                    bool hasFingerprint = await fpRepo.Entities
+                        .AsNoTracking()
+                        .AnyAsync(f => f.SubmissionId == submission.SubmissionId);
+
+                    if (!hasFingerprint)
+                    {
+                        string sourceCode = await GetSubmissionSourceCodeAsync(submission);
+                        var (suspected, _) = await CheckAndFlagPlagiarismAsync(submission, submission.Problem, sourceCode);
+                        isPlagiarismSuspected = isPlagiarismSuspected || suspected;
+                    }
+                }
+
                 // Get all other submissions for this student in the same round
                 List<Submission> otherSubmissions = await submissionRepo.Entities
                     .Where(s => s.Problem.RoundId == roundId
@@ -872,8 +897,11 @@ namespace BusinessLogic.Services.Submissions
                         && s.Status != SubmissionStatusEnum.Finished.ToString())
                     .ToListAsync();
 
-                // Set the current submission to Finished
-                submission.Status = SubmissionStatusEnum.Finished.ToString();
+                // Set the current submission to Finished unless it's flagged as plagiarism suspected
+                if (!isPlagiarismSuspected)
+                {
+                    submission.Status = SubmissionStatusEnum.Finished.ToString();
+                }
                 await submissionRepo.UpdateAsync(submission);
 
                 // Cancel all other submissions
@@ -987,6 +1015,7 @@ namespace BusinessLogic.Services.Submissions
                 {
                     SubmissionId = submissionId,
                     JudgedBy = judgeEmail,
+                    Status = submission.Status,
                     TotalScore = Math.Round(totalScore, 2),
                     MaxPossibleScore = rubricCriteria.Sum(tc => tc.Weight),
                     CriterionResults = results
@@ -1083,6 +1112,7 @@ namespace BusinessLogic.Services.Submissions
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
                     JudgedBy = judgeEmail,
+                    Status = submission.Status,
                     TotalScore = Math.Round(submission.Score, 2),
                     MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                     CriterionResults = results
@@ -1244,6 +1274,7 @@ namespace BusinessLogic.Services.Submissions
                     {
                         SubmissionId = submission.SubmissionId,
                         JudgedBy = judgeEmail,
+                        Status = submission.Status,
                         TotalScore = Math.Round(submission.Score, 2),
                         MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                         CriterionResults = criterionResults,
@@ -1999,6 +2030,53 @@ namespace BusinessLogic.Services.Submissions
             };
         }
 
+        public async Task TransferSubmissionsToOtherJudge(Guid roundId, Guid judgeId)
+        {
+            try
+            {
+                _unitOfWork.BeginTransaction();
+
+                // Validate and get round
+                Round round = await ValidateAndGetRoundForTransferAsync(roundId);
+
+                // Validate permissions
+                await ValidateTransferPermissionsAsync(round);
+
+                // Get active judges (excluding the transferring judge)
+                List<JudgeInContestDTO> targetJudges = await GetTargetJudgesForTransferAsync(round.ContestId, judgeId);
+
+                // Get submissions to transfer
+                List<Submission> submissions = await GetSubmissionsToTransferAsync(roundId, judgeId);
+
+                if (!submissions.Any())
+                {
+                    _unitOfWork.CommitTransaction();
+                    return;
+                }
+
+                // Transfer submissions and track assignments
+                Dictionary<Guid, int> judgeAssignments = await TransferSubmissionsToJudgesAsync(
+                    submissions, targetJudges, round, judgeId);
+
+                // Save changes
+                await _unitOfWork.SaveAsync();
+                _unitOfWork.CommitTransaction();
+
+                // Send notifications
+                await NotifyJudgesAboutNewAssignmentsAsync(judgeAssignments, round);
+            }
+            catch (Exception ex)
+            {
+                _unitOfWork.RollBack();
+                if (ex is ErrorException) throw;
+                throw new ErrorException(
+                    StatusCodes.Status500InternalServerError,
+                    ResponseCodeConstants.INTERNAL_SERVER_ERROR,
+                    $"Error transferring submissions: {ex.Message}"
+                );
+            }
+        }
+
         public Task ApprovePlagiarismSubmissionAsync(Guid submissionId)
             => ResolvePlagiarismSubmissionAsync(submissionId, cleared: true);
 
@@ -2213,7 +2291,7 @@ namespace BusinessLogic.Services.Submissions
             Problem problem,
             string sourceCode)
         {
-            string normalized = PlagiarismHelpers.NormalizePython(sourceCode, removeTripleQuoted: true);
+            string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(sourceCode, removeTripleQuoted: true);
             return await CheckAndFlagPlagiarismCoreAsync(submission, problem, normalized);
         }
 
@@ -2277,9 +2355,9 @@ namespace BusinessLogic.Services.Submissions
                 await submissionRepo.UpdateAsync(submission);
 
                 // Notify organizer about suspected plagiarism
-                Guid contestId = submission.Problem.Round.ContestId;
-                Guid roundId = submission.Problem.RoundId;
-                if (Guid.TryParse(submission.Problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
+                Guid contestId = problem.Round.ContestId;
+                Guid roundId = problem.RoundId;
+                if (Guid.TryParse(problem.Round.Contest.CreatedBy, out Guid organizerId) && organizerId != Guid.Empty)
                 {
                     try
                     {
@@ -2336,6 +2414,12 @@ namespace BusinessLogic.Services.Submissions
 
             // Update leaderboard ranks
             await _leaderboardService.UpdateContestLeaderboardAsync(contestId);
+
+            // Notify mentor about dashboard update
+            if (team?.MentorId != null)
+            {
+                await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+            }
         }
 
         private async Task<string?> TryExtractNormalizedPythonFromArchiveAsync(IFormFile archiveFile)
@@ -2424,7 +2508,7 @@ namespace BusinessLogic.Services.Submissions
                     var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, (int)entry.Length);
                     if (raw == null) continue;
 
-                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(raw, removeTripleQuoted: true);
                     if (!string.IsNullOrWhiteSpace(normalized))
                         results.Add(normalized);
 
@@ -2487,7 +2571,7 @@ namespace BusinessLogic.Services.Submissions
                         continue;
                     }
 
-                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(raw, removeTripleQuoted: true);
                     if (!string.IsNullOrWhiteSpace(normalized))
                         results.Add(normalized);
 
@@ -2566,12 +2650,14 @@ namespace BusinessLogic.Services.Submissions
             {
                 Guid? userId = await TryGetStudentUserIdAsync(submission.SubmittedByStudentId);
                 if (!userId.HasValue) return;
+                Guid? contestId = await TryGetContestIdForSubmissionAsync(submission);
 
                 await _notificationService.CreateInAppToUserAsync(
                     userId.Value,
                     NotificationTypes.SubmissionResult,
                     new
                     {
+                        contestId,
                         submissionId = submission.SubmissionId,
                         status = submission.Status,
                         score = submission.Score,
@@ -2591,6 +2677,32 @@ namespace BusinessLogic.Services.Submissions
             catch
             {
             }
+        }
+
+        private async Task<Guid?> TryGetContestIdForSubmissionAsync(Submission submission)
+        {
+            if (submission.Problem?.Round != null)
+                return submission.Problem.Round.ContestId;
+
+            if (submission.Team != null)
+                return submission.Team.ContestId;
+
+            var problemRepo = _unitOfWork.GetRepository<Problem>();
+            Guid contestId = await problemRepo.Entities
+                .Where(p => p.ProblemId == submission.ProblemId)
+                .Select(p => p.Round.ContestId)
+                .FirstOrDefaultAsync();
+
+            if (contestId != Guid.Empty)
+                return contestId;
+
+            var teamRepo = _unitOfWork.GetRepository<Team>();
+            contestId = await teamRepo.Entities
+                .Where(t => t.TeamId == submission.TeamId)
+                .Select(t => t.ContestId)
+                .FirstOrDefaultAsync();
+
+            return contestId == Guid.Empty ? (Guid?)null : contestId;
         }
 
         private async Task TryNotifySubmissionStatusAsync(Submission submission, string message)
@@ -2683,9 +2795,6 @@ namespace BusinessLogic.Services.Submissions
                     previousSubmissionsCount,
                     problem.PenaltyRate);
 
-                // Check plagiarism
-                await CheckAndFlagPlagiarismAsync(submission, problem, sourceCode);
-
                 _unitOfWork.CommitTransaction();
 
                 return mockResult;
@@ -2767,9 +2876,7 @@ namespace BusinessLogic.Services.Submissions
                     SubmissionId = submissionId,
                     TestcaseId = null,
                     Weight = weightPerTest,
-                    Note = string.IsNullOrEmpty(testCase.Stderr)
-                        ? $"{testCase.Id}: {testCase.Status}"
-                        : $"{testCase.Id}: {testCase.Status} - {testCase.Stderr}",
+                    Note = testCase.Status,
                     RuntimeMs = 0,
                     MemoryKb = testCase.MemoryKb ?? 0,
                     CreatedAt = DateTime.UtcNow
@@ -3151,6 +3258,7 @@ namespace BusinessLogic.Services.Submissions
                     TeamName = submission.Team?.Name ?? "Unknown",
                     SubmittedAt = submission.CreatedAt,
                     JudgedBy = judgeEmail,
+                    Status = submission.Status,
                     TotalScore = Math.Round(submission.Score, 2),
                     MaxPossibleScore = Math.Round(rubricCriteria.Sum(tc => tc.Weight), 2),
                     CriterionResults = results
@@ -3180,6 +3288,8 @@ namespace BusinessLogic.Services.Submissions
 
             Problem? problem = await problemRepo.Entities
                 .Where(p => p.RoundId == roundId)
+                .Include(p => p.Round)
+                    .ThenInclude(r => r.Contest)
                 .FirstOrDefaultAsync();
 
             if (problem == null)
@@ -3337,6 +3447,33 @@ namespace BusinessLogic.Services.Submissions
             string artifactUrl = await UploadCodeAsFileAsync(code, fileName);
 
             return (sourceCode, CODE_ARTIFACT_TYPE, artifactUrl);
+        }
+
+        private async Task<string> GetSubmissionSourceCodeAsync(Submission submission)
+        {
+            List<SubmissionArtifact> artifacts = submission.SubmissionArtifacts?
+                .Where(a => a.DeletedAt == null)
+                .OrderByDescending(a => a.CreatedAt)
+                .ToList() ?? new List<SubmissionArtifact>();
+
+            if (artifacts.Count == 0)
+            {
+                var artifactRepo = _unitOfWork.GetRepository<SubmissionArtifact>();
+                artifacts = await artifactRepo.Entities
+                    .Where(a => a.SubmissionId == submission.SubmissionId && a.DeletedAt == null)
+                    .OrderByDescending(a => a.CreatedAt)
+                    .ToListAsync();
+            }
+
+            SubmissionArtifact? artifact = artifacts.FirstOrDefault();
+            if (artifact == null || string.IsNullOrWhiteSpace(artifact.Url))
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Submission artifact not found.");
+            }
+
+            return await SubmissionHelpers.DownloadFileContentAsync(artifact.Url);
         }
 
         /// <summary>
@@ -3655,6 +3792,43 @@ namespace BusinessLogic.Services.Submissions
             await LogSubmissionCreationAsync(submission.SubmissionId);
 
             return submission;
+        }
+
+        private async Task TryCreateManualFingerprintAsync(Submission submission, IFormFile file)
+        {
+            if (submission == null || file == null) return;
+
+            var problemRepo = _unitOfWork.GetRepository<Problem>();
+            Problem? problem = await problemRepo.Entities
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.ProblemId == submission.ProblemId && p.DeletedAt == null);
+
+            if (problem == null || !string.Equals(problem.Type, PROBLEM_TYPE_MANUAL, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string? normalized = await TryExtractNormalizedPythonFromArchiveAsync(file);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length < MIN_NORMALIZED_LEN_TO_CHECK)
+                return;
+
+            var fpRepo = _unitOfWork.GetRepository<SubmissionFingerprint>();
+            bool exists = await fpRepo.Entities.AnyAsync(f => f.SubmissionId == submission.SubmissionId);
+            if (exists) return;
+
+            string hash = PlagiarismHelpers.Sha256Hex(normalized);
+
+            await fpRepo.InsertAsync(new SubmissionFingerprint
+            {
+                FingerprintId = Guid.NewGuid(),
+                SubmissionId = submission.SubmissionId,
+                ProblemId = submission.ProblemId,
+                TeamId = submission.TeamId,
+                Algorithm = FP_ALGORITHM,
+                Hash = hash,
+                NormalizedLength = normalized.Length,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _unitOfWork.SaveAsync();
         }
 
         /// <summary>
@@ -4051,6 +4225,8 @@ namespace BusinessLogic.Services.Submissions
             IGenericRepository<Problem> problemRepo = _unitOfWork.GetRepository<Problem>();
             Problem? problem = await problemRepo.Entities
                 .Where(p => p.RoundId == roundId)
+                .Include(p => p.Round)
+                    .ThenInclude(r => r.Contest)
                 .FirstOrDefaultAsync();
 
             if (problem == null)
@@ -4186,6 +4362,305 @@ namespace BusinessLogic.Services.Submissions
             mockResult.Summary.penaltyScore = 0;
 
             return mockResult;
+        }
+
+        /// <summary>
+        /// Validates and retrieves the round for transfer operation
+        /// </summary>
+        private async Task<Round> ValidateAndGetRoundForTransferAsync(Guid roundId)
+        {
+            Round? round = await _unitOfWork.GetRepository<Round>()
+                .Entities
+                .Include(r => r.Contest)
+                .Include(r => r.Problem)
+                .FirstOrDefaultAsync(r => r.RoundId == roundId && r.DeletedAt == null);
+
+            if (round == null)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Round not found"
+                );
+            }
+
+            if (round.Problem == null || round.Problem.Type != ProblemTypeEnum.Manual.ToString())
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "This round does not have a manual problem type"
+                );
+            }
+
+            return round;
+        }
+
+        /// <summary>
+        /// Validates that the current user has permission to transfer submissions
+        /// </summary>
+        private async Task ValidateTransferPermissionsAsync(Round round)
+        {
+            string currentUserId = GetCurrentUserIdOrThrow();
+
+            if (round.Contest.CreatedBy != currentUserId)
+            {
+                throw new ErrorException(
+                    StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Only the contest organizer can transfer submissions"
+                );
+            }
+        }
+
+        /// <summary>
+        /// Gets active judges available for receiving transferred submissions
+        /// </summary>
+        private async Task<List<JudgeInContestDTO>> GetTargetJudgesForTransferAsync(
+            Guid contestId,
+            Guid excludeJudgeId)
+        {
+            IList<JudgeInContestDTO> allJudges = await _contestJudgeService.GetJudgesByContestAsync(contestId);
+
+            if (allJudges == null || !allJudges.Any())
+            {
+                throw new ErrorException(
+                    StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "No judges available for this contest"
+                );
+            }
+
+            // Filter active judges excluding the source judge
+            List<JudgeInContestDTO> activeJudges = allJudges
+                .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE && j.UserId != excludeJudgeId)
+                .OrderBy(_ => Guid.NewGuid())
+                .ToList();
+
+            if (!activeJudges.Any())
+            {
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "No other active judges available to transfer submissions to"
+                );
+            }
+
+            return activeJudges;
+        }
+
+        /// <summary>
+        /// Gets submissions assigned to a specific judge that are pending grading
+        /// </summary>
+        private async Task<List<Submission>> GetSubmissionsToTransferAsync(Guid roundId, Guid judgeId)
+        {
+            return await _unitOfWork.GetRepository<Submission>()
+                .Entities
+                .Include(s => s.Team)
+                .Where(s => s.Problem.RoundId == roundId
+                            && !s.DeletedAt.HasValue
+                            && s.JudgedBy == judgeId.ToString()
+                            && s.Status == SUBMISSION_STATUS_PENDING)
+                .OrderBy(s => s.CreatedAt)
+                .ToListAsync();
+        }
+
+        /// <summary>
+        /// Transfers submissions to judges using round-robin distribution
+        /// </summary>
+        private async Task<Dictionary<Guid, int>> TransferSubmissionsToJudgesAsync(
+            List<Submission> submissions,
+            List<JudgeInContestDTO> targetJudges,
+            Round round,
+            Guid sourceJudgeId)
+        {
+            var submissionRepo = _unitOfWork.GetRepository<Submission>();
+            var configRepo = _unitOfWork.GetRepository<Config>();
+            var judgeAssignments = new Dictionary<Guid, int>();
+
+            // Calculate default deadline
+            DateTime defaultDeadline = await CalculateJudgeDeadlineAsync(round, configRepo);
+
+            int judgeIndex = 0;
+            foreach (Submission submission in submissions)
+            {
+                JudgeInContestDTO assignedJudge = targetJudges[judgeIndex];
+
+                // Track assignment count
+                if (!judgeAssignments.ContainsKey(assignedJudge.UserId))
+                {
+                    judgeAssignments[assignedJudge.UserId] = 0;
+                }
+                judgeAssignments[assignedJudge.UserId]++;
+
+                // Transfer submission
+                await TransferSubmissionToJudgeAsync(
+                    submission,
+                    assignedJudge.UserId,
+                    sourceJudgeId,
+                    defaultDeadline,
+                    submissionRepo,
+                    configRepo);
+
+                // Move to next judge (round-robin)
+                judgeIndex = (judgeIndex + 1) % targetJudges.Count;
+            }
+
+            return judgeAssignments;
+        }
+
+        /// <summary>
+        /// Calculates the deadline for judge scoring based on contest policy
+        /// </summary>
+        private async Task<DateTime> CalculateJudgeDeadlineAsync(
+            Round round,
+            IGenericRepository<Config> configRepo)
+        {
+            int judgeDays = await GetContestPolicyDaysAsync(
+                round.ContestId,
+                ContestPolicyKeys.JudgeRescoreDays,
+                DEFAULT_JUDGE_RESCORE_DAYS,
+                configRepo);
+
+            return round.End.AddDays(judgeDays);
+        }
+
+        /// <summary>
+        /// Transfers a single submission to a new judge and updates deadline configs
+        /// </summary>
+        private async Task TransferSubmissionToJudgeAsync(
+            Submission submission,
+            Guid newJudgeId,
+            Guid oldJudgeId,
+            DateTime defaultDeadline,
+            IGenericRepository<Submission> submissionRepo,
+            IGenericRepository<Config> configRepo)
+        {
+            // Get existing deadline (if any)
+            DateTime judgeDeadline = await GetOrCreateJudgeDeadlineAsync(
+                oldJudgeId,
+                submission.SubmissionId,
+                defaultDeadline,
+                configRepo);
+
+            // Update submission's judge
+            submission.JudgedBy = newJudgeId.ToString();
+            submissionRepo.Update(submission);
+
+            // Manage deadline configs
+            await UpdateJudgeDeadlineConfigsAsync(
+                oldJudgeId,
+                newJudgeId,
+                submission.SubmissionId,
+                judgeDeadline,
+                configRepo);
+        }
+
+        /// <summary>
+        /// Gets existing judge deadline or returns default
+        /// </summary>
+        private async Task<DateTime> GetOrCreateJudgeDeadlineAsync(
+            Guid judgeId,
+            Guid submissionId,
+            DateTime defaultDeadline,
+            IGenericRepository<Config> configRepo)
+        {
+            string key = ConfigKeys.JudgeSubmissionDeadline(judgeId, submissionId);
+
+            Config? config = await configRepo.Entities
+                .Where(c => c.Key == key && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (config != null && DateTime.TryParse(config.Value, out DateTime parsedDeadline))
+            {
+                return parsedDeadline;
+            }
+
+            return defaultDeadline;
+        }
+
+        /// <summary>
+        /// Updates deadline configuration when transferring submission between judges
+        /// </summary>
+        private async Task UpdateJudgeDeadlineConfigsAsync(
+            Guid oldJudgeId,
+            Guid newJudgeId,
+            Guid submissionId,
+            DateTime deadline,
+            IGenericRepository<Config> configRepo)
+        {
+            // Soft delete old judge's deadline config
+            string oldKey = ConfigKeys.JudgeSubmissionDeadline(oldJudgeId, submissionId);
+            Config? oldConfig = await configRepo.Entities
+                .Where(c => c.Key == oldKey && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (oldConfig != null)
+            {
+                configRepo.Delete(oldConfig);
+            }
+
+            // Create or update new judge's deadline config
+            string newKey = ConfigKeys.JudgeSubmissionDeadline(newJudgeId, submissionId);
+            Config? existingConfig = await configRepo.Entities
+                .Where(c => c.Key == newKey && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            if (existingConfig == null)
+            {
+                await configRepo.InsertAsync(new Config
+                {
+                    Key = newKey,
+                    Value = deadline.ToString("o"),
+                    Scope = SCOPE_CONTEST,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                existingConfig.Value = deadline.ToString("o");
+                existingConfig.Scope = SCOPE_CONTEST;
+                existingConfig.UpdatedAt = DateTime.UtcNow;
+                await configRepo.UpdateAsync(existingConfig);
+            }
+        }
+
+        /// <summary>
+        /// Sends notifications to judges about their new submission assignments
+        /// </summary>
+        private async Task NotifyJudgesAboutNewAssignmentsAsync(
+            Dictionary<Guid, int> judgeAssignments,
+            Round round)
+        {
+            foreach (var kvp in judgeAssignments)
+            {
+                Guid judgeUserId = kvp.Key;
+                int submissionCount = kvp.Value;
+
+                try
+                {
+                    await _notificationService.CreateInAppToUserAsync(
+                        judgeUserId,
+                        NotificationTypes.ManualGradingAssigned,
+                        new
+                        {
+                            contestId = round.ContestId,
+                            contestName = round.Contest.Name,
+                            roundId = round.RoundId,
+                            roundName = round.Name,
+                            submissionCount = submissionCount,
+                            targetType = TargetTypes.Submission,
+                            targetId = round.RoundId.ToString(),
+                            message = $"You have been assigned {submissionCount} new submission{(submissionCount > 1 ? "s" : "")} to grade in contest '{round.Contest.Name}', round '{round.Name}'."
+                        });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to send manual grading notification. JudgeUserId={JudgeUserId}, RoundId={RoundId}",
+                        judgeUserId, round.RoundId);
+                }
+            }
         }
     }
 }

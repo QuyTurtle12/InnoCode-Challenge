@@ -96,7 +96,6 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddHttpClient();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();

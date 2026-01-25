@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Repository.DTOs.JudgeDTOs;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Utility.Constant;
 using Utility.Enums;
 using Utility.ExceptionCustom;
@@ -26,15 +27,12 @@ namespace BusinessLogic.Services.Contests
         private const double MAX_CPU_TIME_LIMIT_SEC = 20.0;
         private const int MAX_MEMORY_LIMIT_KB = 2048000;
 
-        public Judge0Service(IConfiguration configuration, HttpClient httpClient)
+        public Judge0Service(IConfiguration configuration, HttpClient httpClient, ILogger<Judge0Service> logger)
         {
             _httpClient = httpClient;
             _judge0BaseUrl = configuration["Judge0:BaseUrl"] ?? "https://judge0-ce.p.rapidapi.com";
             _apiKey = configuration["Judge0:ApiKey"] ?? "";
-
-            _httpClient.DefaultRequestHeaders.Add("X-RapidAPI-Key", _apiKey);
-            _httpClient.DefaultRequestHeaders.Add("X-RapidAPI-Host", "judge0-ce.p.rapidapi.com");
-            _httpClient.Timeout = TimeSpan.FromSeconds(60);
+            _logger = logger;
         }
 
         public async Task<JudgeSubmissionResultDTO> AutoEvaluateSubmissionAsync(JudgeSubmissionRequestDTO request)
@@ -287,40 +285,89 @@ namespace BusinessLogic.Services.Contests
             double timeLimitSec,
             int memoryLimitKb)
         {
+            // Validate inputs
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                _logger?.LogError("CRITICAL: Code is null/empty in CreateSubmission. LanguageId={LanguageId}", languageId);
+                throw new ErrorException(
+                    StatusCodes.Status400BadRequest,
+                    ResponseCodeConstants.BADREQUEST,
+                    "Source code cannot be empty");
+            }
+
+            _logger?.LogInformation(
+                "CreateSubmission called: LanguageId={LanguageId}, CodeLength={CodeLength}, TimeLimit={TimeLimit}s",
+                languageId, code.Length, timeLimitSec);
+
+            // Prepare submission request
             var submissionRequest = new
             {
                 source_code = code,
                 language_id = languageId,
-                stdin = stdin,
-                expected_output = expectedOutput,
+                stdin = stdin ?? string.Empty,
+                expected_output = expectedOutput ?? string.Empty,
                 cpu_time_limit = timeLimitSec,
                 memory_limit = memoryLimitKb
             };
 
             try
             {
-                HttpResponseMessage response = await _httpClient.PostAsJsonAsync(
-                    $"{_judge0BaseUrl}/submissions?base64_encoded=false&wait=false",
-                    submissionRequest);
+                // Serialize with snake_case naming
+                JsonSerializerOptions jsonOptions = new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+                };
 
-                // Capture the response body for 422 errors
+                // Serialize the request to JSON
+                string jsonBody = JsonSerializer.Serialize(submissionRequest, jsonOptions);
+
+                // Log the JSON body for debugging (truncate if too long)
+                _logger?.LogDebug("Judge0 request JSON (first 300 chars): {Json}",
+                    jsonBody.Length > 300 ? jsonBody.Substring(0, 300) + "..." : jsonBody);
+
+                // Prepare HTTP content
+                using StringContent content = new StringContent(
+                    jsonBody,
+                    System.Text.Encoding.UTF8,
+                    "application/json");
+
+                // Send POST request to Judge0
+                HttpResponseMessage response = await _httpClient.PostAsync(
+                    $"{_judge0BaseUrl}/submissions?base64_encoded=false&wait=false",
+                    content);
+
+                string responseBody = await response.Content.ReadAsStringAsync();
+
+                // Handle 422 Unprocessable Entity specifically
                 if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
+                    _logger?.LogError(
+                        "Judge0 422 error. Sent JSON length: {JsonLength}, Response: {Response}",
+                        jsonBody.Length, responseBody);
 
                     throw new ErrorException(
                         StatusCodes.Status422UnprocessableEntity,
                         ResponseCodeConstants.BADREQUEST,
-                        $"Judge0 validation failed. Details: {errorContent}. " +
-                        $"Params: languageId={languageId}, timeLimitSec={timeLimitSec}, memoryLimitKb={memoryLimitKb}");
+                        $"Judge0 validation failed. Details: {responseBody}");
                 }
 
                 response.EnsureSuccessStatusCode();
 
-                return await response.Content.ReadFromJsonAsync<JudgeSubmissionTokenDTO>()
-                    ?? throw new ErrorException(StatusCodes.Status500InternalServerError,
+                // Deserialize response
+                JudgeSubmissionTokenDTO? result = JsonSerializer.Deserialize<JudgeSubmissionTokenDTO>(
+                    responseBody,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (result == null)
+                {
+                    throw new ErrorException(
+                        StatusCodes.Status500InternalServerError,
                         ResponseCodeConstants.INTERNAL_SERVER_ERROR,
-                        "Failed to deserialize Judge0 submission response");
+                        "Failed to deserialize Judge0 response");
+                }
+
+                _logger?.LogInformation("Judge0 submission created successfully. Token: {Token}", result.Token);
+                return result;
             }
             catch (ErrorException)
             {
@@ -328,6 +375,7 @@ namespace BusinessLogic.Services.Contests
             }
             catch (Exception ex)
             {
+                _logger?.LogError(ex, "Judge0 submission failed unexpectedly");
                 throw new ErrorException(
                     StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,

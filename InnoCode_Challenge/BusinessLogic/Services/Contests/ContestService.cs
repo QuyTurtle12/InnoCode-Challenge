@@ -13,6 +13,7 @@ using Repository.DTOs.McqTestDTOs;
 using Repository.DTOs.ProblemDTOs;
 using Repository.DTOs.RoundDTOs;
 using Repository.IRepositories;
+using System;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.IO.Compression;
@@ -24,6 +25,7 @@ using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.Helpers;
 using Utility.PaginatedList;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace BusinessLogic.Services.Contests
 {
@@ -143,6 +145,15 @@ namespace BusinessLogic.Services.Contests
                     message = "This contest has been cancelled."
                 });
 
+                await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Get current user
+                string currentUserId = GetCurrentUserIdOrThrow();
+
+                Guid organizerId = Guid.Parse(currentUserId);
+
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
             }
             catch (Exception ex)
             {
@@ -190,20 +201,21 @@ namespace BusinessLogic.Services.Contests
                 string? userId = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
                 string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
 
-                // Apply participation filters
-                if (isMyParticipatedContest)
-                {
-                    query = await ApplyParticipantFilterAsync(query, userRole, userId);
-                }
-
-                // Apply ownership filter
                 if (isMyContest && !string.IsNullOrEmpty(userId))
                 {
+                    // Apply ownership filter
                     query = query.Where(c => c.CreatedBy == userId);
                 }
-
-                // Filter draft contests for non-privileged users
-                query = ApplyDraftFilterForRole(query, userRole);
+                else if (isMyParticipatedContest)
+                {
+                    // Apply participation filters
+                    query = await ApplyParticipantFilterAsync(query, userRole, userId);
+                } 
+                else
+                {
+                    // Exclude draft contests for non-owners
+                    query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
+                }
 
                 // Apply search filters
                 query = ApplySearchFilters(query, idSearch, creatorIdSearch, roundIdSearch, nameSearch, yearSearch, startDate, endDate);
@@ -244,15 +256,7 @@ namespace BusinessLogic.Services.Contests
                 IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
 
                 // Fetch contest with related data
-                Contest? contest = await FetchContestWithIncludesAsync(contestRepo, id);
-
-                // Validate contest exists
-                if (contest == null)
-                {
-                    throw new ErrorException(StatusCodes.Status404NotFound,
-                        ResponseCodeConstants.NOT_FOUND,
-                        "Contest not found.");
-                }
+                Contest contest = await FetchContestWithIncludesAsync(contestRepo, id);
 
                 // Load related data
                 var (configLookup, organizerName, timeLimitDict, mockTestWeightDict) = await LoadContestRelatedDataAsync(contest);
@@ -307,10 +311,12 @@ namespace BusinessLogic.Services.Contests
                 await PerformPostUpdateOperationsAsync(existingContest, oldValues);
 
                 // Return updated contest
-                PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(
-                    1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
+                //PaginatedList<GetContestDTO> result = await GetPaginatedContestAsync(
+                //    1, 1, existingContest.ContestId, null, null, null, null, null, null, false, false);
 
-                return result.Items.First();
+                GetContestDTO result = await GetContestByIdAsync(existingContest.ContestId);
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -370,6 +376,10 @@ namespace BusinessLogic.Services.Contests
 
                 // Notify dashboard
                 await _dashboardNotifier.NotifyContestCreatedAsync();
+
+                Guid organizerId = Guid.Parse(currentUserId);
+
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
 
                 // Map and return result
                 return MapToContestCreatedDTO(entity, dto, imageUrl, configValues, policyValues);
@@ -667,9 +677,9 @@ namespace BusinessLogic.Services.Contests
         }
 
         private static void ValidateAutoEvaluationProblems(
-            List<Problem> problems,
-            List<Round> rounds,
-            PublishReadinessDTO result)
+    List<Problem> problems,
+    List<Round> rounds,
+    PublishReadinessDTO result)
         {
             // Filter auto-evaluation problems
             List<Problem> autoEvalProblems = problems
@@ -681,6 +691,13 @@ namespace BusinessLogic.Services.Contests
             {
                 Round? round = rounds.FirstOrDefault(r => r.RoundId == problem.RoundId);
                 string roundName = round?.Name ?? "Unknown Round";
+
+                // Check for template URL
+                bool hasTemplateUrl = !string.IsNullOrWhiteSpace(problem.TemplateUrl);
+                if (!hasTemplateUrl)
+                {
+                    result.Missing.Add($"Auto-evaluation round '{roundName}' is missing student code template.");
+                }
 
                 // Check for mock test URL and test cases
                 bool hasMockTestUrl = !string.IsNullOrWhiteSpace(problem.MockTestUrl);
@@ -853,6 +870,11 @@ namespace BusinessLogic.Services.Contests
 
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+                // Notify organizer dashboard
+                string currentUserId = GetCurrentUserIdOrThrow();
+                Guid organizerId = Guid.Parse(currentUserId);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
 
                 // Schedule state transitions only if not moving to Delayed status
                 if (newStatus != ContestStatusEnum.Delayed.ToString())
@@ -1265,6 +1287,14 @@ namespace BusinessLogic.Services.Contests
                 // Notify all mentors with teams in the contest
                 await NotifiMentorDashboardContestUpdated(contestId);
 
+                // Notify organizer dashboard
+                string currentUserId = GetCurrentUserIdOrThrow();
+                Guid organizerId = Guid.Parse(currentUserId);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors dashboard
+                await NotifiMentorDashboardContestUpdated(existingContest.ContestId);
+
                 // Notify activity log
                 var actorId = GetCurrentUserGuidOrThrow();
                 await SafeWriteActivityAsync(actorId, ActivityActions.ContestCancel, TargetTypes.Contest, existingContest.ContestId.ToString());
@@ -1333,8 +1363,15 @@ namespace BusinessLogic.Services.Contests
                 // Notify all mentors with teams in the contest
                 await NotifiMentorDashboardContestUpdated(contestId);
 
-                // Notify all mentors with teams in the contest
-                await NotifiMentorDashboardContestUpdated(contestId);
+                // Notify organizer dashboard
+                Guid organizerId = Guid.Parse(contest.CreatedBy!);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors
+                if (ShouldNotifyParticipants(contest.Status))
+                {
+                    await NotifiMentorDashboardContestUpdated(contest.ContestId);
+                }
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -1412,8 +1449,12 @@ namespace BusinessLogic.Services.Contests
                 // Notify dashboard about status change
                 await _dashboardNotifier.NotifyContestStatusChangedAsync();
 
-                // Notify all mentors with teams in the contest
-                await NotifiMentorDashboardContestUpdated(contestId);
+                // Notify organizer dashboard
+                Guid organizerId = Guid.Parse(contest.CreatedBy!);
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+                // Notify mentors dashboard
+                await NotifiMentorDashboardContestUpdated(contest.ContestId);
 
                 // Log activity
                 var actorId = GetCurrentUserGuidOrThrow();
@@ -2329,6 +2370,11 @@ namespace BusinessLogic.Services.Contests
 
             // Notify dashboard
             await _dashboardNotifier.NotifyContestStatusChangedAsync();
+
+            // Notify organizer dashboard
+            string currentUserId = GetCurrentUserIdOrThrow();
+            Guid organizerId = Guid.Parse(currentUserId);
+            await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
         }
 
         public async Task SetRegistrationEndNowAsync(Guid contestId)
@@ -2352,6 +2398,13 @@ namespace BusinessLogic.Services.Contests
             await UpsertConfigAsync(configRepo, ConfigKeys.ContestRegEnd(contestId), now.ToString("o"));
             contest.Status = ContestStatusEnum.RegistrationClosed.ToString();
             await contestRepo.UpdateAsync(contest);
+
+            // Cancel pending invitations
+            await CancelPendingInvitationsForContestAsync(contestId);
+
+            // Disqualify teams that don't meet minimum member requirement
+            await DisqualifyTeamsNotMeetingMinimumRequirementAsync(contestId, configRepo, contestRepo);
+
             await _unitOfWork.SaveAsync();
 
             // Notify dashboard
@@ -2362,6 +2415,96 @@ namespace BusinessLogic.Services.Contests
 
             // Notify all mentors with teams in the contest
             await NotifiMentorDashboardContestUpdated(contestId);
+
+            // Notify organizer dashboard
+            string currentUserId = GetCurrentUserIdOrThrow();
+            Guid organizerId = Guid.Parse(currentUserId);
+            await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+            await NotifiMentorDashboardContestUpdated(contestId);
+        }
+
+        /// <summary>
+        /// Disqualifies teams that don't meet the minimum team member requirement
+        /// </summary>
+        private async Task DisqualifyTeamsNotMeetingMinimumRequirementAsync(
+            Guid contestId,
+            IGenericRepository<Config> configRepo,
+            IGenericRepository<Contest> contestRepo)
+        {
+            // Get minimum team member requirement
+            string contestMinKey = ConfigKeys.ContestTeamMembersMin(contestId);
+            string? contestMinValue = await configRepo.Entities
+                .Where(c => c.Key == contestMinKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            int minTeamMembers;
+            if (!string.IsNullOrEmpty(contestMinValue) && int.TryParse(contestMinValue, out int contestMin))
+            {
+                minTeamMembers = contestMin;
+            }
+            else
+            {
+                // No contest-specific config found, use global default
+                minTeamMembers = await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMin, 1);
+            }
+
+            // Get all non-deleted teams in the contest with their members
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+            List<Team> teams = await teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .Include(t => t.TeamMembers)
+                .ToListAsync();
+
+            // If no teams found, set contest status to Delayed and return
+            if (teams.Count == 0)
+            {
+                _logger.LogInformation("No teams found in contest {ContestId} for disqualification check.", contestId);
+
+                await SetContestStatusToDelayed(contestId, contestRepo);
+
+                return;
+            }
+
+            // Disqualify teams that don't meet minimum requirement
+            foreach (Team team in teams)
+            {
+                // Count members
+                int memberCount = team.TeamMembers.Count();
+
+                if (memberCount < minTeamMembers)
+                {
+                    team.Status = TeamStatusConstants.Disqualified;
+                    await teamRepo.UpdateAsync(team);
+
+                    _logger.LogInformation(
+                        "Team {TeamId} '{TeamName}' disqualified for not meeting minimum member requirement. Members: {MemberCount}, Required: {MinRequired}",
+                        team.TeamId, team.Name, memberCount, minTeamMembers);
+                }
+            }
+        }
+
+        private async Task SetContestStatusToDelayed(
+            Guid contestId,
+            IGenericRepository<Contest> contestRepo)
+        {
+            // Get contest
+            Contest? contest = await contestRepo.Entities
+                .Where(c => c.ContestId == contestId && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            // If contest not found, throw error
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Contest not found.");
+            }
+
+            // Mark contest as Delayed since no teams are present
+            contest.Status = ContestStatusEnum.Delayed.ToString();
+            await contestRepo.UpdateAsync(contest!);
         }
 
         private async Task NotifiMentorDashboardContestUpdated(Guid contestId)
@@ -2562,12 +2705,17 @@ namespace BusinessLogic.Services.Contests
 
             if (studentId.HasValue)
             {
+                // Include teams and team members
                 query = query.Include(c => c.Teams)
                              .ThenInclude(t => t.TeamMembers);
 
+                // Filter contests where the student is a team member
                 query = query.Where(c => c.Teams.Any(t =>
                     t.TeamMembers.Any(tm => tm.StudentId == studentId.Value)
                     && t.DeletedAt == null));
+
+                // Exclude draft contests for students
+                query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }
 
             return query;
@@ -2589,11 +2737,16 @@ namespace BusinessLogic.Services.Contests
 
             if (mentorId.HasValue)
             {
+                // Include teams
                 query = query.Include(c => c.Teams);
 
+                // Filter contests where the mentor has teams
                 query = query.Where(c => c.Teams.Any(t =>
                     t.MentorId == mentorId.Value
                  && t.DeletedAt == null));
+
+                // Exclude draft contests for students
+                query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
             }
 
             return query;
@@ -2634,7 +2787,7 @@ namespace BusinessLogic.Services.Contests
                 .Select(id => id!.Value)
                 .ToList();
 
-            // Filter contests to only those where the user is a judge
+            // Filter contests to only those where judge is assigned
             if (contestIds.Any())
             {
                 query = query.Where(c => contestIds.Contains(c.ContestId));
@@ -2985,21 +3138,6 @@ namespace BusinessLogic.Services.Contests
         }
 
         /// <summary>
-        /// Applies draft filter based on user role
-        /// </summary>
-        private IQueryable<Contest> ApplyDraftFilterForRole(IQueryable<Contest> query, string? userRole)
-        {
-            // For non-organizers, don't show draft contests
-            if (userRole != RoleConstants.ContestOrganizer &&
-                userRole != RoleConstants.Judge)
-            {
-                query = query.Where(c => c.Status != ContestStatusEnum.Draft.ToString());
-            }
-
-            return query;
-        }
-
-        /// <summary>
         /// Applies all search filters to the query
         /// </summary>
         private IQueryable<Contest> ApplySearchFilters(
@@ -3118,9 +3256,9 @@ namespace BusinessLogic.Services.Contests
         /// <summary>
         /// Fetches contest with all necessary includes
         /// </summary>
-        private async Task<Contest?> FetchContestWithIncludesAsync(IGenericRepository<Contest> contestRepo, Guid id)
+        private async Task<Contest> FetchContestWithIncludesAsync(IGenericRepository<Contest> contestRepo, Guid id)
         {
-            return await contestRepo.Entities
+             Contest? contest = await contestRepo.Entities
                 .Where(c => c.ContestId == id && !c.DeletedAt.HasValue)
                 .Include(c => c.Rounds.Where(r => !r.DeletedAt.HasValue))
                     .ThenInclude(r => r.Problem)
@@ -3128,6 +3266,17 @@ namespace BusinessLogic.Services.Contests
                     .ThenInclude(r => r.McqTest)
                 .OrderByDescending(c => c.CreatedAt)
                 .FirstOrDefaultAsync();
+
+            // Validate contest existence and accessibility
+            ValidateContest(contest);
+
+            // Sort rounds by start date ascending
+            if (contest != null && contest.Rounds != null && contest.Rounds.Any())
+            {
+                contest.Rounds = contest.Rounds.OrderBy(r => r.Start).ToList();
+            }
+
+            return contest!;
         }
 
         /// <summary>
@@ -3245,13 +3394,9 @@ namespace BusinessLogic.Services.Contests
         {
             Contest? existingContest = await contestRepo.GetByIdAsync(id);
 
-            if (existingContest == null || existingContest.DeletedAt.HasValue)
-            {
-                throw new ErrorException(StatusCodes.Status404NotFound,
-                    ResponseCodeConstants.NOT_FOUND, "Contest not found.");
-            }
+            ValidateContest(existingContest);
 
-            return existingContest;
+            return existingContest!;
         }
 
         /// <summary>
@@ -3299,6 +3444,8 @@ namespace BusinessLogic.Services.Contests
             UpdateContestDTO contestDTO,
             IGenericRepository<Config> configRepo)
         {
+            ValidateModifyContest(existingContest);
+
             // Update basic properties
             _mapper.Map(contestDTO, existingContest);
 
@@ -3421,6 +3568,14 @@ namespace BusinessLogic.Services.Contests
             SafeEnqueue(() =>
                 BackgroundJob.Enqueue<ContestStateJob>(job => job.ScheduleContestStateTransitionsAsync(contest.ContestId)),
                 "ScheduleContestStateTransitionsAsync");
+
+            // Notify organizer dashboard
+            Guid organizerId = Guid.Parse(GetCurrentUserIdOrThrow());
+            await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+
+            // Notify mentors dashboard
+            await NotifiMentorDashboardContestUpdated(contest.ContestId);
+
         }
 
         /// <summary>
@@ -3431,7 +3586,8 @@ namespace BusinessLogic.Services.Contests
             return status == ContestStatusEnum.Published.ToString()
                 || status == ContestStatusEnum.RegistrationOpen.ToString()
                 || status == ContestStatusEnum.RegistrationClosed.ToString()
-                || status == ContestStatusEnum.Ongoing.ToString();
+                || status == ContestStatusEnum.Ongoing.ToString()
+                || status == ContestStatusEnum.Cancelled.ToString();
         }
 
         /// <summary>
@@ -3635,5 +3791,91 @@ namespace BusinessLogic.Services.Contests
             return created;
         }
 
+        /// <summary>
+        /// Make pending team invitations expired when contest registration time ends
+        /// </summary>
+        private async Task CancelPendingInvitationsForContestAsync(Guid contestId)
+        {
+            try
+            {
+                IGenericRepository<TeamInvite> inviteRepo = _unitOfWork.GetRepository<TeamInvite>();
+                IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+                // Get all team IDs for the contest
+                List<Guid> contestTeamIds = await teamRepo.Entities
+                    .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                    .Select(t => t.TeamId)
+                    .ToListAsync();
+
+                if (!contestTeamIds.Any())
+                {
+                    _logger.LogDebug("No teams found for contest {ContestId}, skipping invitation cancellation.", contestId);
+                    return;
+                }
+
+                List<TeamInvite> pendingInvitations = await inviteRepo.Entities
+                    .Where(inv => contestTeamIds.Contains(inv.TeamId)
+                               && inv.Status == TeamInviteStatusConstants.Pending)
+                    .ToListAsync();
+
+                if (pendingInvitations.Any())
+                {
+                    foreach (TeamInvite invitation in pendingInvitations)
+                    {
+                        invitation.Status = TeamInviteStatusConstants.Expired;
+                    }
+
+                    _logger.LogInformation(
+                        "Expired {Count} pending invitation(s) for contest {ContestId}",
+                        pendingInvitations.Count, contestId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to cancel pending invitations for contest {ContestId}", contestId);
+            }
+        }
+
+        /// <summary>
+        /// Validates access to the contest based on user role
+        /// </summary>
+        private void ValidateContest(Contest? contest)
+        {
+            // Get logged-in user role
+            string? userRole = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+
+            // Validate contest exists
+            if (contest == null || contest.DeletedAt.HasValue)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND, "Contest not found.");
+            }
+
+            // Restrict access to contests of other organizers
+            if (userRole == RoleConstants.ContestOrganizer)
+            {
+                // Get current user ID
+                string userId = GetCurrentUserIdOrThrow();
+
+                if (contest.CreatedBy!.ToLower() != userId)
+                {
+                    throw new ErrorException(StatusCodes.Status403Forbidden,
+                        ResponseCodeConstants.FORBIDDEN,
+                        "Access denied to this contest.");
+                }
+            }
+        }
+
+        private void ValidateModifyContest(Contest? contest)
+        {
+            // Restrict modifications to contest with Draft or Delayed status
+            if (contest!.Status != ContestStatusEnum.Draft.ToString() &&
+                contest.Status != ContestStatusEnum.Delayed.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status403Forbidden,
+                    ResponseCodeConstants.FORBIDDEN,
+                    "Modifications are only allowed for contest with Draft or Delayed status.");
+            }
+        }
     }
 }

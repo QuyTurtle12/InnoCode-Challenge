@@ -1,6 +1,4 @@
 ﻿using Repository.DTOs.RoundDTOs;
-using Repository.DTOs.SubmissionDTOs;
-using Utility.Enums;
 using Utility.PaginatedList;
 
 namespace BusinessLogic.IServices.Contests

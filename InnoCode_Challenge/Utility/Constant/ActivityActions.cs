@@ -23,6 +23,10 @@
         public const string RoundDelete = "round.delete";
         public const string RoundStartNow = "round.start_now";
         public const string RoundEndNow = "round.end_now";
+        public const string RoundAppealSubmitEnd = "round.appeal_submit_end";
+        public const string RoundAppealReviewEnd = "round.appeal_review_end";
+        public const string RoundJudgeDeadlineEnd = "round.judge_deadline_end";
+        public const string RoundFinalize = "round.finalize";
 
         // Team
         public const string TeamCreate = "team.create";

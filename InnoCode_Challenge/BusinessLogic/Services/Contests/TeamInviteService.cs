@@ -9,6 +9,7 @@ using Repository.DTOs.TeamInviteDTOs;
 using Repository.IRepositories;
 using System;
 using Utility.Constant;
+using Utility.Enums;
 using Utility.ExceptionCustom;
 using Utility.PaginatedList;
 
@@ -502,7 +503,7 @@ namespace BusinessLogic.Services
                 .Select(r => new { r.Start, r.End })
                 .ToListAsync();
 
-            // no rounds -> no conflict
+            // no rounds then no conflict
             if (!targetRanges.Any()) return false;
 
             // get all other contest rounds of teams the student has joined
@@ -511,7 +512,9 @@ namespace BusinessLogic.Services
                 .Include(m => m.Team).ThenInclude(t => t.Contest)
                 .Where(m => m.Team.DeletedAt == null
                             && m.Team.Status != TeamStatusConstants.Disqualified
-                            && m.Team.ContestId != targetContestId)
+                            && m.Team.Status != TeamStatusConstants.Eliminated
+                            && m.Team.ContestId != targetContestId
+                            && m.Team.Contest.Status != ContestStatusEnum.Cancelled.ToString())
                 .SelectMany(m => m.Team.Contest.Rounds
                     .Where(r => r.DeletedAt == null)
                     .Select(r => new { r.Start, r.End }))

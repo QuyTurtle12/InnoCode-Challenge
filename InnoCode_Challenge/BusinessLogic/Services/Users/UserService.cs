@@ -180,6 +180,41 @@ namespace BusinessLogic.Services.Users
             await _uow.SaveAsync();
         }
 
+        public async Task<UserDTO> ToggleUserStatusAsync(Guid id, Guid performedByUserId, string performedByRole)
+        {
+            EnsureAdmin(performedByRole);
+
+            if (id == performedByUserId)
+                throw new ErrorException(StatusCodes.Status403Forbidden, "FORBIDDEN",
+                    "Cannot change your own account status.");
+
+            var repo = _uow.GetRepository<User>();
+            var user = await repo.GetByIdAsync(id);
+
+            if (user == null || user.DeletedAt != null)
+                throw new ErrorException(StatusCodes.Status404NotFound, "USER_NOT_FOUND", $"No user found with ID={id}");
+
+            if (string.Equals(user.Status, UserStatusConstants.Active, StringComparison.OrdinalIgnoreCase))
+            {
+                user.Status = UserStatusConstants.Inactive;
+            }
+            else if (string.Equals(user.Status, UserStatusConstants.Inactive, StringComparison.OrdinalIgnoreCase))
+            {
+                user.Status = UserStatusConstants.Active;
+            }
+            else
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, "INVALID_STATUS",
+                    "Only Active or Inactive accounts can be toggled.");
+            }
+
+            user.UpdatedAt = DateTime.UtcNow;
+            repo.Update(user);
+            await _uow.SaveAsync();
+
+            return _mapper.Map<UserDTO>(user);
+        }
+
         private static string NormalizeEmail(string email)
             => email.Trim().ToLowerInvariant();
 

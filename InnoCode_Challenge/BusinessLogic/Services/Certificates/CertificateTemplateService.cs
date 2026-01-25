@@ -1,6 +1,7 @@
 ﻿using AutoMapper;
 using BusinessLogic.IServices.Certificates;
 using BusinessLogic.IServices.FileStorages;
+using BusinessLogic.IServices.NotificationsAndLogs;
 using DataAccess.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +20,7 @@ namespace BusinessLogic.Services.Certificates
         private readonly IUOW _unitOfWork;
         private readonly ICloudinaryService _cloudinaryService;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IActivityLogWriter _logWriter;
 
         private const long MAX_FILE_SIZE = 10 * 1024 * 1024;
 
@@ -27,12 +29,14 @@ namespace BusinessLogic.Services.Certificates
             IMapper mapper,
             IUOW unitOfWork,
             ICloudinaryService cloudinaryService,
-            IHttpContextAccessor httpContextAccessor)
+            IHttpContextAccessor httpContextAccessor,
+            IActivityLogWriter logWriter)
         {
             _mapper = mapper;
             _unitOfWork = unitOfWork;
             _cloudinaryService = cloudinaryService;
             _httpContextAccessor = httpContextAccessor;
+            _logWriter = logWriter;
         }
 
         public async Task<CertificateTemplateDTO> CreateAsync(CreateCertificateTemplateDTO dto)
@@ -55,6 +59,13 @@ namespace BusinessLogic.Services.Certificates
 
             await repo.InsertAsync(entity);
             await _unitOfWork.SaveAsync();
+
+            var actorId = GetCurrentUserIdOrThrow();
+            await _logWriter.TryWriteAsync(
+                actorId,
+                ActivityActions.CertTemplateCreate,
+                TargetTypes.CertificateTemplate,
+                entity.TemplateId.ToString());
 
             return new CertificateTemplateDTO
             {
@@ -167,6 +178,13 @@ namespace BusinessLogic.Services.Certificates
             repo.Update(tpl);
             await _unitOfWork.SaveAsync();
 
+            var actorId = GetCurrentUserIdOrThrow();
+            await _logWriter.TryWriteAsync(
+                actorId,
+                ActivityActions.CertTemplateUpdate,
+                TargetTypes.CertificateTemplate,
+                tpl.TemplateId.ToString());
+
             return new CertificateTemplateDTO
             {
                 TemplateId = tpl.TemplateId,
@@ -196,6 +214,13 @@ namespace BusinessLogic.Services.Certificates
             tpl.DeletedAt = DateTime.UtcNow;
             repo.Update(tpl);
             await _unitOfWork.SaveAsync();
+
+            var actorId = GetCurrentUserIdOrThrow();
+            await _logWriter.TryWriteAsync(
+                actorId,
+                ActivityActions.CertTemplateDelete,
+                TargetTypes.CertificateTemplate,
+                tpl.TemplateId.ToString());
         }
 
         private TextLayoutDTO BuildTextLayout(decimal? x, decimal? y)

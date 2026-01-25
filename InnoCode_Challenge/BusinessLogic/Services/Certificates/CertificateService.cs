@@ -102,6 +102,7 @@ namespace BusinessLogic.Services.Certificates
                     // Prepare results list
                     List<IssuedCertificateDTO>? results = new List<IssuedCertificateDTO>();
                     Guid? issuerUserId = TryGetCurrentUserId();
+                    var logAction = dto.Reissue ? ActivityActions.CertificateReissue : ActivityActions.CertificateIssue;
 
                     // Issue certificates to each recipient
                     for (int i = 0; i < dto.Recipients.Count; i++)
@@ -347,16 +348,25 @@ namespace BusinessLogic.Services.Certificates
                                 // Notify dashboard about new certificate
                                 await _dashboardNotifier.NotifyCertificateIssuedAsync();
 
-                                // Notify mentor if team certificate
-                                if (entity.TeamId.HasValue)
+                                // Notify mentor if it's student certificate
+                                if (entity.StudentId.HasValue)
                                 {
-                                    Guid contestId = tpl.ContestId;
-                                    await NotifiMentorDashboardContestUpdated(contestId);
+                                    Student? student = await studentRepo.GetByIdAsync(entity.StudentId.Value);
+                                    TeamMember? teamMember = await teamMemberRepo.Entities
+                                        .Include(tm => tm.Team)
+                                        .FirstOrDefaultAsync(tm => tm.StudentId == entity.StudentId.Value
+                                            && tm.Team.ContestId == tpl.ContestId);
 
-                                    if (Guid.TryParse(tpl.Contest.CreatedBy, out Guid organizerId))
+                                    if (teamMember?.Team?.MentorId != null)
                                     {
-                                        await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+                                        await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(teamMember.Team.MentorId);
                                     }
+                                }
+
+                                // Notify organizer for all certificate types
+                                if (Guid.TryParse(tpl.Contest.CreatedBy, out Guid organizerId))
+                                {
+                                    await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
                                 }
                             }
                             catch (Exception ex)
@@ -384,7 +394,7 @@ namespace BusinessLogic.Services.Certificates
                             {
                                 await _logWriter.TryWriteAsync(
                                     issuerUserId.Value,
-                                    ActivityActions.CertificateIssue,
+                                    logAction,
                                     TargetTypes.Certificate,
                                     entity.CertificateId.ToString());
                             }
@@ -453,7 +463,6 @@ namespace BusinessLogic.Services.Certificates
                         }
                         catch (ErrorException)
                         {
-                            // Re-throw ErrorException without wrapping
                             throw;
                         }
                         catch (Exception ex)

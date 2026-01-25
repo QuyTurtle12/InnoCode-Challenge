@@ -17,7 +17,7 @@ namespace InnoCode_Challenge_API.Controllers
         public TeamInvitesController(ITeamInviteService service) => _service = service;
 
         [HttpGet]
-        [Authorize] // mentors, staff, admin; service enforces ownership/role
+        [Authorize]
         public async Task<IActionResult> List(Guid teamId, [FromQuery] TeamInviteQueryParams query)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
@@ -42,9 +42,8 @@ namespace InnoCode_Challenge_API.Controllers
                 "Invites retrieved."));
         }
 
-        // POST: api/teams/{teamId}/invites
         [HttpPost]
-        [Authorize] // mentor owner, or staff/admin
+        [Authorize]
         public async Task<IActionResult> Create(Guid teamId, [FromBody] CreateTeamInviteDTO dto)
         {
             var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);

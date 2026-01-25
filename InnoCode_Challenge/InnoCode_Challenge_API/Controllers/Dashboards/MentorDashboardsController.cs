@@ -34,7 +34,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
             Guid? mentorId = null,
             DateTime? startDate = null,
             DateTime? endDate = null,
-            TimeRangePredefinedEnum? predefined = null)
+            TimeRangePredefinedEnum? predefined = TimeRangePredefinedEnum.AllTime)
         {
             MentorDashboardDTO dashboard = await _mentorDashboardService.GetMentorDashboardAsync(
                 mentorId,
@@ -42,7 +42,7 @@ namespace InnoCode_Challenge_API.Controllers.Dashboards
                 endDate,
                 predefined);
 
-            return Ok(new BaseResponseModel<MentorDashboardDTO>(
+            return Ok(new BaseResponseModel<object>(
                 statusCode: StatusCodes.Status200OK,
                 code: ResponseCodeConstants.SUCCESS,
                 data: dashboard,

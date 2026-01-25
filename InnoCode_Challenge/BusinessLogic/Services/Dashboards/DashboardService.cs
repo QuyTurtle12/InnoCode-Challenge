@@ -5,6 +5,7 @@ using Repository.DTOs.DashboardDTOs;
 using Repository.IRepositories;
 using Utility.Constant;
 using Utility.Enums;
+using Utility.Helpers;
 
 namespace BusinessLogic.Services.Dashboards
 {
@@ -38,9 +39,12 @@ namespace BusinessLogic.Services.Dashboards
             TimeRangePredefinedEnum? predefined)
         {
             // Calculate date range if predefined option is specified
-            if (predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom)
+            bool usePredefinedRange = predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom;
+
+            // Calculate date range if predefined option is specified
+            if (usePredefinedRange)
             {
-                (DateTime calculatedStart, DateTime calculatedEnd) = CalculateDateRange(predefined.Value);
+                (DateTime calculatedStart, DateTime calculatedEnd) = DateTimeHelpers.CalculateDateRange(predefined.Value);
                 startDate = calculatedStart;
                 endDate = calculatedEnd;
             }
@@ -50,16 +54,25 @@ namespace BusinessLogic.Services.Dashboards
 
             IQueryable<Contest> contestQuery = BuildContestQuery(contestRepo, startDate, endDate);
 
+            // Get contest status breakdown
             ContestStatusBreakdownDTO statusBreakdown = await GetStatusBreakdownAsync(contestQuery);
+
+            // Get valid contest IDs
             List<Guid> validContestIds = await GetValidContestIdsAsync(contestQuery);
+
+            // Get total teams and students
             int totalTeams = await GetTotalTeamsAsync(teamRepo, validContestIds);
             int totalStudents = await GetTotalStudentsAsync(teamRepo, validContestIds);
+
+            // Calculate growth rate
             (double growthRate, int lastMonthContests) = await CalculateGrowthRateAsync(contestRepo);
 
-            int totalContests = statusBreakdown.TotalValidContests + 
+            // Calculate total contests
+            int totalContests = statusBreakdown.TotalValidContests +
                                 statusBreakdown.Draft +
                                 statusBreakdown.Cancelled;
 
+            // Prepare final metrics DTO
             DashboardMetricsDTO metrics = new DashboardMetricsDTO
             {
                 TotalContests = totalContests,
@@ -79,9 +92,11 @@ namespace BusinessLogic.Services.Dashboards
             TimeRangePredefinedEnum? predefined)
         {
             // Calculate date range if predefined option is specified
-            if (predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom)
+            bool usePredefinedRange = predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom;
+
+            if (usePredefinedRange)
             {
-                (DateTime calculatedStart, DateTime calculatedEnd) = CalculateDateRange(predefined.Value);
+                (DateTime calculatedStart, DateTime calculatedEnd) = DateTimeHelpers.CalculateDateRange(predefined.Value);
                 startDate = calculatedStart;
                 endDate = calculatedEnd;
             }
@@ -89,14 +104,18 @@ namespace BusinessLogic.Services.Dashboards
             IGenericRepository<Contest> contestRepo = _unitOfWork.GetRepository<Contest>();
             IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
 
+            // Build base contest query
             IQueryable<Contest> contestQuery = BuildContestQuery(contestRepo, startDate, endDate);
 
+            // Get trends and status distribution
             List<TrendDataPoint> contestTrend = await GetContestCreationTrendAsync(contestQuery);
             List<TrendDataPoint> teamTrend = await GetTeamRegistrationTrendAsync(teamRepo, startDate, endDate);
             Dictionary<string, int> statusDistribution = await GetContestStatusDistributionAsync(contestQuery);
 
-            // Merge trends to ensure all months are present in both
-            List<TrendDataPoint> mergedTrend = MergeTrendData(contestTrend, teamTrend);
+            // Merge trends and fill gaps
+            List<TrendDataPoint> mergedTrend = usePredefinedRange
+                ? FillMonthGapsInTrend(contestTrend, teamTrend, startDate!.Value, endDate!.Value)
+                : MergeTrendData(contestTrend, teamTrend);
 
             ChartDataDTO chartData = new ChartDataDTO
             {
@@ -118,15 +137,17 @@ namespace BusinessLogic.Services.Dashboards
             // Calculate date range if predefined option is specified
             if (predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom)
             {
-                (DateTime calculatedStart, DateTime calculatedEnd) = CalculateDateRange(predefined.Value);
+                (DateTime calculatedStart, DateTime calculatedEnd) = DateTimeHelpers.CalculateDateRange(predefined.Value);
                 startDate = calculatedStart;
                 endDate = calculatedEnd;
             }
 
+            // Get top performers
             List<TopOrganizerDTO> topOrganizers = await GetTopOrganizersAsync(topCount, startDate, endDate);
             List<TopMentorDTO> topMentors = await GetTopMentorsByCertificatesAsync(topCount, startDate, endDate);
             List<TopStudentDTO> topStudents = await GetTopStudentsByCertificatesAsync(topCount, startDate, endDate);
 
+            // Prepare final DTO
             TopPerformersDTO topPerformers = new TopPerformersDTO
             {
                 TopOrganizers = topOrganizers,
@@ -146,15 +167,17 @@ namespace BusinessLogic.Services.Dashboards
             // Calculate date range if predefined option is specified
             if (predefined.HasValue && predefined.Value != TimeRangePredefinedEnum.Custom)
             {
-                (DateTime calculatedStart, DateTime calculatedEnd) = CalculateDateRange(predefined.Value);
+                (DateTime calculatedStart, DateTime calculatedEnd) = DateTimeHelpers.CalculateDateRange(predefined.Value);
                 startDate = calculatedStart;
                 endDate = calculatedEnd;
             }
 
+            // Get repositories
             IGenericRepository<School> schoolRepo = _unitOfWork.GetRepository<School>();
             IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
             IGenericRepository<Province> provinceRepo = _unitOfWork.GetRepository<Province>();
 
+            // Get school metrics
             int totalSchools = await GetTotalSchoolsAsync(schoolRepo);
             List<TopSchoolDTO> topSchools = await GetTopSchoolsByParticipationAsync(
                 topSchoolCount,
@@ -166,6 +189,7 @@ namespace BusinessLogic.Services.Dashboards
                 startDate,
                 endDate);
 
+            /// Prepare final DTO
             SchoolMetricsDTO schoolMetrics = new SchoolMetricsDTO
             {
                 TotalSchools = totalSchools,
@@ -174,46 +198,6 @@ namespace BusinessLogic.Services.Dashboards
             };
 
             return schoolMetrics;
-        }
-
-        /// <summary>
-        /// Calculates date range based on predefined option
-        /// </summary>
-        /// <param name="predefined"></param>
-        /// <returns></returns>
-        private (DateTime StartDate, DateTime EndDate) CalculateDateRange(
-            TimeRangePredefinedEnum predefined)
-        {
-            DateTime now = DateTime.UtcNow;
-            DateTime startDate;
-            DateTime endDate = now;
-
-            switch (predefined)
-            {
-                case TimeRangePredefinedEnum.CurrentMonth:
-                    startDate = new DateTime(now.Year, now.Month, 1);
-                    break;
-
-                case TimeRangePredefinedEnum.Last3Months:
-                    startDate = now.AddMonths(-2);
-                    break;
-
-                case TimeRangePredefinedEnum.Last6Months:
-                    startDate = now.AddMonths(-5);
-                    break;
-
-                case TimeRangePredefinedEnum.CurrentYear:
-                    startDate = new DateTime(now.Year, 1, 1);
-                    break;
-
-                case TimeRangePredefinedEnum.AllTime:
-                default:
-                    startDate = DateTime.MinValue;
-                    endDate = DateTime.MaxValue;
-                    break;
-            }
-
-            return (startDate, endDate);
         }
 
         /// <summary>
@@ -238,7 +222,7 @@ namespace BusinessLogic.Services.Dashboards
             {
                 // End date: end of the day (23:59:59)
                 DateTime endOfDay = endDate.Value.Date.AddDays(1);
-                query = query.Where(c => c.CreatedAt <= endDate.Value);
+                query = query.Where(c => c.CreatedAt <= endOfDay);
             }
 
             return query;
@@ -341,6 +325,7 @@ namespace BusinessLogic.Services.Dashboards
             DateTime twoMonthsAgoStart = previousMonthStart.AddMonths(-1);
             DateTime twoMonthsAgoEnd = previousMonthStart;
 
+            // Get contest counts for previous month
             int previousMonthContests = await contestRepo.Entities
                 .Where(c => c.DeletedAt == null
                             && ValidStatuses.Contains(c.Status)
@@ -348,6 +333,7 @@ namespace BusinessLogic.Services.Dashboards
                             && c.CreatedAt < previousMonthEnd)
                 .CountAsync();
 
+            // Get contest counts for two months ago
             int twoMonthsAgoContests = await contestRepo.Entities
                 .Where(c => c.DeletedAt == null
                             && ValidStatuses.Contains(c.Status)
@@ -355,6 +341,7 @@ namespace BusinessLogic.Services.Dashboards
                             && c.CreatedAt < twoMonthsAgoEnd)
                 .CountAsync();
 
+            // Calculate growth rate
             double growthRate = twoMonthsAgoContests > 0
                 ? Math.Round(((previousMonthContests - twoMonthsAgoContests) / (double)twoMonthsAgoContests) * 100, 2)
                 : 0;
@@ -379,6 +366,7 @@ namespace BusinessLogic.Services.Dashboards
             IQueryable<Contest> contestQuery)
         {
             List<TrendDataPoint> trendData = await contestQuery
+                .Where(c => ValidStatuses.Contains(c.Status))
                 .GroupBy(c => new { c.CreatedAt.Year, c.CreatedAt.Month })
                 .Select(g => new TrendDataPoint
                 {
@@ -397,6 +385,46 @@ namespace BusinessLogic.Services.Dashboards
             }
 
             return trendData;
+        }
+
+        /// <summary>
+        /// Ensures all months in the range are included with 0 values if no data exists
+        /// </summary>
+        private static List<TrendDataPoint> FillMonthGapsInTrend(
+            List<TrendDataPoint> contestTrend,
+            List<TrendDataPoint> teamTrend,
+            DateTime startDate,
+            DateTime endDate)
+        {
+            // Create dictionaries for quick lookup
+            Dictionary<(int Year, int Month), int> contestData = contestTrend
+                .ToDictionary(x => (x.Year, x.Month), x => x.Count);
+
+            Dictionary<(int Year, int Month), int> teamData = teamTrend
+                .ToDictionary(x => (x.Year, x.Month), x => x.Count);
+
+            // Generate all months in the range
+            List<TrendDataPoint> allMonths = new List<TrendDataPoint>();
+            DateTime current = new DateTime(startDate.Year, startDate.Month, 1);
+            DateTime end = new DateTime(endDate.Year, endDate.Month, 1);
+
+            while (current <= end)
+            {
+                var key = (current.Year, current.Month);
+
+                allMonths.Add(new TrendDataPoint
+                {
+                    Year = current.Year,
+                    Month = current.Month,
+                    Label = FormatMonthLabel(current.Year, current.Month),
+                    ContestCount = contestData.GetValueOrDefault(key, 0),
+                    TeamCount = teamData.GetValueOrDefault(key, 0)
+                });
+
+                current = current.AddMonths(1);
+            }
+
+            return allMonths;
         }
 
         /// <summary>
@@ -668,6 +696,7 @@ namespace BusinessLogic.Services.Dashboards
         /// <summary>
         /// Gets top students by total certificates (team + student)
         /// Counts both team certificates and student certificates
+        /// prioritizes individual certificates when ranking
         /// </summary>
         private async Task<List<TopStudentDTO>> GetTopStudentsByCertificatesAsync(
             int topCount,
@@ -726,6 +755,7 @@ namespace BusinessLogic.Services.Dashboards
                     TeamCertificates = teamCerts.GetValueOrDefault(studentId, 0)
                 })
                 .OrderByDescending(x => x.TotalCertificates)
+                .ThenByDescending(x => x.IndividualCertificates)
                 .Take(topCount)
                 .ToList();
 

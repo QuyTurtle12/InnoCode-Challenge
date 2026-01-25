@@ -167,7 +167,7 @@ namespace Api.IntegrationTests.Submissions
                 ProblemId = problemId,
                 RoundId = roundId,
                 Language = "python",
-                Type = "Open",
+                Type = ProblemTypeEnum.Manual.ToString(),
                 CreatedAt = now
             };
 
@@ -212,7 +212,7 @@ namespace Api.IntegrationTests.Submissions
             };
 
             var code = string.Concat(Enumerable.Repeat("a=0\n", 80));
-            var normalized = PlagiarismHelpers.NormalizePython(code, removeTripleQuoted: true);
+            var normalized = PlagiarismHelpers.NormalizePythonForFingerprint(code, removeTripleQuoted: true);
             var hash = PlagiarismHelpers.Sha256Hex(normalized);
 
             var existingSubmission = new Submission
@@ -240,10 +240,18 @@ namespace Api.IntegrationTests.Submissions
                 SubmissionId = existingSubmission.SubmissionId,
                 ProblemId = problemId,
                 TeamId = otherTeamId,
-                Algorithm = "sha256_py_v1",
+                Algorithm = "sha256_py_v2",
                 Hash = hash,
                 NormalizedLength = normalized.Length,
                 CreatedAt = now
+            };
+
+            var otherFinalConfig = new Config
+            {
+                Key = ConfigKeys.RoundTeamFinalSubmission(roundId, otherTeamId),
+                Value = existingSubmission.SubmissionId.ToString(),
+                Scope = "round",
+                UpdatedAt = now
             };
 
             db.Users.AddRange(studentUser, mentorUser, otherMentorUser, otherStudentUser, organizerUser);
@@ -256,6 +264,7 @@ namespace Api.IntegrationTests.Submissions
             db.TeamMembers.Add(teamMember);
             db.Submissions.Add(existingSubmission);
             db.SubmissionFingerprints.Add(existingFingerprint);
+            db.Configs.Add(otherFinalConfig);
             db.SaveChanges();
 
         return new PlagiarismSeed(
@@ -361,7 +370,7 @@ namespace Api.IntegrationTests.Submissions
                 ProblemId = problemId,
                 RoundId = roundId,
                 Language = "python",
-                Type = "Open",
+                Type = ProblemTypeEnum.Manual.ToString(),
                 CreatedAt = now
             };
 
@@ -408,7 +417,7 @@ namespace Api.IntegrationTests.Submissions
             Code: code);
         }
 
-        private static MultipartFormDataContent BuildZipUpload(string code)
+        private static byte[] BuildZipBytes(string code)
         {
             var ms = new MemoryStream();
             using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
@@ -419,8 +428,14 @@ namespace Api.IntegrationTests.Submissions
                 entryStream.Write(bytes, 0, bytes.Length);
             }
             ms.Position = 0;
+            return ms.ToArray();
+        }
 
-            var fileContent = new ByteArrayContent(ms.ToArray());
+        private static MultipartFormDataContent BuildZipUpload(string code)
+        {
+            var zipBytes = BuildZipBytes(code);
+
+            var fileContent = new ByteArrayContent(zipBytes);
             fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/zip");
 
             var form = new MultipartFormDataContent();
@@ -428,8 +443,14 @@ namespace Api.IntegrationTests.Submissions
             return form;
         }
 
+        private static void RegisterZipResponse(string url, string code)
+        {
+            var zipBytes = BuildZipBytes(code);
+            FakeHttpClientFactory.SetResponseBytes(url, zipBytes, "application/zip");
+        }
+
         [Fact]
-        public async Task CreateFileSubmission_WhenFingerprintMatches_ShouldFlagPlagiarismSuspected()
+        public async Task FinishManualRound_WhenFingerprintMatches_ShouldFlagPlagiarismSuspected()
         {
             var seed = SeedPlagiarismScenario();
             var token = await LoginAsync(seed.StudentEmail, seed.StudentPassword);
@@ -441,6 +462,7 @@ namespace Api.IntegrationTests.Submissions
             var res = await _client.SendAsync(req);
             res.StatusCode.Should().Be(HttpStatusCode.OK);
 
+            Guid submissionId;
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
 
@@ -449,19 +471,32 @@ namespace Api.IntegrationTests.Submissions
                 .OrderByDescending(s => s.CreatedAt)
                 .First();
 
-            submission.Status.Should().Be("PlagiarismSuspected");
+            submission.Status.Should().Be(SubmissionStatusEnum.Pending.ToString());
             submission.JudgedBy.Should().BeNull();
+            submissionId = submission.SubmissionId;
 
-            var fingerprint = db.SubmissionFingerprints.First(f => f.SubmissionId == submission.SubmissionId);
+            var artifact = db.SubmissionArtifacts.First(a => a.SubmissionId == submissionId);
+            RegisterZipResponse(artifact.Url, seed.Code);
+
+            var finishReq = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/finish");
+            finishReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var finishRes = await _client.SendAsync(finishReq);
+            finishRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var verifyScope = _factory.Services.CreateScope();
+            var verifyDb = verifyScope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var updated = verifyDb.Submissions.First(s => s.SubmissionId == submissionId);
+            updated.Status.Should().Be(SubmissionStatusEnum.PlagiarismSuspected.ToString());
+
+            var fingerprint = verifyDb.SubmissionFingerprints.First(f => f.SubmissionId == submissionId);
             fingerprint.Hash.Should().NotBeNullOrWhiteSpace();
 
-            // Organizer should receive suspected notification
-            db.Notifications.Any(n => n.UserId == seed.OrganizerUserId && n.Type == NotificationTypes.PlagiarismSuspected)
+            verifyDb.Notifications.Any(n => n.UserId == seed.OrganizerUserId && n.Type == NotificationTypes.PlagiarismSuspected)
                 .Should().BeTrue();
         }
 
         [Fact]
-        public async Task CreateFileSubmission_WhenNoMatch_ShouldRemainPending()
+        public async Task FinishManualRound_WhenNoMatch_ShouldRemainPending()
         {
             var seed = SeedNoMatchScenario();
             var token = await LoginAsync(seed.StudentEmail, seed.StudentPassword);
@@ -473,6 +508,7 @@ namespace Api.IntegrationTests.Submissions
             var res = await _client.SendAsync(req);
             res.StatusCode.Should().Be(HttpStatusCode.OK);
 
+            Guid submissionId;
             using var scope = _factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ContestDbContext>();
 
@@ -483,6 +519,23 @@ namespace Api.IntegrationTests.Submissions
 
             submission.Status.Should().Be(SubmissionStatusEnum.Pending.ToString());
             submission.JudgedBy.Should().BeNull();
+            submissionId = submission.SubmissionId;
+
+            var artifact = db.SubmissionArtifacts.First(a => a.SubmissionId == submissionId);
+            RegisterZipResponse(artifact.Url, seed.Code);
+
+            var finishReq = new HttpRequestMessage(HttpMethod.Post, $"/api/rounds/{seed.RoundId:D}/finish");
+            finishReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var finishRes = await _client.SendAsync(finishReq);
+            finishRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var verifyScope = _factory.Services.CreateScope();
+            var verifyDb = verifyScope.ServiceProvider.GetRequiredService<ContestDbContext>();
+            var updated = verifyDb.Submissions.First(s => s.SubmissionId == submissionId);
+            updated.Status.Should().Be(SubmissionStatusEnum.Pending.ToString());
+
+            verifyDb.SubmissionFingerprints.Any(f => f.SubmissionId == submissionId)
+                .Should().BeTrue();
         }
     }
 }

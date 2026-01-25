@@ -74,7 +74,7 @@ namespace InnoCode_Challenge_API.Middleware
                 var result = JsonSerializer.Serialize(new
                 {
                     errorCode = "INTERNAL_SERVER_ERROR",
-                    errorMessage = "An unexpected error occurred."
+                    errorMessage = "An unexpected error occurred: " + ex.Message
                 });
 
                 await context.Response.WriteAsync(result);

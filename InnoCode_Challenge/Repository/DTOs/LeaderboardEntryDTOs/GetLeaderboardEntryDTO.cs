@@ -1,10 +1,15 @@
-﻿namespace Repository.DTOs.LeaderboardEntryDTOs
+﻿using Repository.DTOs.DashboardDTOs;
+using Utility.Constant;
+
+namespace Repository.DTOs.LeaderboardEntryDTOs
 {
     public class GetLeaderboardEntryDTO : BaseLeaderboardEntryDTO
     {
         public Guid EntryId { get; set; }
 
         public string ContestName { get; set; } = string.Empty;
+        
+        public bool IsFrozen { get; set; }
 
         public IList<TeamInfo> teamIdList { get; set; } = new List<TeamInfo>();
 
@@ -21,6 +26,8 @@
         public int Rank { get; set; } = 0;
 
         public double Score { get; set; } = 0;
+        
+        public string Status { get; set; } = TeamStatusConstants.Active;
 
         public IList<MemberInfo> Members { get; set; } = new List<MemberInfo>();
     }

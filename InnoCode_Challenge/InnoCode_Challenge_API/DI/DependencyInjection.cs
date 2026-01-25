@@ -349,7 +349,6 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<ISubmissionService, SubmissionService>();
             services.AddScoped<ISubmissionDetailService, SubmissionDetailService>();
             services.AddScoped<ISubmissionArtifactService, SubmissionArtifactService>();
-            services.AddScoped<IJudge0Service, Judge0Service>();
             services.AddScoped<IQuizService, QuizService>();
             services.AddScoped<ICloudinaryService, CloudinaryService>();
             services.AddScoped<IConfigService, ConfigService>();
@@ -357,7 +356,6 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IActivityLogService, ActivityLogService>();
             services.AddScoped<ITeamInviteService, TeamInviteService>();
             services.AddScoped<ILeaderboardEntryService, LeaderboardEntryService>();
-            services.AddScoped<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
             services.AddScoped<IContestJudgeService, ContestJudgeService>();
             services.AddScoped<IJudgeInviteService, JudgeInviteService>();
             services.AddScoped<IActivityLogWriter, ActivityLogWriter>();
@@ -368,7 +366,22 @@ namespace InnoCode_Challenge_API.DI
             services.AddScoped<IDashboardService, DashboardService>();
             services.AddScoped<IMentorDashboardService, MentorDashboardService>();
             services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
+
+            services.AddSingleton<ILeaderboardRealtimeService, LeaderboardRealtimeService>();
             services.AddSingleton<IDashboardNotifierService, DashboardNotifierService>();
+
+            services.AddHttpClient<IJudge0Service, Judge0Service>((sp, client) =>
+            {
+                var config = sp.GetRequiredService<IConfiguration>();
+                var baseUrl = config["Judge0:BaseUrl"] ?? "https://judge0-ce.p.rapidapi.com";
+                var apiKey = config["Judge0:ApiKey"] ?? "";
+
+                client.BaseAddress = new Uri(baseUrl);
+                client.DefaultRequestHeaders.Clear();
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Key", apiKey);
+                client.DefaultRequestHeaders.Add("X-RapidAPI-Host", "judge0-ce.p.rapidapi.com");
+                client.Timeout = TimeSpan.FromSeconds(60);
+            });
         }
     }
 }

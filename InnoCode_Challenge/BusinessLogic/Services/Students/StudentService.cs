@@ -27,9 +27,9 @@ namespace BusinessLogic.Services.Students
             var studentRepository = _unitOfWork.GetRepository<Student>();
 
             IQueryable<Student> studentsQuery = studentRepository.Entities
-                .Where(s => s.DeletedAt == null)
                 .Include(s => s.User)
                 .Include(s => s.School)
+                .Where(s => s.User.Status == UserStatusConstants.Active && s.DeletedAt == null)
                 .AsNoTracking();
 
             if (queryParams.SchoolId.HasValue)
@@ -73,8 +73,9 @@ namespace BusinessLogic.Services.Students
             var student = await studentRepository.Entities
                 .Include(s => s.User)
                 .Include(s => s.School)
+                .Where(s => s.StudentId == id && s.User.Status == UserStatusConstants.Active && s.DeletedAt == null)
                 .AsNoTracking()
-                .FirstOrDefaultAsync(s => s.StudentId == id && s.DeletedAt == null);
+                .FirstOrDefaultAsync();
 
             if (student == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", $"No student with ID={id}");
@@ -140,7 +141,9 @@ namespace BusinessLogic.Services.Students
             var schoolRepository = _unitOfWork.GetRepository<School>();
 
             var student = await studentRepository.Entities
-                .FirstOrDefaultAsync(s => s.StudentId == id && s.DeletedAt == null);
+                .Include(s => s.User)
+                .Where(s => s.StudentId == id && s.User.Status == UserStatusConstants.Active && s.DeletedAt == null)
+                .FirstOrDefaultAsync();
 
             if (student == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", $"No student with ID={id}");
@@ -179,7 +182,9 @@ namespace BusinessLogic.Services.Students
                 .Include(s => s.Submissions)
                 .Include(s => s.Certificates)
                 .Include(s => s.McqAttempts)
-                .FirstOrDefaultAsync(s => s.StudentId == id && s.DeletedAt == null);
+                .Include(s => s.User)
+                .Where(s => s.StudentId == id && s.DeletedAt == null && s.User.Status == UserStatusConstants.Active)
+                .FirstOrDefaultAsync();
 
             if (student == null)
                 throw new ErrorException(StatusCodes.Status404NotFound, "STUDENT_NOT_FOUND", $"No student with ID={id}");

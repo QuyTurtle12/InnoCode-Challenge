@@ -166,7 +166,7 @@ namespace BusinessLogic.Services.Students
 
             // mentorId diff userId
             string userId = GetCurrentUserIdOrThrow();
-            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid); 
+            bool hasUserGuid = Guid.TryParse(userId, out Guid userGuid);
 
             var meAsMentor = await mentorRepository.Entities
                 .Include(m => m.User)
@@ -176,7 +176,7 @@ namespace BusinessLogic.Services.Students
                      m.User.UserId.ToString() == userId));
             if (meAsMentor == null)
                 throw new ErrorException(StatusCodes.Status403Forbidden, "NOT_MENTOR",
-                    "Only mentors can create teams."); 
+                    "Only mentors can create teams.");
 
             bool contestExists = await contestRepository.Entities.AnyAsync(c => c.ContestId == dto.ContestId);
             if (!contestExists)
@@ -186,9 +186,9 @@ namespace BusinessLogic.Services.Students
             if (!schoolExists)
                 throw new ErrorException(StatusCodes.Status404NotFound, "SCHOOL_NOT_FOUND", $"No school with ID={dto.SchoolId}");
 
-            if (meAsMentor.SchoolId != dto.SchoolId) 
+            if (meAsMentor.SchoolId != dto.SchoolId)
                 throw new ErrorException(StatusCodes.Status409Conflict, "MENTOR_NOT_BELONG_TO_SCHOOL",
-                    "This mentor does not belong to the selected school."); 
+                    "This mentor does not belong to the selected school.");
 
             var trimmedName = dto.Name.Trim();
 
@@ -218,7 +218,7 @@ namespace BusinessLogic.Services.Students
                 Name = trimmedName,
                 ContestId = dto.ContestId,
                 SchoolId = dto.SchoolId,
-                MentorId = meAsMentor.MentorId,    
+                MentorId = meAsMentor.MentorId,
                 CreatedAt = now,
                 DeletedAt = null,
                 Status = TeamStatusConstants.Active
@@ -270,8 +270,6 @@ namespace BusinessLogic.Services.Students
 
             EnsureContestNotStarted(team.Contest);
 
-            // Only allow changing team name via this endpoint.
-
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
                 string newName = dto.Name.Trim();
@@ -306,6 +304,18 @@ namespace BusinessLogic.Services.Students
                 .Include(t => t.Mentor).ThenInclude(m => m.User)
                 .AsNoTracking()
                 .FirstAsync(t => t.TeamId == id);
+
+            // Notify mentor dashboard
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+
+            IGenericRepository<Contest> _contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard
+            Contest? contest = await _contestRepo.GetByIdAsync(team.ContestId);
+            if (Guid.TryParse(contest?.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
 
             return _mapper.Map<TeamDTO>(updated);
         }
@@ -344,6 +354,18 @@ namespace BusinessLogic.Services.Students
             team.DeletedAt = DateTime.UtcNow;
             teamRepository.Update(team);
             await _unitOfWork.SaveAsync();
+
+            // Notify mentor dashboard
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+
+            IGenericRepository<Contest> _contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard
+            Contest? contest = await _contestRepo.GetByIdAsync(team.ContestId);
+            if (Guid.TryParse(contest?.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         public async Task RemoveMemberAsync(Guid teamId, Guid studentId)
@@ -373,6 +395,28 @@ namespace BusinessLogic.Services.Students
 
             memberRepository.Delete(member);
             await _unitOfWork.SaveAsync();
+
+            string actorUserId = GetCurrentUserIdOrThrow();
+            if (Guid.TryParse(actorUserId, out var actorId))
+            {
+                await _logWriter.TryWriteAsync(
+                    actorId,
+                    ActivityActions.TeamMemberRemove,
+                    TargetTypes.Team,
+                    team.TeamId.ToString());
+            }
+
+            // Notify mentor dashboard
+            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(team.MentorId);
+
+            IGenericRepository<Contest> _contestRepo = _unitOfWork.GetRepository<Contest>();
+
+            // Notify organizer dashboard
+            Contest? contest = await _contestRepo.GetByIdAsync(team.ContestId);
+            if (Guid.TryParse(contest?.CreatedBy, out Guid organizerId))
+            {
+                await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
+            }
         }
 
         public async Task<IReadOnlyList<TeamWithMembersDTO>> GetMyTeamsAsync()
@@ -387,8 +431,8 @@ namespace BusinessLogic.Services.Students
 
             Guid? myStudentId = await studentRepo.Entities
                 .Where(s => s.DeletedAt == null
-                    && ((hasUserGuid && EF.Property<Guid>(s, "UserId") == userGuid) 
-                        || s.UserId.ToString() == userId))                          
+                    && ((hasUserGuid && EF.Property<Guid>(s, "UserId") == userGuid)
+                        || s.UserId.ToString() == userId))
                 .Select(s => (Guid?)s.StudentId)
                 .FirstOrDefaultAsync();
 
@@ -396,8 +440,8 @@ namespace BusinessLogic.Services.Students
             Guid? myMentorId = await mentorRepo.Entities
                 .Include(m => m.User)
                 .Where(m => m.User != null
-                    && ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid) 
-                        || m.User.UserId.ToString() == userId))                          
+                    && ((hasUserGuid && EF.Property<Guid>(m.User, "UserId") == userGuid)
+                        || m.User.UserId.ToString() == userId))
                 .Select(m => (Guid?)m.MentorId)
                 .FirstOrDefaultAsync();
 
@@ -449,8 +493,8 @@ namespace BusinessLogic.Services.Students
                         StudentId = tm.StudentId,
                         StudentFullname = tm.Student.User.Fullname,
                         StudentEmail = tm.Student.User.Email,
-                        MemberRole = tm.MemberRole!.Equals(MemberRoleEnum.Member.ToString()) 
-                            ? MemberRoleEnum.Member 
+                        MemberRole = tm.MemberRole!.Equals(MemberRoleEnum.Member.ToString())
+                            ? MemberRoleEnum.Member
                             : MemberRoleEnum.Leader,
                         JoinedAt = tm.JoinedAt
                     }).ToList()
@@ -484,6 +528,7 @@ namespace BusinessLogic.Services.Students
             var startedByStatus =
                 string.Equals(status, ContestStatusEnum.Ongoing.ToString(), StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(status, ContestStatusEnum.Paused.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, ContestStatusEnum.Cancelled.ToString(), StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(status, ContestStatusEnum.Completed.ToString(), StringComparison.OrdinalIgnoreCase);
 
             if (startedByTime || startedByStatus)

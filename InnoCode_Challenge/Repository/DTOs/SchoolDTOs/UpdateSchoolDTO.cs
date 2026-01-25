@@ -11,6 +11,9 @@ namespace Repository.DTOs.SchoolDTOs
 
         [MaxLength(200)]
         public string? Contact { get; set; }
+
+        [MaxLength(255)]
+        public string? Address { get; set; }
     }
 
 }

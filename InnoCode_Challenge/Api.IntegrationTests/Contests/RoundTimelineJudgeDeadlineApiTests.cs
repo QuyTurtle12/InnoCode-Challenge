@@ -158,6 +158,16 @@ namespace Api.IntegrationTests.Contests
                 CreatedAt = now.AddHours(-2)
             };
 
+            var leaderboardEntry = new LeaderboardEntry
+            {
+                EntryId = Guid.NewGuid(),
+                ContestId = contest.ContestId,
+                TeamId = team.TeamId,
+                Rank = 1,
+                Score = 0,
+                SnapshotAt = now
+            };
+
             db.Users.AddRange(organizerUser, judgeUser, mentorUser, studentUser);
             db.Mentors.Add(mentor);
             db.Students.Add(student);
@@ -166,6 +176,22 @@ namespace Api.IntegrationTests.Contests
             db.Problems.Add(problem);
             db.Teams.Add(team);
             db.Submissions.Add(submission);
+            db.LeaderboardEntries.Add(leaderboardEntry);
+            db.Configs.AddRange(
+                new Config
+                {
+                    Key = ConfigKeys.RoundAppealSubmitDeadlineUtc(round.RoundId),
+                    Value = now.AddHours(2).ToString("o"),
+                    Scope = "contest",
+                    UpdatedAt = now
+                },
+                new Config
+                {
+                    Key = ConfigKeys.RoundAppealReviewDeadlineUtc(round.RoundId),
+                    Value = now.AddHours(4).ToString("o"),
+                    Scope = "contest",
+                    UpdatedAt = now
+                });
             db.SaveChanges();
 
             return new SeedData(
@@ -202,7 +228,7 @@ namespace Api.IntegrationTests.Contests
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var fastForwardRes = await _client.SendAsync(req);
-            fastForwardRes.StatusCode.Should().Be(HttpStatusCode.OK);
+            fastForwardRes.StatusCode.Should().Be(HttpStatusCode.OK, await fastForwardRes.Content.ReadAsStringAsync());
 
             var afterRes = await _client.GetAsync($"/api/rounds/{seed.RoundId:D}/timeline");
             afterRes.StatusCode.Should().Be(HttpStatusCode.OK);

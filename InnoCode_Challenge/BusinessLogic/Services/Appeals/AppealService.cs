@@ -580,9 +580,9 @@ namespace BusinessLogic.Services.Appeals
                         "Appeal not found.");
                 }
 
+                DateTime submitDeadline = await GetAppealSubmitDeadlineUtcAsync(appeal.Target, configRepo);
                 DateTime reviewDeadline = await GetAppealReviewDeadlineUtcAsync(appeal.Target, configRepo);
-                DateTime reviewWindowStart = appeal.Target.End;
-                if (DateTime.UtcNow < reviewWindowStart || DateTime.UtcNow > reviewDeadline)
+                if (DateTime.UtcNow < submitDeadline || DateTime.UtcNow > reviewDeadline)
                 {
                     throw new ErrorException(StatusCodes.Status403Forbidden,
                         "APPEAL_REVIEW_DEADLINE_PASSED",
@@ -659,6 +659,7 @@ namespace BusinessLogic.Services.Appeals
                         if (mentorUserId.HasValue)
                         {
                             notifyUserIds.Add(mentorUserId.Value);
+                            await _dashboardNotifier.NotifyMentorDashboardUpdatedAsync(appeal.Team.MentorId);
                         }
                     }
 
@@ -679,6 +680,50 @@ namespace BusinessLogic.Services.Appeals
                                 targetId = appeal.AppealId.ToString(),
                                 message = "Appeal was updated."
                             });
+                    }
+
+                    if (string.Equals(appeal.Decision, AppealDecisionEnum.Approved.ToString(), StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(appeal.AppealResolution, AppealResolutionEnum.Rescore.ToString(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        var submissionRepo = _unitOfWork.GetRepository<Submission>();
+                        var rescoreSubmission = await submissionRepo.Entities
+                            .Where(s => s.TeamId == appeal.TeamId
+                                        && s.Problem != null
+                                        && s.Problem.RoundId == appeal.TargetId
+                                        && s.DeletedAt == null)
+                            .OrderByDescending(s => s.CreatedAt)
+                            .Select(s => new { s.SubmissionId, s.JudgedBy })
+                            .FirstOrDefaultAsync();
+
+                        if (rescoreSubmission != null
+                            && !string.IsNullOrWhiteSpace(rescoreSubmission.JudgedBy)
+                            && Guid.TryParse(rescoreSubmission.JudgedBy, out var judgeUserId))
+                        {
+                            await _notificationService.CreateInAppToUserAsync(
+                                judgeUserId,
+                                NotificationTypes.ManualGradingAssigned,
+                                new
+                                {
+                                    contestId = appeal.Target.ContestId,
+                                    roundId = appeal.TargetId,
+                                    submissionId = rescoreSubmission.SubmissionId,
+                                    teamId = appeal.TeamId,
+                                    appealId = appeal.AppealId,
+                                    targetType = TargetTypes.Submission,
+                                    targetId = rescoreSubmission.SubmissionId.ToString(),
+                                    message = "Submission was reassigned for rescore."
+                                });
+
+                            var reviewerIdStr = _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+                            if (Guid.TryParse(reviewerIdStr, out var reviewerAssignId))
+                            {
+                                await _logWriter.TryWriteAsync(
+                                    reviewerAssignId,
+                                    ActivityActions.SubmissionAssignJudge,
+                                    TargetTypes.Submission,
+                                    rescoreSubmission.SubmissionId.ToString());
+                            }
+                        }
                     }
                 }
                 catch

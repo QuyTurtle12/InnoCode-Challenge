@@ -125,7 +125,7 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                 statusFilter
                 );
 
-            var paging = new 
+            var paging = new
             {
                 result.PageNumber,
                 result.PageSize,
@@ -194,6 +194,24 @@ namespace InnoCode_Challenge_API.Controllers.Submissions
                 code: ResponseCodeConstants.SUCCESS,
                 data: submissionId,
                 message: "Null manual submission accepted with 0 points and round marked as finished."
+            ));
+        }
+
+        /// <summary>
+        /// Transfer submissions to another judge for a specific round
+        /// </summary>
+        /// <param name="roundId"></param>
+        /// <param name="judgeId"></param>
+        /// <returns></returns>
+        [HttpPost("/api/rounds/{roundId}/transfer-submissions/{judgeId}")]
+        [Authorize(Policy = "RequireOrganizerRole")]
+        public async Task<IActionResult> TransferSubmissionsToOtherJudge(Guid roundId, Guid judgeId)
+        {
+            await _submissionService.TransferSubmissionsToOtherJudge(roundId, judgeId);
+            return Ok(new BaseResponseModel(
+                statusCode: StatusCodes.Status200OK,
+                code: ResponseCodeConstants.SUCCESS,
+                message: "Submissions transferred to the specified judge successfully."
             ));
         }
     }

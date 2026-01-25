@@ -44,6 +44,7 @@ namespace Repository.DTOs.RubricDTOs
         public string? TeamName { get; set; }
         public DateTime? SubmittedAt { get; set; }
         public string? JudgedBy { get; set; }
+        public string? Status { get; set; }
         public double TotalScore { get; set; }
         public double MaxPossibleScore { get; set; }
         public List<RubricCriterionResultDTO> CriterionResults { get; set; } = new List<RubricCriterionResultDTO>();
