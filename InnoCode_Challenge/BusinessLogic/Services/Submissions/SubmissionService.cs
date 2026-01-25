@@ -4431,8 +4431,10 @@ namespace BusinessLogic.Services.Submissions
                 );
             }
 
+            // Filter active judges excluding the source judge
             List<JudgeInContestDTO> activeJudges = allJudges
                 .Where(j => j.Status.ToLower() == JUDGE_STATUS_ACTIVE && j.UserId != excludeJudgeId)
+                .OrderBy(_ => Guid.NewGuid())
                 .ToList();
 
             if (!activeJudges.Any())
