@@ -212,7 +212,7 @@ namespace Api.IntegrationTests.Submissions
             };
 
             var code = string.Concat(Enumerable.Repeat("a=0\n", 80));
-            var normalized = PlagiarismHelpers.NormalizePython(code, removeTripleQuoted: true);
+            var normalized = PlagiarismHelpers.NormalizePythonForFingerprint(code, removeTripleQuoted: true);
             var hash = PlagiarismHelpers.Sha256Hex(normalized);
 
             var existingSubmission = new Submission
@@ -240,7 +240,7 @@ namespace Api.IntegrationTests.Submissions
                 SubmissionId = existingSubmission.SubmissionId,
                 ProblemId = problemId,
                 TeamId = otherTeamId,
-                Algorithm = "sha256_py_v1",
+                Algorithm = "sha256_py_v2",
                 Hash = hash,
                 NormalizedLength = normalized.Length,
                 CreatedAt = now
