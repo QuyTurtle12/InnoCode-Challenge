@@ -2402,6 +2402,9 @@ namespace BusinessLogic.Services.Contests
             // Cancel pending invitations
             await CancelPendingInvitationsForContestAsync(contestId);
 
+            // Disqualify teams that don't meet minimum member requirement
+            await DisqualifyTeamsNotMeetingMinimumRequirementAsync(contestId, configRepo, contestRepo);
+
             await _unitOfWork.SaveAsync();
 
             // Notify dashboard
@@ -2419,6 +2422,89 @@ namespace BusinessLogic.Services.Contests
             await _dashboardNotifier.NotifyOrganizerDashboardUpdatedAsync(organizerId);
 
             await NotifiMentorDashboardContestUpdated(contestId);
+        }
+
+        /// <summary>
+        /// Disqualifies teams that don't meet the minimum team member requirement
+        /// </summary>
+        private async Task DisqualifyTeamsNotMeetingMinimumRequirementAsync(
+            Guid contestId,
+            IGenericRepository<Config> configRepo,
+            IGenericRepository<Contest> contestRepo)
+        {
+            // Get minimum team member requirement
+            string contestMinKey = ConfigKeys.ContestTeamMembersMin(contestId);
+            string? contestMinValue = await configRepo.Entities
+                .Where(c => c.Key == contestMinKey && c.DeletedAt == null)
+                .Select(c => c.Value)
+                .FirstOrDefaultAsync();
+
+            int minTeamMembers;
+            if (!string.IsNullOrEmpty(contestMinValue) && int.TryParse(contestMinValue, out int contestMin))
+            {
+                minTeamMembers = contestMin;
+            }
+            else
+            {
+                // No contest-specific config found, use global default
+                minTeamMembers = await GetGlobalIntOrDefaultAsync(configRepo, ConfigKeys.Defaults_TeamMembersMin, 1);
+            }
+
+            // Get all non-deleted teams in the contest with their members
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+            List<Team> teams = await teamRepo.Entities
+                .Where(t => t.ContestId == contestId && t.DeletedAt == null)
+                .Include(t => t.TeamMembers)
+                .ToListAsync();
+
+            // If no teams found, set contest status to Delayed and return
+            if (teams.Count == 0)
+            {
+                _logger.LogInformation("No teams found in contest {ContestId} for disqualification check.", contestId);
+
+                await SetContestStatusToDelayed(contestId, contestRepo);
+
+                return;
+            }
+
+            // Disqualify teams that don't meet minimum requirement
+            foreach (Team team in teams)
+            {
+                // Count members
+                int memberCount = team.TeamMembers.Count();
+
+                if (memberCount < minTeamMembers)
+                {
+                    team.Status = TeamStatusConstants.Disqualified;
+                    await teamRepo.UpdateAsync(team);
+
+                    _logger.LogInformation(
+                        "Team {TeamId} '{TeamName}' disqualified for not meeting minimum member requirement. Members: {MemberCount}, Required: {MinRequired}",
+                        team.TeamId, team.Name, memberCount, minTeamMembers);
+                }
+            }
+        }
+
+        private async Task SetContestStatusToDelayed(
+            Guid contestId,
+            IGenericRepository<Contest> contestRepo)
+        {
+            // Get contest
+            Contest? contest = await contestRepo.Entities
+                .Where(c => c.ContestId == contestId && c.DeletedAt == null)
+                .FirstOrDefaultAsync();
+
+            // If contest not found, throw error
+            if (contest == null)
+            {
+                throw new ErrorException(StatusCodes.Status404NotFound,
+                    ResponseCodeConstants.NOT_FOUND,
+                    "Contest not found.");
+            }
+
+            // Mark contest as Delayed since no teams are present
+            contest.Status = ContestStatusEnum.Delayed.ToString();
+            await contestRepo.UpdateAsync(contest!);
         }
 
         private async Task NotifiMentorDashboardContestUpdated(Guid contestId)

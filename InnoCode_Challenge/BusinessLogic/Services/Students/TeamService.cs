@@ -528,6 +528,7 @@ namespace BusinessLogic.Services.Students
             var startedByStatus =
                 string.Equals(status, ContestStatusEnum.Ongoing.ToString(), StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(status, ContestStatusEnum.Paused.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, ContestStatusEnum.Cancelled.ToString(), StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(status, ContestStatusEnum.Completed.ToString(), StringComparison.OrdinalIgnoreCase);
 
             if (startedByTime || startedByStatus)
