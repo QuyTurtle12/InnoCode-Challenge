@@ -57,7 +57,7 @@ namespace BusinessLogic.Services.Contests
         private const int DEFAULT_APPEAL_REVIEW_DAYS = 1;
         private const int DEFAULT_JUDGE_RESCORE_DAYS = 1;
         private const string STATUS_PLAGIARISM_SUSPECTED = "PlagiarismSuspected";
-        private const string FP_ALGORITHM = "sha256_py_v1";
+        private const string FP_ALGORITHM = "sha256_py_v2";
         private const int MIN_NORMALIZED_LEN_TO_CHECK = 120;
         private const long MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
         private const long MAX_TOTAL_PY_BYTES = 2 * 1024 * 1024;
@@ -1298,7 +1298,7 @@ namespace BusinessLogic.Services.Contests
                     var (raw, bytesRead) = await ReadAllTextWithinLimitAsync(entryStream, (int)entry.Length);
                     if (raw == null) continue;
 
-                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(raw, removeTripleQuoted: true);
                     if (!string.IsNullOrWhiteSpace(normalized))
                         results.Add(normalized);
 
@@ -1359,7 +1359,7 @@ namespace BusinessLogic.Services.Contests
                         continue;
                     }
 
-                    string normalized = PlagiarismHelpers.NormalizePython(raw, removeTripleQuoted: true);
+                    string normalized = PlagiarismHelpers.NormalizePythonForFingerprint(raw, removeTripleQuoted: true);
                     if (!string.IsNullOrWhiteSpace(normalized))
                         results.Add(normalized);
 
