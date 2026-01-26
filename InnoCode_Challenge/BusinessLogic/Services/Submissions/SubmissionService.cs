@@ -2142,11 +2142,15 @@ namespace BusinessLogic.Services.Submissions
                     {
                         submission.Status = SubmissionStatusEnum.Pending.ToString();
                         submission.Score = 0;
+
+                        await CheckTeamHasPlagiarismSubmission(submission, submissionRepo);
                     }
                     else
                     {
                         // Auto/MCQ: keep finished status and retain existing score
                         submission.Status = SubmissionStatusEnum.Finished.ToString();
+
+                        await CheckTeamHasPlagiarismSubmission(submission, submissionRepo);
                     }
                 }
                 else
@@ -2283,6 +2287,45 @@ namespace BusinessLogic.Services.Submissions
                 throw new ErrorException(StatusCodes.Status500InternalServerError,
                     ResponseCodeConstants.INTERNAL_SERVER_ERROR,
                     $"Error resolving plagiarism submission: {ex.Message}");
+            }
+        }
+
+        private async Task CheckTeamHasPlagiarismSubmission(
+            Submission submission,
+            IGenericRepository<Submission> submissionRepo
+            )
+        {
+            IGenericRepository<Team> teamRepo = _unitOfWork.GetRepository<Team>();
+
+            // Get the team info
+            Team? team = await teamRepo.Entities
+                .Where(t => t.TeamId == submission.TeamId && t.DeletedAt == null)
+                .Include(t => t.TeamMembers)
+                .FirstOrDefaultAsync();
+
+            List<Submission> submissionsOfTeam = await submissionRepo.Entities
+                .Where(s => s.TeamId == submission.TeamId
+                            && s.ProblemId == submission.ProblemId
+                            && s.DeletedAt == null)
+                .ToListAsync();
+
+            // Check submission list contain at least 1 confirmed plagiarism submission
+            if (team != null && team.TeamMembers.Count > 0 && submissionsOfTeam.Count > 0)
+            {
+                // Check if there is any other valid submission from the team
+                Submission? InvalidSubmission = submissionsOfTeam
+                    .Where(s => !string.Equals(s.Status, STATUS_PLAGIARISM_CONFIRMED) && s.SubmittedByStudentId != submission.SubmittedByStudentId)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .FirstOrDefault();
+
+                if (InvalidSubmission == null)
+                {
+                    team.Status = TeamStatusConstants.Active;
+                }
+            }
+            else
+            {
+                submission.Score = 0;
             }
         }
 
