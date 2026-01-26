@@ -493,6 +493,13 @@ namespace BusinessLogic.Services.Contests
                 throw new ErrorException(StatusCodes.Status404NotFound, ResponseCodeConstants.NOT_FOUND, "Contest not found.");
             }
 
+            // Ensure contest is in modifiable status
+            if (contest.Status != ContestStatusEnum.Draft.ToString() &&
+                contest.Status != ContestStatusEnum.Delayed.ToString())
+            {
+                throw new ErrorException(StatusCodes.Status400BadRequest, ResponseCodeConstants.BADREQUEST, "Can only modify draft & delayed contest.");
+            }
+
             // Validate date range
             if (roundDTO.Start > roundDTO.End)
             {
